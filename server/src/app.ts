@@ -1,12 +1,11 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import { User } from './models/User';
-import { Event } from './models/Event';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
-import { obfuscateCoordinates } from './utils/geoUtils';
-import { ActivityGoal, EventCategory } from './types';
+import { User, ActivityGoal, Gender, PreferredGender } from './models/User';
+import { Event, EventCategory } from './models/Event';
+import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
 
 dotenv.config();
 
@@ -14,13 +13,14 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Подключение к MongoDB
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/yesminsk';
 mongoose
   .connect(MONGODB_URI)
   .then(() => console.log('✅ MongoDB успешно подключена'))
-  .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err.message));
+  .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));
 
-// Вспомогательная функция для строгого извлечения string из req.params (предотвращает TS2345 на Render)
+// Строгое извлечение string из req.params (устраняет TS2345 на Render)
 const getParamId = (id: unknown): string => {
   if (Array.isArray(id)) return String(id[0] || '').trim();
   return String(id || '').trim();
@@ -29,7 +29,7 @@ const getParamId = (id: unknown): string => {
 // ==========================================
 // 1. ПРОФИЛЬ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ («Я»)
 // ==========================================
-app.get('/api/users/me', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/users/me', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
     let user = await User.findOne({ telegramId: tgUser.id });
@@ -53,7 +53,7 @@ app.get('/api/users/me', telegramAuthMiddleware, async (req: AuthenticatedReques
         hasAgreedToRules: false,
         locationExact: { type: 'Point', coordinates: [defaultLng, defaultLat] },
         locationFuzzy: { type: 'Point', coordinates: fuzzyCoords },
-        areaName: 'Минск',
+        areaName: 'Немига / Центр',
         isTourist: false,
         blockedUsers: []
       });
@@ -62,25 +62,25 @@ app.get('/api/users/me', telegramAuthMiddleware, async (req: AuthenticatedReques
       await user.save();
     }
 
-    const userObj = user.toObject ? user.toObject() : { ...user };
+    const userObj: any = user.toObject ? user.toObject() : { ...user };
     const exact = user.locationExact?.coordinates;
     const fuzzy = user.locationFuzzy?.coordinates;
     if (exact && exact.length === 2) {
       userObj.coordinates = [exact[1], exact[0]]; // [lat, lng]
     } else if (fuzzy && fuzzy.length === 2) {
-      userObj.coordinates = [fuzzy[1], fuzzy[0]]; // [lat, lng]
+      userObj.coordinates = [fuzzy[1], fuzzy[0]];
     } else {
       userObj.coordinates = [53.9045, 27.5615];
     }
 
     res.json(userObj);
-  } catch (err: any) {
+  } catch (err) {
     res.status(500).json({ error: 'Ошибка получения профиля' });
   }
 });
 
 // Онбординг: согласие с правилами
-app.post('/api/users/agree-rules', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/users/agree-rules', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
     const user = await User.findOneAndUpdate(
@@ -89,8 +89,8 @@ app.post('/api/users/agree-rules', telegramAuthMiddleware, async (req: Authentic
       { new: true }
     );
     res.json({ success: true, user });
-  } catch (err: any) {
-    res.status(500).json({ error: 'Ошибка обновления' });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка обновления правил' });
   }
 });
 
@@ -109,212 +109,156 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       preferredAgeRange,
       bio,
       goal,
-      goals,
-      avatarUrl,
+      coordinates,
       areaName,
       isTourist,
-      coordinates, // [lat, lng]
+      avatarUrl,
       isProfileActive
     } = req.body;
 
-    const user = await User.findOne({ telegramId: tgUser.id });
-    if (!user) {
-      return res.status(404).json({ error: 'Пользователь не найден' });
+    const updateData: any = {};
+    if (firstName || name) updateData.firstName = firstName || name;
+    if (avatarUrl) updateData.avatarUrl = avatarUrl;
+    if (bio !== undefined) updateData.bio = bio.slice(0, 200);
+    if (goal) updateData.goal = goal as ActivityGoal;
+    if (age !== undefined) updateData.age = Number(age);
+    if (gender) updateData.gender = gender as Gender;
+    if (preferredGender) updateData.preferredGender = preferredGender as PreferredGender;
+    if (preferredAgeRange) updateData.preferredAgeRange = preferredAgeRange;
+    if (isTourist !== undefined) updateData.isTourist = Boolean(isTourist);
+    if (areaName) {
+      updateData.areaName = areaName;
+      if (areaName.includes('турист')) {
+        updateData.isTourist = true;
+      }
     }
+    if (isProfileActive !== undefined) updateData.isProfileActive = isProfileActive;
 
-    if (name || firstName) user.firstName = name || firstName;
-    if (age) user.age = Number(age);
-    if (gender) user.gender = gender;
-    if (preferredGender) user.preferredGender = preferredGender;
-    if (preferredAgeRange) {
-      user.preferredAgeRange = {
-        min: Number(preferredAgeRange.min) || 18,
-        max: Number(preferredAgeRange.max) || 99
-      };
-    }
-    if (bio !== undefined) user.bio = bio.slice(0, 200);
-    if (goal) user.goal = goal;
-    if (goals && Array.isArray(goals)) user.goals = goals;
-    if (avatarUrl) user.avatarUrl = avatarUrl;
-    if (areaName) user.areaName = areaName;
-    if (isTourist !== undefined) user.isTourist = Boolean(isTourist);
-    if (isProfileActive !== undefined) user.isProfileActive = Boolean(isProfileActive);
-
-    // Обновление координат
     if (coordinates && Array.isArray(coordinates) && coordinates.length === 2) {
       const [lat, lng] = coordinates;
-      user.locationExact = {
+      updateData.locationExact = { type: 'Point', coordinates: [lng, lat] };
+      updateData.locationFuzzy = {
         type: 'Point',
-        coordinates: [Number(lng), Number(lat)]
-      };
-      const fuzzyCoords = obfuscateCoordinates(Number(lng), Number(lat), 300, 500);
-      user.locationFuzzy = {
-        type: 'Point',
-        coordinates: fuzzyCoords
+        coordinates: obfuscateCoordinates(lng, lat, 300, 500)
       };
     }
 
-    user.lastActiveAt = new Date();
-    await user.save();
+    const updatedUser = await User.findOneAndUpdate(
+      { telegramId: tgUser.id },
+      { $set: updateData },
+      { new: true, upsert: true }
+    );
 
-    res.json({
-      success: true,
-      message: 'Профиль успешно сохранен',
-      user
-    });
+    res.json({ success: true, user: updatedUser });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Ошибка сохранения профиля' });
+    res.status(500).json({ error: err?.message || 'Ошибка сохранения профиля' });
   }
 };
 
-app.post('/api/users/profile', telegramAuthMiddleware, handleUpdateProfile);
-app.put('/api/users/profile', telegramAuthMiddleware, handleUpdateProfile);
+app.post('/api/users/profile', telegramAuthMiddleware as any, handleUpdateProfile);
+app.put('/api/users/profile', telegramAuthMiddleware as any, handleUpdateProfile);
 
 // ==========================================
-// 3. БЛОКИРОВКА / ЧЕРНЫЙ СПИСОК
+// 3. БЛОКИРОВКА ПОЛЬЗОВАТЕЛЯ (ЧЕРНЫЙ СПИСОК)
 // ==========================================
-app.post('/api/users/block', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/users/block', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const { targetTelegramId } = req.body;
-    if (!targetTelegramId) {
-      return res.status(400).json({ error: 'Не указан ID пользователя для блокировки' });
+    const { blockedTelegramId } = req.body;
+
+    if (!blockedTelegramId) {
+      return res.status(400).json({ error: 'Не указан ID пользователя' });
     }
 
     await User.findOneAndUpdate(
       { telegramId: tgUser.id },
-      { $addToSet: { blockedUsers: Number(targetTelegramId) } }
+      { $addToSet: { blockedUsers: Number(blockedTelegramId) } }
     );
 
     res.json({ success: true, message: 'Пользователь заблокирован' });
-  } catch (err: any) {
+  } catch (err) {
     res.status(500).json({ error: 'Ошибка блокировки' });
   }
 });
 
-app.post('/api/users/unblock', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// ==========================================
+// 4. ПОЛЬЗОВАТЕЛИ РЯДОМ (ДЛЯ КАРТЫ И ЛЕНТЫ)
+// ==========================================
+app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const { targetTelegramId } = req.body;
-    await User.findOneAndUpdate(
-      { telegramId: tgUser.id },
-      { $pull: { blockedUsers: Number(targetTelegramId) } }
-    );
-    res.json({ success: true, message: 'Пользователь разблокирован' });
-  } catch (err: any) {
-    res.status(500).json({ error: 'Ошибка разблокировки' });
+    const currentUser = await User.findOne({ telegramId: tgUser.id });
+
+    const { goal } = req.query;
+
+    const query: any = {
+      isProfileActive: true,
+      hasAgreedToRules: true,
+      telegramId: { $ne: tgUser.id }
+    };
+
+    if (currentUser?.blockedUsers && currentUser.blockedUsers.length > 0) {
+      query.telegramId.$nin = currentUser.blockedUsers;
+    }
+
+    // Исключаем тех, кто заблокировал меня
+    query.blockedUsers = { $ne: tgUser.id };
+
+    if (goal && goal !== 'all') {
+      query.goal = goal;
+    }
+
+    const users = await User.find(query).limit(50).sort({ lastActiveAt: -1 });
+
+    const formattedUsers = users.map((u) => {
+      const fuzzyCoords = u.locationFuzzy?.coordinates || [27.5615, 53.9045];
+      let distanceMeters = 350;
+
+      if (currentUser?.locationExact?.coordinates) {
+        const [myLng, myLat] = currentUser.locationExact.coordinates;
+        distanceMeters = calculateDistanceMeters(myLat, myLng, fuzzyCoords[1], fuzzyCoords[0]);
+      }
+
+      return {
+        id: u.telegramId,
+        telegramId: u.telegramId,
+        firstName: u.firstName,
+        username: u.username,
+        avatarUrl: u.avatarUrl,
+        age: u.age,
+        gender: u.gender,
+        goal: u.goal,
+        bio: u.bio,
+        areaName: u.areaName,
+        isTourist: u.isTourist,
+        coordinates: [fuzzyCoords[1], fuzzyCoords[0]], // [lat, lng]
+        distanceMeters
+      };
+    });
+
+    res.json(formattedUsers);
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка загрузки пользователей' });
   }
 });
 
 // ==========================================
-// 4. ПОЛЬЗОВАТЕЛИ РЯДОМ (NEARBY / MAP)
+// 5. СОБЫТИЯ / СХОДКИ (EVENTS API)
 // ==========================================
-const handleGetNearbyUsers = async (req: AuthenticatedRequest, res: Response) => {
+
+// Получить список событий
+app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const currentUser = await User.findOne({ telegramId: tgUser.id });
-    const { goal, lat, lng, radiusKm = 25 } = req.query;
-
-    const myBlocked = currentUser?.blockedUsers || [];
-    const whoBlockedMeUsers = await User.find({ blockedUsers: tgUser.id }).select('telegramId');
-    const whoBlockedMe = whoBlockedMeUsers.map((u) => u.telegramId);
-    const excludeIds = Array.from(new Set([...myBlocked, ...whoBlockedMe, tgUser.id]));
-
-    const query: any = {
-      telegramId: { $nin: excludeIds },
-      isProfileActive: { $ne: false },
-      hasAgreedToRules: { $ne: false }
-    };
-
-    if (goal && goal !== 'all') {
-      query.goal = goal as ActivityGoal;
-    }
-
-    // Фильтр по полу и возрасту
-    if (currentUser?.preferredGender && currentUser.preferredGender !== 'all') {
-      query.gender = currentUser.preferredGender;
-    }
-    if (currentUser?.preferredAgeRange) {
-      query.age = {
-        $gte: currentUser.preferredAgeRange.min || 18,
-        $lte: currentUser.preferredAgeRange.max || 99
-      };
-    }
-
-    // Гео-запрос возле координат
-    const centerLat = lat ? parseFloat(lat as string) : (currentUser?.locationExact?.coordinates[1] || 53.9045);
-    const centerLng = lng ? parseFloat(lng as string) : (currentUser?.locationExact?.coordinates[0] || 27.5615);
-
-    query.locationFuzzy = {
-      $nearSphere: {
-        $geometry: {
-          type: 'Point',
-          coordinates: [centerLng, centerLat]
-        },
-        $maxDistance: Number(radiusKm) * 1000
-      }
-    };
-
-    const users = await User.find(query).limit(50);
-
-    const formatted = users.map((u) => {
-      const fuzzy = u.locationFuzzy?.coordinates || [27.5615, 53.9045];
-      return {
-        id: u._id.toString(),
-        telegramId: u.telegramId,
-        username: u.username,
-        firstName: u.firstName,
-        lastName: u.lastName,
-        avatarUrl: u.avatarUrl,
-        bio: u.bio || '',
-        goal: u.goal,
-        goals: u.goals || [u.goal],
-        age: u.age || 25,
-        gender: u.gender,
-        areaName: u.areaName || 'Минск',
-        isTourist: Boolean(u.isTourist),
-        coordinates: [fuzzy[1], fuzzy[0]], // [lat, lng]
-        distanceMeters: Math.floor(Math.random() * 200) + 300,
-        lastActiveAt: u.lastActiveAt
-      };
-    });
-
-    res.json(formatted);
-  } catch (err: any) {
-    res.status(500).json({ error: 'Ошибка получения пользователей рядом' });
-  }
-};
-
-app.get('/api/users/nearby', telegramAuthMiddleware, handleGetNearbyUsers);
-app.get('/api/users/map', telegramAuthMiddleware, handleGetNearbyUsers);
-
-// ==========================================
-// 5. СОБЫТИЯ / СХОДКИ (EVENTS)
-// ==========================================
-app.get('/api/events', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const tgUser = req.telegramUser!;
-    const { category, lat, lng, radiusKm = 30 } = req.query;
+    const { category } = req.query;
 
     const filter: any = {
       isActive: true,
-      dateTime: { $gte: new Date(Date.now() - 6 * 60 * 60 * 1000) } // Встречи не старше 6 часов
+      dateTime: { $gte: new Date(Date.now() - 4 * 60 * 60 * 1000) }
     };
 
     if (category && category !== 'all') {
       filter.category = category as EventCategory;
-    }
-
-    if (lat && lng) {
-      filter.location = {
-        $nearSphere: {
-          $geometry: {
-            type: 'Point',
-            coordinates: [parseFloat(lng as string), parseFloat(lat as string)]
-          },
-          $maxDistance: Number(radiusKm) * 1000
-        }
-      };
     }
 
     const events = await Event.find(filter).sort({ dateTime: 1 }).limit(40);
@@ -331,17 +275,18 @@ app.get('/api/events', telegramAuthMiddleware, async (req: AuthenticatedRequest,
       creator: ev.creator,
       participantsCount: ev.participants.length,
       maxParticipants: ev.maxParticipants || 0,
-      isJoined: ev.participants.some((p: any) => Number(p.telegramId) === Number(tgUser.id)),
+      isJoined: ev.participants.some((p) => p.telegramId === tgUser.id),
       participants: ev.participants.slice(0, 5)
     }));
 
     res.json(formatted);
-  } catch (err: any) {
+  } catch (err) {
     res.status(500).json({ error: 'Ошибка загрузки событий' });
   }
 });
 
-app.post('/api/events', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// Создать событие
+app.post('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
     const user = await User.findOne({ telegramId: tgUser.id });
@@ -351,7 +296,7 @@ app.post('/api/events', telegramAuthMiddleware, async (req: AuthenticatedRequest
       description,
       category,
       locationName,
-      coordinates,
+      coordinates, // [lat, lng]
       dateTime,
       maxParticipants
     } = req.body;
@@ -401,7 +346,7 @@ app.post('/api/events', telegramAuthMiddleware, async (req: AuthenticatedRequest
       coordinates: [newEvent.location.coordinates[1], newEvent.location.coordinates[0]],
       dateTime: newEvent.dateTime,
       creator: newEvent.creator,
-      participantsCount: newEvent.participants.length,
+      participantsCount: 1,
       maxParticipants: newEvent.maxParticipants || 0,
       isJoined: true,
       participants: newEvent.participants.slice(0, 5)
@@ -411,14 +356,70 @@ app.post('/api/events', telegramAuthMiddleware, async (req: AuthenticatedRequest
   }
 });
 
-// Редактирование события автором
+// Присоединиться к событию
+app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const user = await User.findOne({ telegramId: tgUser.id });
+    const eventId = getParamId(req.params.id);
+    const event = await Event.findById(eventId);
+
+    if (!event || !event.isActive) {
+      return res.status(404).json({ error: 'Событие не найдено' });
+    }
+
+    const alreadyJoined = event.participants.some((p) => p.telegramId === tgUser.id);
+    if (alreadyJoined) {
+      return res.json({ success: true, message: 'Уже участвуешь', event });
+    }
+
+    if (event.maxParticipants && event.maxParticipants > 0 && event.participants.length >= event.maxParticipants) {
+      return res.status(400).json({ error: 'Все места заняты' });
+    }
+
+    event.participants.push({
+      telegramId: tgUser.id,
+      name: user?.firstName || tgUser.first_name,
+      username: user?.username || tgUser.username,
+      avatarUrl: user?.avatarUrl || tgUser.photo_url || '',
+      joinedAt: new Date()
+    });
+
+    await event.save();
+    res.json({ success: true, event });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка присоединения' });
+  }
+});
+
+// Покинуть событие
+app.post('/api/events/:id/leave', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const eventId = getParamId(req.params.id);
+    const event = await Event.findById(eventId);
+
+    if (!event) {
+      return res.status(404).json({ error: 'Событие не найдено' });
+    }
+
+    event.participants = event.participants.filter((p) => p.telegramId !== tgUser.id);
+    await event.save();
+
+    res.json({ success: true, message: 'Вы покинули событие' });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка выхода' });
+  }
+});
+
+// Обновление события автором (PUT и POST)
 const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
     const eventId = getParamId(req.params.id);
 
     if (!eventId || eventId === 'undefined' || eventId === 'null') {
-      return res.status(400).json({ error: 'Не указан корректный ID события' });
+      return res.status(400).json({ error: 'Не указан ID события' });
     }
 
     let event = null;
@@ -434,7 +435,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
     }
 
     if (Number(event.creator.telegramId) !== Number(tgUser.id)) {
-      return res.status(403).json({ error: 'Только создатель может редактировать сходку' });
+      return res.status(403).json({ error: 'Только автор может редактировать сходку' });
     }
 
     const {
@@ -475,7 +476,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       creator: event.creator,
       participantsCount: event.participants.length,
       maxParticipants: event.maxParticipants || 0,
-      isJoined: event.participants.some((p: any) => Number(p.telegramId) === Number(tgUser.id)),
+      isJoined: event.participants.some((p) => p.telegramId === tgUser.id),
       participants: event.participants.slice(0, 5)
     });
   } catch (err: any) {
@@ -483,11 +484,11 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
   }
 };
 
-app.put('/api/events/:id', telegramAuthMiddleware, handleUpdateEventLogic);
-app.post('/api/events/:id', telegramAuthMiddleware, handleUpdateEventLogic);
+app.put('/api/events/:id', telegramAuthMiddleware as any, handleUpdateEventLogic);
+app.post('/api/events/:id/update', telegramAuthMiddleware as any, handleUpdateEventLogic);
 
-// Удаление события
-app.delete('/api/events/:id', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// Удаление события автором
+const handleDeleteEventLogic = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
     const eventId = getParamId(req.params.id);
@@ -510,71 +511,18 @@ app.delete('/api/events/:id', telegramAuthMiddleware, async (req: AuthenticatedR
 
     await Event.findByIdAndDelete(event._id);
     res.json({ success: true, message: 'Событие успешно удалено' });
-  } catch (err: any) {
+  } catch (err) {
     res.status(500).json({ error: 'Ошибка удаления события' });
   }
-});
+};
 
-// Запись на сходку
-app.post('/api/events/:id/join', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const tgUser = req.telegramUser!;
-    const user = await User.findOne({ telegramId: tgUser.id });
-    const eventId = getParamId(req.params.id);
-    const event = await Event.findById(eventId);
-
-    if (!event || !event.isActive) {
-      return res.status(404).json({ error: 'Событие не найдено или завершено' });
-    }
-
-    const alreadyJoined = event.participants.some((p: any) => Number(p.telegramId) === Number(tgUser.id));
-    if (alreadyJoined) {
-      return res.json({ success: true, message: 'Уже участвуешь', event });
-    }
-
-    if (event.maxParticipants && event.maxParticipants > 0 && event.participants.length >= event.maxParticipants) {
-      return res.status(400).json({ error: 'Все места заняты' });
-    }
-
-    event.participants.push({
-      telegramId: tgUser.id,
-      name: user?.firstName || tgUser.first_name,
-      username: user?.username || tgUser.username,
-      avatarUrl: user?.avatarUrl || tgUser.photo_url || '',
-      joinedAt: new Date()
-    });
-
-    await event.save();
-    res.json({ success: true, event });
-  } catch (err: any) {
-    res.status(500).json({ error: 'Ошибка присоединения к событию' });
-  }
-});
-
-// Отмена участия в сходке
-app.post('/api/events/:id/leave', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const tgUser = req.telegramUser!;
-    const eventId = getParamId(req.params.id);
-    const event = await Event.findById(eventId);
-
-    if (!event) {
-      return res.status(404).json({ error: 'Событие не найдено' });
-    }
-
-    event.participants = event.participants.filter((p: any) => Number(p.telegramId) !== Number(tgUser.id));
-    await event.save();
-
-    res.json({ success: true, message: 'Вы покинули событие' });
-  } catch (err: any) {
-    res.status(500).json({ error: 'Ошибка выхода из события' });
-  }
-});
+app.delete('/api/events/:id', telegramAuthMiddleware as any, handleDeleteEventLogic);
+app.post('/api/events/:id/delete', telegramAuthMiddleware as any, handleDeleteEventLogic);
 
 // ==========================================
-// 6. СИДИРОВАНИЕ 10 ТЕСТОВЫХ АНКЕТ
+// 6. РОУТ СИДИРОВАНИЯ (10 ТЕСТОВЫХ АНКЕТ В МИНСКЕ)
 // ==========================================
-app.get('/api/users/seed', async (req: Request, res: Response) => {
+app.get('/api/users/seed', async (_req: Request, res: Response) => {
   try {
     const seedProfiles = [
       {
@@ -609,7 +557,7 @@ app.get('/api/users/seed', async (req: Request, res: Response) => {
         gender: 'female',
         goal: 'expo_cinema',
         areaName: 'Немига / Центр',
-        bio: 'Дизайнер интерьеров. Ищу компанию на выставки в Национальный художественный музей или арт-хаус в кино.',
+        bio: 'Дизайнер интерьеров. Ищу компанию на выставки в Национальный музей или арт-хаус в кино.',
         avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=400&q=80',
         exactCoords: [27.5520, 53.9045]
       },
@@ -621,7 +569,7 @@ app.get('/api/users/seed', async (req: Request, res: Response) => {
         gender: 'male',
         goal: 'trip_outdoors',
         areaName: 'Новая Боровая',
-        bio: 'Катаюсь на гравийнике, люблю вылазки к Минскому морю или Цнянке на закате. За душевные разговоры без пафоса.',
+        bio: 'Катаюсь на гравийнике, люблю вылазки к Минскому морю или Цнянке на закате. За душевные разговоры.',
         avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80',
         exactCoords: [27.6750, 53.9550]
       },
@@ -633,7 +581,7 @@ app.get('/api/users/seed', async (req: Request, res: Response) => {
         gender: 'female',
         goal: 'walk',
         areaName: 'Уручье',
-        bio: 'Студентка. Часто гуляю в Музее валунов в Уручье с термосом чая и скетчбуком. Буду рада спокойной компании!',
+        bio: 'Студентка. Часто гуляю в Музее валунов в Уручье с термосом чая и скетчбуком. Рада спокойной компании!',
         avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80',
         exactCoords: [27.6880, 53.9450]
       },
@@ -645,7 +593,7 @@ app.get('/api/users/seed', async (req: Request, res: Response) => {
         gender: 'male',
         goal: 'cafe_bar',
         areaName: 'Парк Челюскинцев',
-        bio: 'Преподаватель истории. Люблю тихие аллеи ботанического сада, букинистические магазины и хороший эспрессо.',
+        bio: 'Преподаватель истории. Люблю тихие аллеи ботанического сада, букинистику и хороший эспрессо.',
         avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=400&q=80',
         exactCoords: [27.6150, 53.9240]
       },
@@ -657,7 +605,7 @@ app.get('/api/users/seed', async (req: Request, res: Response) => {
         gender: 'female',
         goal: 'walk',
         areaName: 'Площадь Победы',
-        bio: 'Люблю архитектуру сталинского ампира, парк Горького и пешие прогулки 10 000 шагов по набережной Свислочи.',
+        bio: 'Люблю архитектуру сталинского ампира, парк Горького и пешие прогулки 10 000 шагов по Свислочи.',
         avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=400&q=80',
         exactCoords: [27.5750, 53.9085]
       },
@@ -669,7 +617,7 @@ app.get('/api/users/seed', async (req: Request, res: Response) => {
         gender: 'male',
         goal: 'cafe_bar',
         areaName: 'Зыбицкая',
-        bio: 'Frontend-разработчик. По вечерам не против попробовать сидр в Верхнем городе или поиграть в настолки.',
+        bio: 'Frontend-разработчик. По вечерам не против выпить чай в Верхнем городе или поиграть в настолки.',
         avatarUrl: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&w=400&q=80',
         exactCoords: [27.5580, 53.9055]
       },
@@ -681,7 +629,7 @@ app.get('/api/users/seed', async (req: Request, res: Response) => {
         gender: 'female',
         goal: 'expo_cinema',
         areaName: 'Комаровка',
-        bio: 'Флорист. Обожаю субботние походы за сезонными ягодами на Комаровку, пленочную фотографию и выставки.',
+        bio: 'Флорист. Обожаю субботние походы за ягодами на Комаровку, пленочную фотографию и выставки.',
         avatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=400&q=80',
         exactCoords: [27.5800, 53.9190]
       },
@@ -715,7 +663,6 @@ app.get('/api/users/seed', async (req: Request, res: Response) => {
             preferredGender: 'all',
             preferredAgeRange: { min: 18, max: 99 },
             goal: item.goal,
-            goals: [item.goal],
             bio: item.bio,
             avatarUrl: item.avatarUrl,
             areaName: item.areaName,
@@ -744,7 +691,5 @@ app.get('/api/users/seed', async (req: Request, res: Response) => {
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`🚀 YesMinsk API сервер успешно запущен на порту ${PORT}`);
+  console.log(`🚀 YesMinsk API запущен на порту ${PORT}`);
 });
-
-export default app;
