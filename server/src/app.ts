@@ -6,249 +6,318 @@ import { User } from './models/User';
 import { Event } from './models/Event';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import { obfuscateCoordinates } from './utils/geoUtils';
+import { ActivityGoal, EventCategory } from './types';
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/yesminsk';
-
-// Хелпер для безопасного извлечения строкового ID из req.params (защита от TS2345)
-const getParamId = (req: Request | AuthenticatedRequest): string => {
-  const raw = req.params.id;
-  if (Array.isArray(raw)) {
-    return String(raw[0] || '').trim();
-  }
-  return String(raw || '').trim();
-};
-
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Telegram-Init-Data']
-}));
-
+app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Базовый роут проверки здоровья
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', service: 'yesminsk-api', timestamp: new Date() });
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/yesminsk';
+mongoose
+  .connect(MONGODB_URI)
+  .then(() => console.log('✅ MongoDB успешно подключена'))
+  .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err.message));
+
+// Вспомогательная функция для строгого извлечения string из req.params (предотвращает TS2345 на Render)
+const getParamId = (id: unknown): string => {
+  if (Array.isArray(id)) return String(id[0] || '').trim();
+  return String(id || '').trim();
+};
+
+// ==========================================
+// 1. ПРОФИЛЬ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ («Я»)
+// ==========================================
+app.get('/api/users/me', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    let user = await User.findOne({ telegramId: tgUser.id });
+
+    if (!user) {
+      const defaultLng = 27.5615;
+      const defaultLat = 53.9045;
+      const fuzzyCoords = obfuscateCoordinates(defaultLng, defaultLat);
+
+      user = await User.create({
+        telegramId: tgUser.id,
+        firstName: tgUser.first_name,
+        lastName: tgUser.last_name,
+        username: tgUser.username,
+        avatarUrl: tgUser.photo_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400',
+        goal: 'walk',
+        age: 25,
+        gender: 'not_specified',
+        preferredGender: 'all',
+        preferredAgeRange: { min: 18, max: 99 },
+        hasAgreedToRules: false,
+        locationExact: { type: 'Point', coordinates: [defaultLng, defaultLat] },
+        locationFuzzy: { type: 'Point', coordinates: fuzzyCoords },
+        areaName: 'Минск',
+        isTourist: false,
+        blockedUsers: []
+      });
+    } else {
+      user.lastActiveAt = new Date();
+      await user.save();
+    }
+
+    const userObj = user.toObject ? user.toObject() : { ...user };
+    const exact = user.locationExact?.coordinates;
+    const fuzzy = user.locationFuzzy?.coordinates;
+    if (exact && exact.length === 2) {
+      userObj.coordinates = [exact[1], exact[0]]; // [lat, lng]
+    } else if (fuzzy && fuzzy.length === 2) {
+      userObj.coordinates = [fuzzy[1], fuzzy[0]]; // [lat, lng]
+    } else {
+      userObj.coordinates = [53.9045, 27.5615];
+    }
+
+    res.json(userObj);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Ошибка получения профиля' });
+  }
 });
-app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', service: 'yesminsk-api', timestamp: new Date() });
+
+// Онбординг: согласие с правилами
+app.post('/api/users/agree-rules', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const user = await User.findOneAndUpdate(
+      { telegramId: tgUser.id },
+      { hasAgreedToRules: true },
+      { new: true }
+    );
+    res.json({ success: true, user });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Ошибка обновления' });
+  }
 });
 
 // ==========================================
-// 1. РОУТЫ ПОЛЬЗОВАТЕЛЕЙ (USERS)
+// 2. ОБНОВЛЕНИЕ ПРОФИЛЯ ПОЛЬЗОВАТЕЛЯ
 // ==========================================
-
-// Сохранение / обновление профиля
-const handleProfileUpdate = async (req: AuthenticatedRequest, res: Response) => {
+const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
     const {
       name,
       firstName,
       age,
-      bio,
       gender,
       preferredGender,
       preferredAgeRange,
+      bio,
       goal,
       goals,
       avatarUrl,
       areaName,
       isTourist,
-      coordinates
+      coordinates, // [lat, lng]
+      isProfileActive
     } = req.body;
 
-    const coords = Array.isArray(coordinates) && coordinates.length === 2
-      ? coordinates
-      : [53.9045, 27.5615];
+    const user = await User.findOne({ telegramId: tgUser.id });
+    if (!user) {
+      return res.status(404).json({ error: 'Пользователь не найден' });
+    }
 
-    const safeCoords = obfuscateCoordinates(coords[0], coords[1]);
+    if (name || firstName) user.firstName = name || firstName;
+    if (age) user.age = Number(age);
+    if (gender) user.gender = gender;
+    if (preferredGender) user.preferredGender = preferredGender;
+    if (preferredAgeRange) {
+      user.preferredAgeRange = {
+        min: Number(preferredAgeRange.min) || 18,
+        max: Number(preferredAgeRange.max) || 99
+      };
+    }
+    if (bio !== undefined) user.bio = bio.slice(0, 200);
+    if (goal) user.goal = goal;
+    if (goals && Array.isArray(goals)) user.goals = goals;
+    if (avatarUrl) user.avatarUrl = avatarUrl;
+    if (areaName) user.areaName = areaName;
+    if (isTourist !== undefined) user.isTourist = Boolean(isTourist);
+    if (isProfileActive !== undefined) user.isProfileActive = Boolean(isProfileActive);
 
-    const updatedUser = await User.findOneAndUpdate(
-      { telegramId: tgUser.id },
-      {
-        telegramId: tgUser.id,
-        firstName: name || firstName || tgUser.first_name,
-        lastName: tgUser.last_name || '',
-        username: tgUser.username || '',
-        age: Number(age) || 25,
-        bio: (bio || '').slice(0, 200),
-        gender: gender || 'not_specified',
-        preferredGender: preferredGender || 'all',
-        preferredAgeRange: preferredAgeRange || { min: 18, max: 45 },
-        goal: goal || 'walk',
-        goals: goals || [goal || 'walk'],
-        avatarUrl: avatarUrl || tgUser.photo_url || '',
-        areaName: areaName || 'Центр / Немига',
-        isTourist: Boolean(isTourist),
-        locationExact: {
-          type: 'Point',
-          coordinates: [coords[1], coords[0]]
-        },
-        locationObfuscated: {
-          type: 'Point',
-          coordinates: [safeCoords[1], safeCoords[0]]
-        },
-        lastActive: new Date()
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    // Обновление координат
+    if (coordinates && Array.isArray(coordinates) && coordinates.length === 2) {
+      const [lat, lng] = coordinates;
+      user.locationExact = {
+        type: 'Point',
+        coordinates: [Number(lng), Number(lat)]
+      };
+      const fuzzyCoords = obfuscateCoordinates(Number(lng), Number(lat), 300, 500);
+      user.locationFuzzy = {
+        type: 'Point',
+        coordinates: fuzzyCoords
+      };
+    }
+
+    user.lastActiveAt = new Date();
+    await user.save();
 
     res.json({
       success: true,
-      user: {
-        id: updatedUser.telegramId,
-        telegramId: updatedUser.telegramId,
-        firstName: updatedUser.firstName,
-        username: updatedUser.username,
-        age: updatedUser.age,
-        bio: updatedUser.bio,
-        gender: updatedUser.gender,
-        preferredGender: updatedUser.preferredGender,
-        preferredAgeRange: updatedUser.preferredAgeRange,
-        goal: updatedUser.goal,
-        goals: updatedUser.goals,
-        avatarUrl: updatedUser.avatarUrl,
-        areaName: updatedUser.areaName,
-        isTourist: updatedUser.isTourist,
-        coordinates: [
-          updatedUser.locationObfuscated.coordinates[1],
-          updatedUser.locationObfuscated.coordinates[0]
-        ]
-      }
+      message: 'Профиль успешно сохранен',
+      user
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Ошибка сохранения профиля' });
   }
 };
 
-app.post('/api/users/profile', telegramAuthMiddleware, handleProfileUpdate);
-app.post('/users/profile', telegramAuthMiddleware, handleProfileUpdate);
+app.post('/api/users/profile', telegramAuthMiddleware, handleUpdateProfile);
+app.put('/api/users/profile', telegramAuthMiddleware, handleUpdateProfile);
 
-// Получение профиля текущего пользователя
-app.get('/api/users/me', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// ==========================================
+// 3. БЛОКИРОВКА / ЧЕРНЫЙ СПИСОК
+// ==========================================
+app.post('/api/users/block', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const user = await User.findOne({ telegramId: tgUser.id });
-    if (!user) {
-      return res.status(404).json({ error: 'Пользователь не найден' });
+    const { targetTelegramId } = req.body;
+    if (!targetTelegramId) {
+      return res.status(400).json({ error: 'Не указан ID пользователя для блокировки' });
     }
 
-    res.json({
-      id: user.telegramId,
-      telegramId: user.telegramId,
-      firstName: user.firstName,
-      username: user.username,
-      age: user.age,
-      bio: user.bio,
-      gender: user.gender,
-      preferredGender: user.preferredGender,
-      preferredAgeRange: user.preferredAgeRange,
-      goal: user.goal,
-      goals: user.goals,
-      avatarUrl: user.avatarUrl,
-      areaName: user.areaName,
-      isTourist: user.isTourist,
-      coordinates: [
-        user.locationObfuscated.coordinates[1],
-        user.locationObfuscated.coordinates[0]
-      ]
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Ошибка получения профиля' });
+    await User.findOneAndUpdate(
+      { telegramId: tgUser.id },
+      { $addToSet: { blockedUsers: Number(targetTelegramId) } }
+    );
+
+    res.json({ success: true, message: 'Пользователь заблокирован' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Ошибка блокировки' });
   }
 });
 
-// Получение пользователей поблизости с учетом фильтров и блокировок
-const handleNearbyUsers = async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/users/unblock', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const { targetTelegramId } = req.body;
+    await User.findOneAndUpdate(
+      { telegramId: tgUser.id },
+      { $pull: { blockedUsers: Number(targetTelegramId) } }
+    );
+    res.json({ success: true, message: 'Пользователь разблокирован' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Ошибка разблокировки' });
+  }
+});
+
+// ==========================================
+// 4. ПОЛЬЗОВАТЕЛИ РЯДОМ (NEARBY / MAP)
+// ==========================================
+const handleGetNearbyUsers = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
     const currentUser = await User.findOne({ telegramId: tgUser.id });
+    const { goal, lat, lng, radiusKm = 25 } = req.query;
 
-    const blockedIds: number[] = currentUser?.blockedUsers || [];
-    const usersWhoBlockedMe = await User.find({ blockedUsers: tgUser.id }).distinct('telegramId');
-    const allExcludedIds = Array.from(new Set([...blockedIds, ...usersWhoBlockedMe, tgUser.id]));
+    const myBlocked = currentUser?.blockedUsers || [];
+    const whoBlockedMeUsers = await User.find({ blockedUsers: tgUser.id }).select('telegramId');
+    const whoBlockedMe = whoBlockedMeUsers.map((u) => u.telegramId);
+    const excludeIds = Array.from(new Set([...myBlocked, ...whoBlockedMe, tgUser.id]));
 
-    const queryFilter: any = {
-      telegramId: { $nin: allExcludedIds }
+    const query: any = {
+      telegramId: { $nin: excludeIds },
+      isProfileActive: { $ne: false },
+      hasAgreedToRules: { $ne: false }
     };
 
-    if (currentUser?.preferredGender && currentUser.preferredGender !== 'all') {
-      queryFilter.gender = currentUser.preferredGender;
+    if (goal && goal !== 'all') {
+      query.goal = goal as ActivityGoal;
     }
 
+    // Фильтр по полу и возрасту
+    if (currentUser?.preferredGender && currentUser.preferredGender !== 'all') {
+      query.gender = currentUser.preferredGender;
+    }
     if (currentUser?.preferredAgeRange) {
-      queryFilter.age = {
+      query.age = {
         $gte: currentUser.preferredAgeRange.min || 18,
         $lte: currentUser.preferredAgeRange.max || 99
       };
     }
 
-    const users = await User.find(queryFilter).limit(60).sort({ lastActive: -1 });
+    // Гео-запрос возле координат
+    const centerLat = lat ? parseFloat(lat as string) : (currentUser?.locationExact?.coordinates[1] || 53.9045);
+    const centerLng = lng ? parseFloat(lng as string) : (currentUser?.locationExact?.coordinates[0] || 27.5615);
 
-    const formatted = users.map((u) => ({
-      id: u.telegramId,
-      telegramId: u.telegramId,
-      firstName: u.firstName,
-      username: u.username,
-      age: u.age,
-      gender: u.gender,
-      goal: u.goal,
-      goals: u.goals,
-      avatarUrl: u.avatarUrl,
-      bio: u.bio,
-      areaName: u.areaName,
-      isTourist: u.isTourist,
-      distanceMeters: Math.floor(Math.random() * 200) + 300,
-      coordinates: [
-        u.locationObfuscated.coordinates[1],
-        u.locationObfuscated.coordinates[0]
-      ]
-    }));
+    query.locationFuzzy = {
+      $nearSphere: {
+        $geometry: {
+          type: 'Point',
+          coordinates: [centerLng, centerLat]
+        },
+        $maxDistance: Number(radiusKm) * 1000
+      }
+    };
+
+    const users = await User.find(query).limit(50);
+
+    const formatted = users.map((u) => {
+      const fuzzy = u.locationFuzzy?.coordinates || [27.5615, 53.9045];
+      return {
+        id: u._id.toString(),
+        telegramId: u.telegramId,
+        username: u.username,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        avatarUrl: u.avatarUrl,
+        bio: u.bio || '',
+        goal: u.goal,
+        goals: u.goals || [u.goal],
+        age: u.age || 25,
+        gender: u.gender,
+        areaName: u.areaName || 'Минск',
+        isTourist: Boolean(u.isTourist),
+        coordinates: [fuzzy[1], fuzzy[0]], // [lat, lng]
+        distanceMeters: Math.floor(Math.random() * 200) + 300,
+        lastActiveAt: u.lastActiveAt
+      };
+    });
 
     res.json(formatted);
-  } catch (err) {
-    res.status(500).json({ error: 'Ошибка загрузки пользователей' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Ошибка получения пользователей рядом' });
   }
 };
 
-app.get('/api/users/nearby', telegramAuthMiddleware, handleNearbyUsers);
-app.get('/users/nearby', telegramAuthMiddleware, handleNearbyUsers);
+app.get('/api/users/nearby', telegramAuthMiddleware, handleGetNearbyUsers);
+app.get('/api/users/map', telegramAuthMiddleware, handleGetNearbyUsers);
 
-// Блокировка пользователя
-app.post('/api/users/block', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// ==========================================
+// 5. СОБЫТИЯ / СХОДКИ (EVENTS)
+// ==========================================
+app.get('/api/events', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const { targetUserId } = req.body;
+    const { category, lat, lng, radiusKm = 30 } = req.query;
 
-    if (!targetUserId) {
-      return res.status(400).json({ error: 'Не указан ID пользователя' });
+    const filter: any = {
+      isActive: true,
+      dateTime: { $gte: new Date(Date.now() - 6 * 60 * 60 * 1000) } // Встречи не старше 6 часов
+    };
+
+    if (category && category !== 'all') {
+      filter.category = category as EventCategory;
     }
 
-    await User.findOneAndUpdate(
-      { telegramId: tgUser.id },
-      { $addToSet: { blockedUsers: Number(targetUserId) } }
-    );
+    if (lat && lng) {
+      filter.location = {
+        $nearSphere: {
+          $geometry: {
+            type: 'Point',
+            coordinates: [parseFloat(lng as string), parseFloat(lat as string)]
+          },
+          $maxDistance: Number(radiusKm) * 1000
+        }
+      };
+    }
 
-    res.json({ success: true, message: 'Пользователь заблокирован' });
-  } catch (err) {
-    res.status(500).json({ error: 'Ошибка блокировки' });
-  }
-});
-
-// ==========================================
-// 2. РОУТЫ СОБЫТИЙ / СХОДОК (EVENTS)
-// ==========================================
-
-// Список активных событий
-const handleGetEvents = async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const tgUser = req.telegramUser!;
-    const events = await Event.find({ isActive: true }).sort({ dateTime: 1 }).limit(50);
+    const events = await Event.find(filter).sort({ dateTime: 1 }).limit(40);
 
     const formatted = events.map((ev) => ({
       id: ev._id.toString(),
@@ -257,26 +326,22 @@ const handleGetEvents = async (req: AuthenticatedRequest, res: Response) => {
       description: ev.description,
       category: ev.category,
       locationName: ev.locationName,
-      coordinates: [ev.location.coordinates[1], ev.location.coordinates[0]],
+      coordinates: [ev.location.coordinates[1], ev.location.coordinates[0]], // [lat, lng]
       dateTime: ev.dateTime,
       creator: ev.creator,
       participantsCount: ev.participants.length,
       maxParticipants: ev.maxParticipants || 0,
-      isJoined: ev.participants.some((p) => p.telegramId === tgUser.id),
+      isJoined: ev.participants.some((p: any) => Number(p.telegramId) === Number(tgUser.id)),
       participants: ev.participants.slice(0, 5)
     }));
 
     res.json(formatted);
-  } catch (err) {
+  } catch (err: any) {
     res.status(500).json({ error: 'Ошибка загрузки событий' });
   }
-};
+});
 
-app.get('/api/events', telegramAuthMiddleware, handleGetEvents);
-app.get('/events', telegramAuthMiddleware, handleGetEvents);
-
-// Создание события
-const handleCreateEvent = async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/events', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
     const user = await User.findOne({ telegramId: tgUser.id });
@@ -292,7 +357,7 @@ const handleCreateEvent = async (req: AuthenticatedRequest, res: Response) => {
     } = req.body;
 
     if (!title || !description || !locationName || !coordinates || !dateTime) {
-      return res.status(400).json({ error: 'Заполните обязательные поля' });
+      return res.status(400).json({ error: 'Заполните все обязательные поля события' });
     }
 
     const [lat, lng] = coordinates;
@@ -336,36 +401,40 @@ const handleCreateEvent = async (req: AuthenticatedRequest, res: Response) => {
       coordinates: [newEvent.location.coordinates[1], newEvent.location.coordinates[0]],
       dateTime: newEvent.dateTime,
       creator: newEvent.creator,
-      participantsCount: 1,
+      participantsCount: newEvent.participants.length,
       maxParticipants: newEvent.maxParticipants || 0,
       isJoined: true,
-      participants: newEvent.participants
+      participants: newEvent.participants.slice(0, 5)
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Ошибка создания сходки' });
+    res.status(500).json({ error: err.message || 'Ошибка создания события' });
   }
-};
+});
 
-app.post('/api/events', telegramAuthMiddleware, handleCreateEvent);
-app.post('/events', telegramAuthMiddleware, handleCreateEvent);
-
-// Обновление события (PUT / POST)
-const handleUpdateEvent = async (req: AuthenticatedRequest, res: Response) => {
+// Редактирование события автором
+const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const eventId = getParamId(req);
+    const eventId = getParamId(req.params.id);
 
-    if (!eventId || !mongoose.Types.ObjectId.isValid(eventId)) {
-      return res.status(400).json({ error: 'Некорректный ID события' });
+    if (!eventId || eventId === 'undefined' || eventId === 'null') {
+      return res.status(400).json({ error: 'Не указан корректный ID события' });
     }
 
-    const event = await Event.findById(eventId);
+    let event = null;
+    if (mongoose.Types.ObjectId.isValid(eventId)) {
+      event = await Event.findById(eventId);
+    }
+    if (!event) {
+      event = await Event.findOne({ _id: eventId });
+    }
+
     if (!event) {
       return res.status(404).json({ error: 'Событие не найдено' });
     }
 
     if (Number(event.creator.telegramId) !== Number(tgUser.id)) {
-      return res.status(403).json({ error: 'Только создатель может редактировать событие' });
+      return res.status(403).json({ error: 'Только создатель может редактировать сходку' });
     }
 
     const {
@@ -384,7 +453,6 @@ const handleUpdateEvent = async (req: AuthenticatedRequest, res: Response) => {
     if (locationName) event.locationName = locationName;
     if (dateTime) event.dateTime = new Date(dateTime);
     if (maxParticipants !== undefined) event.maxParticipants = Number(maxParticipants) || 0;
-
     if (coordinates && Array.isArray(coordinates)) {
       const [lat, lng] = coordinates;
       event.location = {
@@ -407,7 +475,7 @@ const handleUpdateEvent = async (req: AuthenticatedRequest, res: Response) => {
       creator: event.creator,
       participantsCount: event.participants.length,
       maxParticipants: event.maxParticipants || 0,
-      isJoined: event.participants.some((p) => p.telegramId === tgUser.id),
+      isJoined: event.participants.some((p: any) => Number(p.telegramId) === Number(tgUser.id)),
       participants: event.participants.slice(0, 5)
     });
   } catch (err: any) {
@@ -415,269 +483,250 @@ const handleUpdateEvent = async (req: AuthenticatedRequest, res: Response) => {
   }
 };
 
-app.put('/api/events/:id', telegramAuthMiddleware, handleUpdateEvent);
-app.post('/api/events/:id', telegramAuthMiddleware, handleUpdateEvent);
-app.put('/events/:id', telegramAuthMiddleware, handleUpdateEvent);
+app.put('/api/events/:id', telegramAuthMiddleware, handleUpdateEventLogic);
+app.post('/api/events/:id', telegramAuthMiddleware, handleUpdateEventLogic);
 
 // Удаление события
-const handleDeleteEvent = async (req: AuthenticatedRequest, res: Response) => {
+app.delete('/api/events/:id', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const eventId = getParamId(req);
+    const eventId = getParamId(req.params.id);
 
-    if (!eventId || !mongoose.Types.ObjectId.isValid(eventId)) {
-      return res.status(400).json({ error: 'Некорректный ID события' });
+    let event = null;
+    if (mongoose.Types.ObjectId.isValid(eventId)) {
+      event = await Event.findById(eventId);
+    }
+    if (!event) {
+      event = await Event.findOne({ _id: eventId });
     }
 
-    const event = await Event.findById(eventId);
     if (!event) {
       return res.status(404).json({ error: 'Событие не найдено' });
     }
 
     if (Number(event.creator.telegramId) !== Number(tgUser.id)) {
-      return res.status(403).json({ error: 'Только создатель может удалить событие' });
+      return res.status(403).json({ error: 'Только создатель может удалить сходку' });
     }
 
     await Event.findByIdAndDelete(event._id);
-    res.json({ success: true, message: 'Событие удалено' });
-  } catch (err) {
+    res.json({ success: true, message: 'Событие успешно удалено' });
+  } catch (err: any) {
     res.status(500).json({ error: 'Ошибка удаления события' });
   }
-};
+});
 
-app.delete('/api/events/:id', telegramAuthMiddleware, handleDeleteEvent);
-app.delete('/events/:id', telegramAuthMiddleware, handleDeleteEvent);
-
-// Присоединиться к событию
+// Запись на сходку
 app.post('/api/events/:id/join', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const eventId = getParamId(req);
-
-    if (!eventId || !mongoose.Types.ObjectId.isValid(eventId)) {
-      return res.status(400).json({ error: 'Некорректный ID' });
-    }
-
+    const user = await User.findOne({ telegramId: tgUser.id });
+    const eventId = getParamId(req.params.id);
     const event = await Event.findById(eventId);
+
     if (!event || !event.isActive) {
-      return res.status(404).json({ error: 'Событие не найдено' });
+      return res.status(404).json({ error: 'Событие не найдено или завершено' });
     }
 
-    const alreadyJoined = event.participants.some((p) => p.telegramId === tgUser.id);
-    if (!alreadyJoined) {
-      const user = await User.findOne({ telegramId: tgUser.id });
-      event.participants.push({
-        telegramId: tgUser.id,
-        name: user?.firstName || tgUser.first_name,
-        username: user?.username || tgUser.username,
-        avatarUrl: user?.avatarUrl || tgUser.photo_url || '',
-        joinedAt: new Date()
-      });
-      await event.save();
+    const alreadyJoined = event.participants.some((p: any) => Number(p.telegramId) === Number(tgUser.id));
+    if (alreadyJoined) {
+      return res.json({ success: true, message: 'Уже участвуешь', event });
     }
 
-    res.json({ success: true, message: 'Успешно присоединились' });
-  } catch (err) {
-    res.status(500).json({ error: 'Ошибка записи на сходку' });
+    if (event.maxParticipants && event.maxParticipants > 0 && event.participants.length >= event.maxParticipants) {
+      return res.status(400).json({ error: 'Все места заняты' });
+    }
+
+    event.participants.push({
+      telegramId: tgUser.id,
+      name: user?.firstName || tgUser.first_name,
+      username: user?.username || tgUser.username,
+      avatarUrl: user?.avatarUrl || tgUser.photo_url || '',
+      joinedAt: new Date()
+    });
+
+    await event.save();
+    res.json({ success: true, event });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Ошибка присоединения к событию' });
   }
 });
 
-// Покинуть событие
+// Отмена участия в сходке
 app.post('/api/events/:id/leave', telegramAuthMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const eventId = getParamId(req);
-
-    if (!eventId || !mongoose.Types.ObjectId.isValid(eventId)) {
-      return res.status(400).json({ error: 'Некорректный ID' });
-    }
-
+    const eventId = getParamId(req.params.id);
     const event = await Event.findById(eventId);
-    if (event) {
-      event.participants = event.participants.filter((p) => p.telegramId !== tgUser.id);
-      await event.save();
+
+    if (!event) {
+      return res.status(404).json({ error: 'Событие не найдено' });
     }
 
-    res.json({ success: true, message: 'Вы вышли из сходки' });
-  } catch (err) {
-    res.status(500).json({ error: 'Ошибка выхода' });
+    event.participants = event.participants.filter((p: any) => Number(p.telegramId) !== Number(tgUser.id));
+    await event.save();
+
+    res.json({ success: true, message: 'Вы покинули событие' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Ошибка выхода из события' });
   }
 });
 
 // ==========================================
-// 3. СИДЕР ТЕСТОВЫХ ПОЛЬЗОВАТЕЛЕЙ (SEED ROUTE)
+// 6. СИДИРОВАНИЕ 10 ТЕСТОВЫХ АНКЕТ
 // ==========================================
-const handleSeed = async (_req: Request, res: Response) => {
+app.get('/api/users/seed', async (req: Request, res: Response) => {
   try {
     const seedProfiles = [
       {
-        telegramId: 900000001,
-        firstName: 'Полина',
+        telegramId: 90000001,
+        firstName: 'Дарья',
+        username: 'daria_minsk',
         age: 23,
         gender: 'female',
-        preferredGender: 'all',
-        preferredAgeRange: { min: 20, max: 35 },
-        goal: 'walk',
-        goals: ['walk', 'culture'],
-        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200',
-        bio: 'Люблю неспешные прогулки по Осмоловке с фильтр-кофе ☕️. Ищу компанию на выставки.',
-        areaName: 'Центр / Немига',
-        coords: [53.9045, 27.5520]
+        goal: 'cafe_bar',
+        areaName: 'Осмоловка',
+        bio: 'Люблю архитектуру старой Осмоловки, фильтр-кофе в «Зерне» и неспешные разговоры об искусстве.',
+        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
+        exactCoords: [27.5612, 53.9115]
       },
       {
-        telegramId: 900000002,
+        telegramId: 90000002,
         firstName: 'Максим',
-        age: 28,
-        gender: 'male',
-        preferredGender: 'all',
-        preferredAgeRange: { min: 22, max: 40 },
-        goal: 'bar',
-        goals: ['bar', 'walk'],
-        avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200',
-        bio: 'Заглянуть на Октябрьскую в пятницу вечером, поболтать про дизайн и урбанистику.',
-        areaName: 'Октябрьская / Первомайская',
-        coords: [53.8905, 27.5740]
-      },
-      {
-        telegramId: 900000003,
-        firstName: 'Алина',
-        age: 26,
-        gender: 'female',
-        preferredGender: 'female',
-        preferredAgeRange: { min: 21, max: 32 },
-        goal: 'culture',
-        goals: ['culture', 'walk'],
-        avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200',
-        bio: 'Ищу компанию для походов в арт-пространства и кинотеатр «Центральный».',
-        areaName: 'Площадь Победы',
-        coords: [53.9085, 27.5750]
-      },
-      {
-        telegramId: 900000004,
-        firstName: 'Артем',
-        age: 31,
-        gender: 'male',
-        preferredGender: 'all',
-        preferredAgeRange: { min: 24, max: 45 },
-        goal: 'trip',
-        goals: ['trip', 'walk'],
-        avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200',
-        bio: 'Выходные на Минском море или покатушки на велосипедах вдоль Свислочи 🚴.',
-        areaName: 'Парк Челюскинцев',
-        coords: [53.9240, 27.6150]
-      },
-      {
-        telegramId: 900000005,
-        firstName: 'София',
-        age: 22,
-        gender: 'female',
-        preferredGender: 'all',
-        preferredAgeRange: { min: 20, max: 30 },
-        goal: 'walk',
-        goals: ['walk', 'bar'],
-        avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200',
-        bio: 'Учусь на архитектора. Обожаю бродить по Троицкому предместью и фоткать на плёнку.',
-        areaName: 'Троицкое / Верхний город',
-        coords: [53.9080, 27.5560]
-      },
-      {
-        telegramId: 900000006,
-        firstName: 'Дмитрий',
-        age: 35,
-        gender: 'male',
-        preferredGender: 'all',
-        preferredAgeRange: { min: 25, max: 50 },
-        goal: 'boardgames',
-        goals: ['boardgames', 'bar'],
-        avatarUrl: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=200',
-        bio: 'Собираю настолки (Catan, Ticket to Ride, Dune). Всегда рад новым игрокам в клубах.',
-        areaName: 'Комаровка / В. Хоружей',
-        coords: [53.9190, 27.5800]
-      },
-      {
-        telegramId: 900000007,
-        firstName: 'Елена',
-        age: 42,
-        gender: 'female',
-        preferredGender: 'all',
-        preferredAgeRange: { min: 30, max: 55 },
-        goal: 'walk',
-        goals: ['walk', 'culture'],
-        avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200',
-        bio: 'Прогулки по Ботаническому саду, разговоры о книгах и искусстве.',
-        areaName: 'Парк Челюскинцев',
-        coords: [53.9210, 27.6100]
-      },
-      {
-        telegramId: 900000008,
-        firstName: 'Илья',
-        age: 24,
-        gender: 'male',
-        preferredGender: 'all',
-        preferredAgeRange: { min: 20, max: 30 },
-        goal: 'bar',
-        goals: ['bar', 'walk'],
-        avatarUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=200',
-        bio: 'Знаю где в Минске лучший спешелти-кофе. С удовольствием составлю компанию.',
-        areaName: 'Карла Маркса / Ленина',
-        coords: [53.8975, 27.5570]
-      },
-      {
-        telegramId: 900000009,
-        firstName: 'Ксения',
-        age: 29,
-        gender: 'female',
-        preferredGender: 'all',
-        preferredAgeRange: { min: 22, max: 40 },
-        goal: 'sport',
-        goals: ['sport', 'walk'],
-        avatarUrl: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=200',
-        bio: 'Пробежки в Парке Победы по утрам или бадминтон. Присоединяйтесь!',
-        areaName: 'Парк Победы / Комсомольское',
-        coords: [53.9240, 27.5450]
-      },
-      {
-        telegramId: 900000010,
-        firstName: 'Никита',
+        username: 'max_oktyabr',
         age: 27,
         gender: 'male',
-        preferredGender: 'all',
-        preferredAgeRange: { min: 22, max: 38 },
         goal: 'walk',
-        goals: ['walk', 'bar'],
-        avatarUrl: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=200',
-        bio: 'Живу в Новой Боровой. Гуляю с собакой, буду рад компании на кофе.',
+        areaName: 'Октябрьская',
+        bio: 'Гуляю по Октябрьской вдоль граффити и Свислочи. Инженер, слушаю инди-рок, ценю честное общение.',
+        avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80',
+        exactCoords: [27.5740, 53.8905]
+      },
+      {
+        telegramId: 90000003,
+        firstName: 'Алёна',
+        username: 'alena_art',
+        age: 31,
+        gender: 'female',
+        goal: 'expo_cinema',
+        areaName: 'Немига / Центр',
+        bio: 'Дизайнер интерьеров. Ищу компанию на выставки в Национальный художественный музей или арт-хаус в кино.',
+        avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=400&q=80',
+        exactCoords: [27.5520, 53.9045]
+      },
+      {
+        telegramId: 90000004,
+        firstName: 'Андрей',
+        username: 'andrei_borovaya',
+        age: 35,
+        gender: 'male',
+        goal: 'trip_outdoors',
         areaName: 'Новая Боровая',
-        coords: [53.9550, 27.6750]
+        bio: 'Катаюсь на гравийнике, люблю вылазки к Минскому морю или Цнянке на закате. За душевные разговоры без пафоса.',
+        avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80',
+        exactCoords: [27.6750, 53.9550]
+      },
+      {
+        telegramId: 90000005,
+        firstName: 'Полина',
+        username: 'polly_uruchye',
+        age: 20,
+        gender: 'female',
+        goal: 'walk',
+        areaName: 'Уручье',
+        bio: 'Студентка. Часто гуляю в Музее валунов в Уручье с термосом чая и скетчбуком. Буду рада спокойной компании!',
+        avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80',
+        exactCoords: [27.6880, 53.9450]
+      },
+      {
+        telegramId: 90000006,
+        firstName: 'Дмитрий',
+        username: 'dzmitry_chelyusk',
+        age: 44,
+        gender: 'male',
+        goal: 'cafe_bar',
+        areaName: 'Парк Челюскинцев',
+        bio: 'Преподаватель истории. Люблю тихие аллеи ботанического сада, букинистические магазины и хороший эспрессо.',
+        avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=400&q=80',
+        exactCoords: [27.6150, 53.9240]
+      },
+      {
+        telegramId: 90000007,
+        firstName: 'Светлана',
+        username: 'sveta_pobeda',
+        age: 52,
+        gender: 'female',
+        goal: 'walk',
+        areaName: 'Площадь Победы',
+        bio: 'Люблю архитектуру сталинского ампира, парк Горького и пешие прогулки 10 000 шагов по набережной Свислочи.',
+        avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=400&q=80',
+        exactCoords: [27.5750, 53.9085]
+      },
+      {
+        telegramId: 90000008,
+        firstName: 'Илья',
+        username: 'ilya_zyba',
+        age: 26,
+        gender: 'male',
+        goal: 'cafe_bar',
+        areaName: 'Зыбицкая',
+        bio: 'Frontend-разработчик. По вечерам не против попробовать сидр в Верхнем городе или поиграть в настолки.',
+        avatarUrl: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&w=400&q=80',
+        exactCoords: [27.5580, 53.9055]
+      },
+      {
+        telegramId: 90000009,
+        firstName: 'Ольга',
+        username: 'olga_komarovka',
+        age: 38,
+        gender: 'female',
+        goal: 'expo_cinema',
+        areaName: 'Комаровка',
+        bio: 'Флорист. Обожаю субботние походы за сезонными ягодами на Комаровку, пленочную фотографию и выставки.',
+        avatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=400&q=80',
+        exactCoords: [27.5800, 53.9190]
+      },
+      {
+        telegramId: 90000010,
+        firstName: 'Евгений',
+        username: 'evgeny_vostok',
+        age: 29,
+        gender: 'male',
+        goal: 'walk',
+        areaName: 'Восток / Маяк Минска',
+        bio: 'Люблю вечерние прогулки у Национальной библиотеки и Дана Молл, пью раф, играю в настольные игры.',
+        avatarUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=400&q=80',
+        exactCoords: [27.6530, 53.9335]
       }
     ];
 
-    for (const p of seedProfiles) {
-      const safe = obfuscateCoordinates(p.coords[0], p.coords[1]);
+    for (const item of seedProfiles) {
+      const [lng, lat] = item.exactCoords;
+      const fuzzyCoords = obfuscateCoordinates(lng, lat, 300, 500);
+
       await User.findOneAndUpdate(
-        { telegramId: p.telegramId },
+        { telegramId: item.telegramId },
         {
-          telegramId: p.telegramId,
-          firstName: p.firstName,
-          age: p.age,
-          gender: p.gender,
-          preferredGender: p.preferredGender,
-          preferredAgeRange: p.preferredAgeRange,
-          goal: p.goal,
-          goals: p.goals,
-          avatarUrl: p.avatarUrl,
-          bio: p.bio,
-          areaName: p.areaName,
-          isTourist: false,
-          locationExact: {
-            type: 'Point',
-            coordinates: [p.coords[1], p.coords[0]]
-          },
-          locationObfuscated: {
-            type: 'Point',
-            coordinates: [safe[1], safe[0]]
-          },
-          lastActive: new Date()
+          $set: {
+            telegramId: item.telegramId,
+            username: item.username,
+            firstName: item.firstName,
+            age: item.age,
+            gender: item.gender,
+            preferredGender: 'all',
+            preferredAgeRange: { min: 18, max: 99 },
+            goal: item.goal,
+            goals: [item.goal],
+            bio: item.bio,
+            avatarUrl: item.avatarUrl,
+            areaName: item.areaName,
+            isTourist: false,
+            hasAgreedToRules: true,
+            isProfileActive: true,
+            blockedUsers: [],
+            locationExact: { type: 'Point', coordinates: [lng, lat] },
+            locationFuzzy: { type: 'Point', coordinates: fuzzyCoords },
+            lastActiveAt: new Date()
+          }
         },
         { upsert: true, new: true }
       );
@@ -686,26 +735,16 @@ const handleSeed = async (_req: Request, res: Response) => {
     res.json({
       success: true,
       count: seedProfiles.length,
-      message: `Успешно загружено ${seedProfiles.length} анкет в Минске!`
+      message: `Успешно загружено ${seedProfiles.length} тестовых анкет в Минске!`
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Ошибка сидирования' });
   }
-};
+});
 
-app.get('/api/users/seed', handleSeed);
-app.get('/users/seed', handleSeed);
-
-// Запуск сервера
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log('MongoDB подключена успешно');
-    app.listen(PORT, () => {
-      console.log(`Сервер YesMinsk запущен на порту ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error('Ошибка подключения MongoDB:', err);
-  });
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => {
+  console.log(`🚀 YesMinsk API сервер успешно запущен на порту ${PORT}`);
+});
 
 export default app;
