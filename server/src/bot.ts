@@ -6,6 +6,7 @@ import { Event } from './models/Event';
 import { Donation } from './models/Donation';
 import { handleNewsMessage } from './news';
 import { handleModerationCallback, handleModerationCommand } from './moderation';
+import { handleStatsCommand } from './stats';
 import { eventSummaryHtml, eventAppPath } from './eventNotify';
 
 /**
@@ -71,6 +72,7 @@ async function handleMessage(message: any, chatId: number) {
   // Новости проекта (/news, /delnews, /myid) — в том числе фото и альбомы
   if (await handleNewsMessage(message)) return;
   if (await handleModerationCommand(message)) return;
+  if (await handleStatsCommand(message)) return;
 
   if (typeof message.text !== 'string') return;
   const text = message.text.trim();
@@ -134,6 +136,30 @@ async function sendEventInvite(chatId: number, eventId: string, firstName?: stri
   }
 }
 
+// Меню команд (кнопка «/» в чате): всем — только /start, администраторам — свои команды
+async function registerBotCommands(botToken: string) {
+  const call = (body: any) =>
+    fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).catch(() => {});
+
+  await call({ commands: [{ command: 'start', description: 'Открыть ДА! МИНСК' }] });
+
+  const adminCommands = [
+    { command: 'stats', description: 'Статистика приложения' },
+    { command: 'news', description: 'Опубликовать новость: /news текст' },
+    { command: 'delnews', description: 'Удалить последнюю новость' },
+    { command: 'unban', description: 'Разбанить: /unban ID' },
+    { command: 'myid', description: 'Мой Telegram ID' },
+    { command: 'start', description: 'Открыть ДА! МИНСК' }
+  ];
+  for (const id of (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map((x) => Number(x.trim())).filter(Boolean)) {
+    await call({ commands: adminCommands, scope: { type: 'chat', chat_id: id } });
+  }
+}
+
 // Регистрирует вебхук в Telegram при запуске сервера
 export async function registerTelegramWebhook() {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -157,6 +183,7 @@ export async function registerTelegramWebhook() {
     const data: any = await res.json();
     if (data.ok) {
       console.log(`🤖 Вебхук бота подключён: ${publicUrl}${WEBHOOK_PATH}`);
+      registerBotCommands(botToken);
     } else {
       console.warn('⚠️ Не удалось подключить вебхук бота:', data.description);
     }
