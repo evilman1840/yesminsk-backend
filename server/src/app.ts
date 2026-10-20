@@ -841,6 +841,11 @@ app.get('/api/users/seed', async (_req: Request, res: Response) => {
   }
 });
 
+// Проверка, что сервер жив (для «будильника», который не даёт серверу уснуть)
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
+
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);
 
