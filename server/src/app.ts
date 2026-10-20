@@ -8,6 +8,7 @@ import { Event, EventCategory } from './models/Event';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
 import { Reaction, ReactionType } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
+import { setupTelegramBot, registerTelegramWebhook } from './bot';
 
 dotenv.config();
 
@@ -840,7 +841,11 @@ app.get('/api/users/seed', async (_req: Request, res: Response) => {
   }
 });
 
+// Telegram-бот (/start с кнопкой открытия приложения)
+setupTelegramBot(app);
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🚀 YesMinsk API запущен на порту ${PORT}`);
+  registerTelegramWebhook();
 });
