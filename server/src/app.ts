@@ -9,8 +9,9 @@ import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils'
 import { Reaction, ReactionType } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
-import { setupNewsRoutes } from './news';
+import { setupNewsRoutes, isAdmin } from './news';
 import { banGuard, setupModerationRoutes } from './moderation';
+import { markInviteJoined } from './invites';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen } from './eventNotify';
 
 dotenv.config();
@@ -122,6 +123,8 @@ app.post('/api/users/agree-rules', telegramAuthMiddleware as any, async (req: Au
       { hasAgreedToRules: true },
       { new: true }
     );
+    // Пришёл по приглашению друга — благодарим того, кто позвал
+    markInviteJoined(tgUser.id, user?.firstName || tgUser.first_name).catch(() => {});
     res.json({ success: true, user });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка обновления правил' });
@@ -561,9 +564,13 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
       participantsCount: ev.participants.length,
       maxParticipants: ev.maxParticipants || 0,
       isJoined: ev.participants.some((p) => p.telegramId === tgUser.id),
-      participants: ev.participants.slice(0, 5)
+      participants: ev.participants.slice(0, 5),
+      // «⭐ От ДА! МИНСК» — сходки автора проекта
+      isOfficial: isAdmin(ev.creator.telegramId)
     }));
 
+    // Официальные сходки — первыми
+    formatted.sort((a, b) => Number(b.isOfficial) - Number(a.isOfficial));
     res.json(formatted);
   } catch (err) {
     res.status(500).json({ error: 'Ошибка загрузки событий' });

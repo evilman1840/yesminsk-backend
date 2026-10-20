@@ -7,6 +7,7 @@ import { Donation } from './models/Donation';
 import { handleNewsMessage } from './news';
 import { handleModerationCallback, handleModerationCommand } from './moderation';
 import { handleStatsCommand } from './stats';
+import { handleInviteStart } from './invites';
 import { eventSummaryHtml, eventAppPath } from './eventNotify';
 
 /**
@@ -76,6 +77,13 @@ async function handleMessage(message: any, chatId: number) {
 
   if (typeof message.text !== 'string') return;
   const text = message.text.trim();
+
+  // Приглашение в приложение от друга: t.me/<бот>?start=invite_<id>
+  const inviteMatch = text.match(/^\/start\s+invite_(\d+)$/i);
+  if (inviteMatch) {
+    handleInviteStart(chatId, message.from?.id, Number(inviteMatch[1]), message.from?.first_name);
+    return;
+  }
 
   // Ссылка-приглашение на сходку: t.me/<бот>?start=event_<id>
   const eventMatch = text.match(/^\/start\s+event_([a-f0-9]{24})$/i);

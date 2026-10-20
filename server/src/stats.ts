@@ -88,6 +88,7 @@ export async function buildStats(): Promise<string> {
   const Report = mongoose.models.Report;
   const openReports = Report ? await Report.countDocuments({ status: 'open' }) : 0;
   const newsCount = await News.countDocuments({ isPublished: true });
+  const invitedJoined = await User.countDocuments({ ...real, invitedBy: { $exists: true } });
 
   const date = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 
@@ -100,7 +101,7 @@ export async function buildStats(): Promise<string> {
     `Заходили: сегодня ${activeToday} · за 7 дней ${active7}`,
     `Мужчины ${men} · женщины ${women} · не указали ${usersTotal - men - women}`,
     `🧭 Гиды ${guides} · 🧳 туристы ${tourists} · ⚡ «Хочу сейчас» ${availableNow}`,
-    `🙈 В невидимке ${invisible}`,
+    `🙈 В невидимке ${invisible} · 💌 пришли по приглашениям ${invitedJoined}`,
     ``,
     `👋 <b>Знакомства</b>`,
     `«Пообщаться» всего ${likes.length} (за 7 дней ${plus(likes7)})`,
