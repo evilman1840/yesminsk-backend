@@ -36,6 +36,7 @@ export interface IUser extends Document {
   isGuide: boolean;       // «🧭 Покажу город» — местный, готов показать город туристам
   isBanned?: boolean;        // забанен модератором
   invitedBy?: number;        // кто позвал в приложение
+  savedPlaces?: string[];    // 🔖 места, которые человек хочет посетить
   hiddenByReports?: boolean; // скрыт после 3 жалоб до решения модератора
   guideAbout?: string;    // что может показать
   lastActiveAt: Date;
@@ -87,6 +88,7 @@ const UserSchema = new Schema<IUser>(
     isGuide: { type: Boolean, default: false },
     isBanned: { type: Boolean, default: false },
     invitedBy: { type: Number },
+    savedPlaces: { type: [String], default: [] },
     hiddenByReports: { type: Boolean, default: false },
     guideAbout: { type: String, maxlength: 140, default: '' },
     lastActiveAt: { type: Date, default: Date.now }

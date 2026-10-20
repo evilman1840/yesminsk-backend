@@ -29,6 +29,7 @@ export interface IPlace extends Document {
   location: { type: 'Point'; coordinates: [number, number] }; // [lng, lat]
   mishaTip: string;
   blogUrl: string;
+  mapUrl: string; // ссылка на место в Яндекс Картах (отзывы и фото)
   price?: PlacePrice;
   rainOk: boolean;   // ☔ ок в дождь
   evening: boolean;  // 🌙 лучше вечером
@@ -49,6 +50,7 @@ const PlaceSchema = new Schema<IPlace>(
     },
     mishaTip: { type: String, default: '', maxlength: 400 },
     blogUrl: { type: String, default: '' },
+    mapUrl: { type: String, default: '' },
     price: { type: String, enum: Object.keys(PLACE_PRICES) },
     rainOk: { type: Boolean, default: false },
     evening: { type: Boolean, default: false },

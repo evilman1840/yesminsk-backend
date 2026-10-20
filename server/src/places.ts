@@ -11,7 +11,7 @@ import { isAdmin } from './news';
  * Адреса для приложения
  * ==================================================================== */
 
-const formatPlace = (p: IPlace, tipsCount = 0) => ({
+const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false) => ({
   id: p._id.toString(),
   name: p.name,
   description: p.description,
@@ -21,6 +21,8 @@ const formatPlace = (p: IPlace, tipsCount = 0) => ({
   coordinates: [p.location.coordinates[1], p.location.coordinates[0]], // [lat, lng]
   mishaTip: p.mishaTip,
   blogUrl: p.blogUrl,
+  mapUrl: p.mapUrl || '',
+  isSaved,
   price: p.price || null,
   rainOk: p.rainOk,
   evening: p.evening,
@@ -29,14 +31,34 @@ const formatPlace = (p: IPlace, tipsCount = 0) => ({
 });
 
 export function setupPlacesRoutes(app: Express) {
-  app.get('/api/places', async (_req: Request, res: Response) => {
+  app.get('/api/places', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const places = await Place.find({}).sort({ createdAt: -1 }).limit(300);
-      const counts = await PlaceTip.aggregate([{ $group: { _id: '$placeId', n: { $sum: 1 } } }]);
+      const [places, counts, me] = await Promise.all([
+        Place.find({}).sort({ createdAt: -1 }).limit(300),
+        PlaceTip.aggregate([{ $group: { _id: '$placeId', n: { $sum: 1 } } }]),
+        User.findOne({ telegramId: req.telegramUser!.id }, { savedPlaces: 1 }).lean()
+      ]);
       const countById = new Map(counts.map((c) => [String(c._id), c.n]));
-      res.json(places.map((p) => formatPlace(p, countById.get(p._id.toString()) || 0)));
+      const saved = new Set(me?.savedPlaces || []);
+      res.json(places.map((p) => formatPlace(p, countById.get(p._id.toString()) || 0, saved.has(p._id.toString()))));
     } catch (err) {
       res.status(500).json({ error: 'Ошибка загрузки мест' });
+    }
+  });
+
+  // 🔖 Сохранить место / убрать из сохранённых
+  app.post('/api/places/:id/save', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!mongoose.Types.ObjectId.isValid(id) || !(await Place.exists({ _id: id }))) {
+        return res.status(404).json({ error: 'Место не найдено' });
+      }
+      const me = await User.findOne({ telegramId: req.telegramUser!.id }, { savedPlaces: 1 });
+      const isSaved = Boolean(me?.savedPlaces?.includes(id));
+      await User.updateOne({ telegramId: req.telegramUser!.id }, isSaved ? { $pull: { savedPlaces: id } } : { $addToSet: { savedPlaces: id } });
+      res.json({ saved: !isSaved });
+    } catch {
+      res.status(500).json({ error: 'Не удалось сохранить место' });
     }
   });
 
@@ -124,7 +146,7 @@ export function setupPlacesRoutes(app: Express) {
  * Бот: добавление мест (/place), список (/places), удаление (/delplace)
  * ==================================================================== */
 
-type Step = 'photos' | 'name' | 'desc' | 'moods' | 'address' | 'address_confirm' | 'price' | 'marks' | 'tip' | 'blog' | 'preview';
+type Step = 'photos' | 'name' | 'desc' | 'moods' | 'address' | 'address_confirm' | 'maplink' | 'price' | 'marks' | 'tip' | 'blog' | 'preview';
 
 interface Draft {
   step: Step;
@@ -141,6 +163,7 @@ interface Draft {
   oneDay: boolean;
   mishaTip: string;
   blogUrl: string;
+  mapUrl: string;
   photoTimer?: NodeJS.Timeout;
 }
 
@@ -201,6 +224,7 @@ const previewHtml = (d: Draft) =>
     `📍 ${escapeHtml(d.foundLabel || d.address)}`,
     d.mishaTip ? `💡 ${escapeHtml(d.mishaTip)}` : '',
     d.blogUrl ? `📖 ${escapeHtml(d.blogUrl)}` : '',
+    d.mapUrl ? `🗺 Яндекс Карты: ссылка есть` : '',
     `🖼 Фото: ${d.photos.length}`
   ]
     .filter((line) => line !== undefined)
@@ -237,6 +261,41 @@ async function geocode(address: string): Promise<{ coords: [number, number]; lab
   return null;
 }
 
+/* ---------- Ссылки Яндекс Карт ---------- */
+
+const isYandexMapsLink = (url: string) => /^https?:\/\/([\w-]+\.)*(yandex\.(by|ru|com|kz)|ya\.ru)\/(maps|-\/)/i.test(url.trim());
+
+// Точка из ссылки Яндекс Карт: из параметров адреса или со страницы места
+export async function placeFromYandexLink(url: string): Promise<{ coords: [number, number]; label: string } | null> {
+  try {
+    const res = await fetch(url.trim(), {
+      redirect: 'follow',
+      headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148', 'Accept-Language': 'ru' }
+    });
+    const finalUrl = decodeURIComponent(res.url || url);
+    const html = await res.text();
+
+    let lng: number | null = null;
+    let lat: number | null = null;
+    const fromParams = finalUrl.match(/[?&](?:pt|ll|whatshere\[point\])=([0-9.]+),([0-9.]+)/);
+    const fromPage = html.match(/"displayCoordinates":\[([0-9.]+),([0-9.]+)\]/) || html.match(/"coordinates":\[([0-9.]+),([0-9.]+)\]/);
+    // У страницы места свои координаты точнее, чем центр карты в ссылке
+    const m = finalUrl.includes('/org/') && fromPage ? fromPage : fromParams || fromPage;
+    if (m) {
+      lng = parseFloat(m[1]);
+      lat = parseFloat(m[2]);
+    }
+    if (lat === null || lng === null || !inMinskArea(lat, lng)) return null;
+
+    const title = html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] || '';
+    const label = title.replace(/\s+—\s+Яндекс\s*Карты.*$/i, '').replace(/&quot;/g, '"').trim();
+    // «Карта Минска с улицами…» — это просто карта, а не место; подпись не нужна
+    return { coords: [lat, lng], label: /^Карта\s/i.test(label) ? '' : label };
+  } catch {
+    return null;
+  }
+}
+
 /* ---------- Шаги диалога ---------- */
 
 async function ask(chatId: number, d: Draft) {
@@ -250,7 +309,12 @@ async function ask(chatId: number, d: Draft) {
     case 'moods':
       return say(chatId, 'Шаг 4/8. Какие настроения? Можно несколько:', moodsKeyboard(d));
     case 'address':
-      return say(chatId, 'Шаг 5/8. Адрес? Например: <code>Зыбицкая 6</code>\n\nИли пришли геоточку: 📎 → Геопозиция.');
+      return say(
+        chatId,
+        'Шаг 5/8. Где это? Пришли одно из трёх:\n• адрес — <code>Зыбицкая 6</code>\n• ссылку на место в Яндекс Картах (так в карточке появятся отзывы и фото)\n• геоточку: 📎 → Геопозиция'
+      );
+    case 'maplink':
+      return say(chatId, '🗺 Есть ссылка на это место в Яндекс Картах? Люди смогут почитать отзывы и посмотреть фото.', SKIP_BTN);
     case 'price':
       return say(chatId, 'Шаг 6/8. Сколько стоит?', [
         [
@@ -285,7 +349,8 @@ const newDraft = (): Draft => ({
   evening: false,
   oneDay: false,
   mishaTip: '',
-  blogUrl: ''
+  blogUrl: '',
+  mapUrl: ''
 });
 
 /**
@@ -297,7 +362,7 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
   const text: string = (message.text || '').trim();
   const draft = drafts.get(chatId);
 
-  const isPlaceCommand = /^\/(place|places|delplace|cancel)\b/i.test(text);
+  const isPlaceCommand = /^\/(place|places|delplace|placelink|cancel)\b/i.test(text);
   if (!draft && !isPlaceCommand) return false;
   if (!isAdmin(fromId)) {
     if (isPlaceCommand) say(chatId, 'Добавлять места может только автор проекта 🙂');
@@ -325,6 +390,25 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
         ? `📍 <b>Места (${places.length})</b>\n\n${places.map((p, i) => `${i + 1}. ${escapeHtml(p.name)}`).join('\n')}\n\nУдалить: <code>/delplace номер</code>`
         : 'Мест пока нет. Добавь первое: /place'
     );
+    return true;
+  }
+
+  // Добавить ссылку на Яндекс Карты к уже опубликованному месту: /placelink 2 https://yandex.by/maps/...
+  const link = text.match(/^\/placelink\s+(\d+)\s+(\S+)/i);
+  if (link) {
+    const places = await Place.find({}).sort({ createdAt: 1 });
+    const target = places[Number(link[1]) - 1];
+    if (!target) say(chatId, 'Нет места с таким номером. Список — /places');
+    else if (!isYandexMapsLink(link[2])) say(chatId, 'Это не похоже на ссылку Яндекс Карт.');
+    else {
+      target.mapUrl = link[2];
+      await target.save();
+      say(chatId, `🗺 Ссылка добавлена к «${escapeHtml(target.name)}».`);
+    }
+    return true;
+  }
+  if (/^\/placelink\b/i.test(text)) {
+    say(chatId, 'Так: <code>/placelink номер ссылка</code>. Номер — из /places');
     return true;
   }
 
@@ -383,13 +467,34 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
     case 'address_confirm': {
       if (message.location) {
         draft.coords = [message.location.latitude, message.location.longitude];
-        draft.foundLabel = draft.address || 'Точка на карте';
-        draft.step = 'price';
+        draft.foundLabel = draft.address || draft.name || 'Точка на карте';
+        draft.step = draft.mapUrl ? 'price' : 'maplink';
         await say(chatId, '📍 Точку получил.');
         await ask(chatId, draft);
         return true;
       }
       if (!text) return say(chatId, 'Напиши адрес или пришли геоточку'), true;
+
+      // Ссылка на Яндекс Карты — берём точку прямо из неё
+      if (isYandexMapsLink(text)) {
+        draft.mapUrl = text;
+        const fromLink = await placeFromYandexLink(text);
+        if (!fromLink) {
+          say(chatId, 'Ссылку сохранил для кнопки «Отзывы», но точку из неё прочитать не получилось 😔 Пришли адрес или геоточку: 📎 → Геопозиция.');
+          return true;
+        }
+        draft.coords = fromLink.coords;
+        draft.foundLabel = fromLink.label || draft.name;
+        draft.step = 'address_confirm';
+        say(chatId, `Нашёл по ссылке: <b>${escapeHtml(draft.foundLabel)}</b>\nВерно?`, [
+          [
+            { text: '✅ Да', callback_data: 'pl:addr_ok' },
+            { text: '✏️ Ввести иначе', callback_data: 'pl:addr_retry' }
+          ]
+        ]);
+        return true;
+      }
+
       draft.address = text.slice(0, 120);
       const found = await geocode(draft.address);
       if (!found) {
@@ -408,6 +513,12 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
       ]);
       return true;
     }
+    case 'maplink':
+      if (!isYandexMapsLink(text)) return say(chatId, 'Нужна ссылка на Яндекс Карты (или «Пропустить»)', SKIP_BTN), true;
+      draft.mapUrl = text;
+      draft.step = 'price';
+      await ask(chatId, draft);
+      return true;
     case 'tip':
       draft.mishaTip = text.slice(0, 400);
       draft.step = 'blog';
@@ -478,7 +589,7 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
       await ask(chatId, d);
       break;
     case 'addr_ok':
-      d.step = 'price';
+      d.step = d.mapUrl ? 'price' : 'maplink';
       removeKeyboard();
       await ask(chatId, d);
       break;
@@ -506,7 +617,8 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
       break;
     case 'skip':
       removeKeyboard();
-      if (d.step === 'tip') d.step = 'blog';
+      if (d.step === 'maplink') d.step = 'price';
+      else if (d.step === 'tip') d.step = 'blog';
       else if (d.step === 'blog') d.step = 'preview';
       await ask(chatId, d);
       break;
@@ -521,6 +633,7 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
         location: { type: 'Point', coordinates: [d.coords[1], d.coords[0]] },
         mishaTip: d.mishaTip,
         blogUrl: d.blogUrl,
+        mapUrl: d.mapUrl,
         price: d.price,
         rainOk: d.rainOk,
         evening: d.evening,

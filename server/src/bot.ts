@@ -166,6 +166,7 @@ async function registerBotCommands(botToken: string) {
     { command: 'place', description: 'Добавить место' },
     { command: 'places', description: 'Список мест' },
     { command: 'delplace', description: 'Удалить место: /delplace номер' },
+    { command: 'placelink', description: 'Ссылка на Яндекс Карты: /placelink номер ссылка' },
     { command: 'cancel', description: 'Отменить добавление места' },
     { command: 'news', description: 'Опубликовать новость: /news текст' },
     { command: 'delnews', description: 'Удалить последнюю новость' },
