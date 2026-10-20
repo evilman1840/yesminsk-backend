@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
 import { Event } from './models/Event';
 import { Donation } from './models/Donation';
+import { handleNewsMessage } from './news';
 import { eventSummaryHtml, eventAppPath } from './eventNotify';
 
 /**
@@ -53,23 +54,31 @@ export function setupTelegramBot(app: Express) {
     const message = req.body?.message;
     const chatId = message?.chat?.id;
     // Отвечаем только в личной переписке с ботом
-    if (!chatId || message.chat.type !== 'private' || typeof message.text !== 'string') return;
+    if (!chatId || message.chat.type !== 'private') return;
 
-    const text = message.text.trim();
-
-    // Ссылка-приглашение на сходку: t.me/<бот>?start=event_<id>
-    const eventMatch = text.match(/^\/start\s+event_([a-f0-9]{24})$/i);
-    if (eventMatch) {
-      sendEventInvite(chatId, eventMatch[1], message.from?.first_name);
-      return;
-    }
-
-    if (text.startsWith('/start') || text.startsWith('/help')) {
-      sendTelegramMessage(chatId, GREETING(message.from?.first_name), 'Открыть YesMinsk');
-    } else {
-      sendTelegramMessage(chatId, HINT, 'Открыть YesMinsk');
-    }
+    handleMessage(message, chatId).catch((err) => console.warn('⚠️ Ошибка обработки сообщения боту:', err?.message || err));
   });
+}
+
+async function handleMessage(message: any, chatId: number) {
+  // Новости проекта (/news, /delnews, /myid) — в том числе фото и альбомы
+  if (await handleNewsMessage(message)) return;
+
+  if (typeof message.text !== 'string') return;
+  const text = message.text.trim();
+
+  // Ссылка-приглашение на сходку: t.me/<бот>?start=event_<id>
+  const eventMatch = text.match(/^\/start\s+event_([a-f0-9]{24})$/i);
+  if (eventMatch) {
+    sendEventInvite(chatId, eventMatch[1], message.from?.first_name);
+    return;
+  }
+
+  if (text.startsWith('/start') || text.startsWith('/help')) {
+    sendTelegramMessage(chatId, GREETING(message.from?.first_name), 'Открыть YesMinsk');
+  } else {
+    sendTelegramMessage(chatId, HINT, 'Открыть YesMinsk');
+  }
 }
 
 async function answerPreCheckout(queryId: string) {

@@ -9,6 +9,7 @@ import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils'
 import { Reaction, ReactionType } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
+import { setupNewsRoutes } from './news';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen } from './eventNotify';
 
 dotenv.config();
@@ -984,6 +985,9 @@ app.get('/api/users/seed', async (_req: Request, res: Response) => {
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
+
+// Новости проекта
+setupNewsRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);
