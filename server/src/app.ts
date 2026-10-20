@@ -283,7 +283,7 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
 }
 
 // ==========================================
-// 4.1 ЛАЙКИ / ДИЗЛАЙКИ И МЭТЧИ
+// 4.1 👋 ПООБЩАТЬСЯ / 🙈 СКРЫТЬ И «НА СВЯЗИ»
 // ==========================================
 app.post('/api/reactions', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -313,7 +313,7 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
       { upsert: true }
     );
 
-    // Дизлайк = бан: больше не видим друг друга
+    // 🙈 Скрыть = больше не видим друг друга
     if (type === 'dislike') {
       await User.updateOne({ telegramId: tgUser.id }, { $addToSet: { blockedUsers: targetId } });
       return res.json({ success: true, isMatch: false });
@@ -325,21 +325,21 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
 
     if (isNewLike) {
       if (isMatch) {
-        // Уведомляем обоих о мэтче
+        // Оба нажали 👋 — уведомляем обоих, что они на связи
         sendTelegramMessage(
           target.telegramId,
-          `🎉 <b>Это мэтч!</b>\n\nВы понравились друг другу с ${userMentionHtml(me)}. Можно написать прямо сейчас!`,
-          'Открыть мэтч'
+          `🤝 <b>Вы на связи!</b>\n\nВы и ${userMentionHtml(me)} оба хотите пообщаться. Можно написать прямо сейчас!`,
+          'Открыть YesMinsk'
         );
         sendTelegramMessage(
           me.telegramId,
-          `🎉 <b>Это мэтч!</b>\n\nВы понравились друг другу с ${userMentionHtml(target)}. Можно написать прямо сейчас!`,
-          'Открыть мэтч'
+          `🤝 <b>Вы на связи!</b>\n\nВы и ${userMentionHtml(target)} оба хотите пообщаться. Можно написать прямо сейчас!`,
+          'Открыть YesMinsk'
         );
       } else {
         sendTelegramMessage(
           target.telegramId,
-          `👍 <b>${escapeHtml(me.firstName)}</b> лайкнул(а) вашу анкету!\n\nЗагляните в «Симпатии»: если он(а) вам тоже понравится — у вас будет мэтч и вы сможете переписываться.`,
+          `👋 <b>${escapeHtml(me.firstName)}</b> передаёт вам привет и хочет пообщаться!\n\nЗагляните в раздел «Хотят пообщаться». Если тоже захотите — нажмите 👋, и сможете написать друг другу.`,
           'Посмотреть анкету'
         );
       }
@@ -355,7 +355,7 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
   }
 });
 
-// Симпатии: кто лайкнул меня (я ещё не ответил) и мои мэтчи
+// «Хотят пообщаться» (мне нажали 👋, я ещё не ответил) и «На связи» (взаимно)
 app.get('/api/reactions/inbox', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
