@@ -6,6 +6,8 @@ import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/teleg
 import { User, ActivityGoal, Gender, PreferredGender } from './models/User';
 import { Event, EventCategory } from './models/Event';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
+import { Reaction, ReactionType } from './models/Reaction';
+import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 
 dotenv.config();
 
@@ -164,7 +166,7 @@ app.put('/api/users/profile', telegramAuthMiddleware as any, handleUpdateProfile
 app.post('/api/users/block', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const { blockedTelegramId } = req.body;
+    const blockedTelegramId = req.body.blockedTelegramId ?? req.body.targetTelegramId;
 
     if (!blockedTelegramId) {
       return res.status(400).json({ error: 'Не указан ID пользователя' });
@@ -209,36 +211,185 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
     }
 
     const users = await User.find(query).limit(50).sort({ lastActiveAt: -1 });
+    const flags = await getReactionFlags(tgUser.id, users.map((u) => u.telegramId));
 
-    const formattedUsers = users.map((u) => {
-      const fuzzyCoords = u.locationFuzzy?.coordinates || [27.5615, 53.9045];
-      let distanceMeters = 350;
-
-      if (currentUser?.locationExact?.coordinates) {
-        const [myLng, myLat] = currentUser.locationExact.coordinates;
-        distanceMeters = calculateDistanceMeters(myLat, myLng, fuzzyCoords[1], fuzzyCoords[0]);
-      }
-
-      return {
-        id: u.telegramId,
-        telegramId: u.telegramId,
-        firstName: u.firstName,
-        username: u.username,
-        avatarUrl: u.avatarUrl,
-        age: u.age,
-        gender: u.gender,
-        goal: u.goal,
-        bio: u.bio,
-        areaName: u.areaName,
-        isTourist: u.isTourist,
-        coordinates: [fuzzyCoords[1], fuzzyCoords[0]], // [lat, lng]
-        distanceMeters
-      };
-    });
-
-    res.json(formattedUsers);
+    res.json(users.map((u) => formatPublicUser(u, currentUser, flags.get(u.telegramId))));
   } catch (err) {
     res.status(500).json({ error: 'Ошибка загрузки пользователей' });
+  }
+});
+
+// ==========================================
+// ОБЩИЕ ХЕЛПЕРЫ ДЛЯ АНКЕТ И РЕАКЦИЙ
+// ==========================================
+interface ReactionFlags {
+  iLiked: boolean;
+  likedMe: boolean;
+  isMatch: boolean;
+}
+
+// Для списка людей: кого я лайкнул, кто лайкнул меня, с кем мэтч
+async function getReactionFlags(myId: number, otherIds: number[]): Promise<Map<number, ReactionFlags>> {
+  const map = new Map<number, ReactionFlags>();
+  if (otherIds.length === 0) return map;
+
+  const reactions = await Reaction.find({
+    type: 'like',
+    $or: [
+      { fromTelegramId: myId, toTelegramId: { $in: otherIds } },
+      { toTelegramId: myId, fromTelegramId: { $in: otherIds } }
+    ]
+  }).lean();
+
+  for (const id of otherIds) map.set(id, { iLiked: false, likedMe: false, isMatch: false });
+  for (const r of reactions) {
+    if (r.fromTelegramId === myId) map.get(r.toTelegramId)!.iLiked = true;
+    else map.get(r.fromTelegramId)!.likedMe = true;
+  }
+  map.forEach((f) => (f.isMatch = f.iLiked && f.likedMe));
+  return map;
+}
+
+// Публичная анкета. @username отдаём только при взаимной симпатии (мэтче)
+function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
+  const fuzzyCoords = u.locationFuzzy?.coordinates || [27.5615, 53.9045];
+  let distanceMeters = 350;
+
+  if (currentUser?.locationExact?.coordinates) {
+    const [myLng, myLat] = currentUser.locationExact.coordinates;
+    distanceMeters = calculateDistanceMeters(myLat, myLng, fuzzyCoords[1], fuzzyCoords[0]);
+  }
+
+  const isMatch = Boolean(flags?.isMatch);
+
+  return {
+    id: u.telegramId,
+    telegramId: u.telegramId,
+    firstName: u.firstName,
+    username: isMatch ? u.username : undefined,
+    avatarUrl: u.avatarUrl,
+    age: u.age,
+    gender: u.gender,
+    goal: u.goal,
+    bio: u.bio,
+    areaName: u.areaName,
+    isTourist: u.isTourist,
+    coordinates: [fuzzyCoords[1], fuzzyCoords[0]], // [lat, lng]
+    distanceMeters,
+    iLiked: Boolean(flags?.iLiked),
+    likedMe: Boolean(flags?.likedMe),
+    isMatch
+  };
+}
+
+// ==========================================
+// 4.1 ЛАЙКИ / ДИЗЛАЙКИ И МЭТЧИ
+// ==========================================
+app.post('/api/reactions', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const targetId = Number(req.body.targetTelegramId);
+    const type = req.body.type as ReactionType;
+
+    if (!targetId || targetId === tgUser.id) {
+      return res.status(400).json({ error: 'Не указан пользователь' });
+    }
+    if (type !== 'like' && type !== 'dislike') {
+      return res.status(400).json({ error: 'Неизвестный тип реакции' });
+    }
+
+    const [me, target] = await Promise.all([
+      User.findOne({ telegramId: tgUser.id }),
+      User.findOne({ telegramId: targetId })
+    ]);
+    if (!me || !target) {
+      return res.status(404).json({ error: 'Пользователь не найден' });
+    }
+
+    const previous = await Reaction.findOne({ fromTelegramId: tgUser.id, toTelegramId: targetId });
+    await Reaction.findOneAndUpdate(
+      { fromTelegramId: tgUser.id, toTelegramId: targetId },
+      { $set: { type } },
+      { upsert: true }
+    );
+
+    // Дизлайк = бан: больше не видим друг друга
+    if (type === 'dislike') {
+      await User.updateOne({ telegramId: tgUser.id }, { $addToSet: { blockedUsers: targetId } });
+      return res.json({ success: true, isMatch: false });
+    }
+
+    const reverse = await Reaction.findOne({ fromTelegramId: targetId, toTelegramId: tgUser.id, type: 'like' });
+    const isMatch = Boolean(reverse);
+    const isNewLike = previous?.type !== 'like'; // не спамим уведомлениями при повторном нажатии
+
+    if (isNewLike) {
+      if (isMatch) {
+        // Уведомляем обоих о мэтче
+        sendTelegramMessage(
+          target.telegramId,
+          `🎉 <b>Это мэтч!</b>\n\nВы понравились друг другу с ${userMentionHtml(me)}. Можно написать прямо сейчас!`,
+          'Открыть мэтч'
+        );
+        sendTelegramMessage(
+          me.telegramId,
+          `🎉 <b>Это мэтч!</b>\n\nВы понравились друг другу с ${userMentionHtml(target)}. Можно написать прямо сейчас!`,
+          'Открыть мэтч'
+        );
+      } else {
+        sendTelegramMessage(
+          target.telegramId,
+          `👍 <b>${escapeHtml(me.firstName)}</b> лайкнул(а) вашу анкету!\n\nЗагляните в «Симпатии»: если он(а) вам тоже понравится — у вас будет мэтч и вы сможете переписываться.`,
+          'Посмотреть анкету'
+        );
+      }
+    }
+
+    res.json({
+      success: true,
+      isMatch,
+      user: formatPublicUser(target, me, { iLiked: true, likedMe: isMatch, isMatch })
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Ошибка сохранения реакции' });
+  }
+});
+
+// Симпатии: кто лайкнул меня (я ещё не ответил) и мои мэтчи
+app.get('/api/reactions/inbox', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const me = await User.findOne({ telegramId: tgUser.id });
+
+    const [likesToMe, myReactions] = await Promise.all([
+      Reaction.find({ toTelegramId: tgUser.id, type: 'like' }).sort({ updatedAt: -1 }).lean(),
+      Reaction.find({ fromTelegramId: tgUser.id }).lean()
+    ]);
+
+    const myReactionById = new Map(myReactions.map((r) => [r.toTelegramId, r.type]));
+    const blocked = new Set(me?.blockedUsers || []);
+
+    const likerIds = likesToMe.map((r) => r.fromTelegramId).filter((id) => !blocked.has(id));
+    const likers = await User.find({ telegramId: { $in: likerIds }, blockedUsers: { $ne: tgUser.id } });
+    const likerById = new Map(likers.map((u) => [u.telegramId, u]));
+
+    const likedMe: any[] = [];
+    const matches: any[] = [];
+
+    for (const id of likerIds) {
+      const u = likerById.get(id);
+      if (!u) continue;
+      const mine = myReactionById.get(id);
+      if (mine === 'like') {
+        matches.push(formatPublicUser(u, me, { iLiked: true, likedMe: true, isMatch: true }));
+      } else if (!mine) {
+        likedMe.push(formatPublicUser(u, me, { iLiked: false, likedMe: true, isMatch: false }));
+      }
+    }
+
+    res.json({ likedMe, matches });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Ошибка загрузки симпатий' });
   }
 });
 
