@@ -34,6 +34,8 @@ export interface IUser extends Document {
   blockedUsers: number[]; // Список telegramId заблокированных пользователей
   availableUntil?: Date;  // «⚡ Есть время» — до этого времени
   isGuide: boolean;       // «🧭 Покажу город» — местный, готов показать город туристам
+  isBanned?: boolean;        // забанен модератором
+  hiddenByReports?: boolean; // скрыт после 3 жалоб до решения модератора
   guideAbout?: string;    // что может показать
   lastActiveAt: Date;
 }
@@ -82,6 +84,8 @@ const UserSchema = new Schema<IUser>(
     blockedUsers: { type: [Number], default: [] },
     availableUntil: { type: Date },
     isGuide: { type: Boolean, default: false },
+    isBanned: { type: Boolean, default: false },
+    hiddenByReports: { type: Boolean, default: false },
     guideAbout: { type: String, maxlength: 140, default: '' },
     lastActiveAt: { type: Date, default: Date.now }
   },

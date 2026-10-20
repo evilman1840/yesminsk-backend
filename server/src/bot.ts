@@ -5,6 +5,7 @@ import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
 import { Event } from './models/Event';
 import { Donation } from './models/Donation';
 import { handleNewsMessage } from './news';
+import { handleModerationCallback, handleModerationCommand } from './moderation';
 import { eventSummaryHtml, eventAppPath } from './eventNotify';
 
 /**
@@ -37,6 +38,12 @@ export function setupTelegramBot(app: Express) {
     // Сразу отвечаем Telegram «ок», а сообщение обрабатываем следом
     res.sendStatus(200);
 
+    // Нажатие кнопки под жалобой (бан / всё в порядке)
+    if (req.body?.callback_query) {
+      handleModerationCallback(req.body.callback_query).catch((err) => console.warn('⚠️ Ошибка модерации:', err?.message || err));
+      return;
+    }
+
     // Донат звёздами: Telegram спрашивает «можно принять оплату?» — отвечаем «да» (в течение 10 секунд)
     const preCheckout = req.body?.pre_checkout_query;
     if (preCheckout) {
@@ -63,6 +70,7 @@ export function setupTelegramBot(app: Express) {
 async function handleMessage(message: any, chatId: number) {
   // Новости проекта (/news, /delnews, /myid) — в том числе фото и альбомы
   if (await handleNewsMessage(message)) return;
+  if (await handleModerationCommand(message)) return;
 
   if (typeof message.text !== 'string') return;
   const text = message.text.trim();
@@ -142,7 +150,7 @@ export async function registerTelegramWebhook() {
       body: JSON.stringify({
         url: `${publicUrl}${WEBHOOK_PATH}`,
         secret_token: getWebhookSecret(botToken),
-        allowed_updates: ['message', 'pre_checkout_query'],
+        allowed_updates: ['message', 'pre_checkout_query', 'callback_query'],
         drop_pending_updates: true
       })
     });

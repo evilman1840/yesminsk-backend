@@ -10,6 +10,7 @@ import { Reaction, ReactionType } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
 import { setupNewsRoutes } from './news';
+import { banGuard, setupModerationRoutes } from './moderation';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen } from './eventNotify';
 
 dotenv.config();
@@ -17,6 +18,8 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' })); // фото приходят уже сжатыми (~100 КБ)
+// Забаненные не могут ничего менять
+app.use('/api', banGuard);
 
 // Подключение к MongoDB
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/yesminsk';
@@ -294,8 +297,10 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
       query.telegramId.$nin = currentUser.blockedUsers;
     }
 
-    // Исключаем тех, кто заблокировал меня
+    // Исключаем тех, кто заблокировал меня, забаненных и скрытых после жалоб
     query.blockedUsers = { $ne: tgUser.id };
+    query.isBanned = { $ne: true };
+    query.hiddenByReports = { $ne: true };
 
     if (goal && goal !== 'all') {
       query.goal = goal;
@@ -499,7 +504,7 @@ app.get('/api/reactions/inbox', telegramAuthMiddleware as any, async (req: Authe
     const blocked = new Set(me?.blockedUsers || []);
 
     const likerIds = likesToMe.map((r) => r.fromTelegramId).filter((id) => !blocked.has(id));
-    const likers = await User.find({ telegramId: { $in: likerIds }, blockedUsers: { $ne: tgUser.id } });
+    const likers = await User.find({ telegramId: { $in: likerIds }, blockedUsers: { $ne: tgUser.id }, isBanned: { $ne: true } });
     const likerById = new Map(likers.map((u) => [u.telegramId, u]));
 
     const likedMe: any[] = [];
@@ -1022,6 +1027,9 @@ app.get('/api/health', (_req: Request, res: Response) => {
 
 // Новости проекта
 setupNewsRoutes(app);
+
+// Жалобы и модерация
+setupModerationRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);
