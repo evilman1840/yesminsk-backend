@@ -117,7 +117,9 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       areaName,
       isTourist,
       avatarUrl,
-      isProfileActive
+      isProfileActive,
+      isGuide,
+      guideAbout
     } = req.body;
 
     const updateData: any = {};
@@ -137,6 +139,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       }
     }
     if (isProfileActive !== undefined) updateData.isProfileActive = isProfileActive;
+    if (isGuide !== undefined) updateData.isGuide = Boolean(isGuide);
+    if (guideAbout !== undefined) updateData.guideAbout = String(guideAbout).slice(0, 140);
 
     if (coordinates && Array.isArray(coordinates) && coordinates.length === 2) {
       const [lat, lng] = coordinates;
@@ -162,7 +166,43 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
 app.post('/api/users/profile', telegramAuthMiddleware as any, handleUpdateProfile);
 app.put('/api/users/profile', telegramAuthMiddleware as any, handleUpdateProfile);
 
-// «⚡ Свободен сейчас»: hours = 1…6 включает статус, 0 — выключает
+// ==========================================
+// ДОНАТ ЗВЁЗДАМИ TELEGRAM
+// ==========================================
+const DONATE_AMOUNTS = [50, 100, 250, 500, 1000];
+
+app.post('/api/donate/invoice', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const stars = Number(req.body.stars);
+    if (!DONATE_AMOUNTS.includes(stars)) {
+      return res.status(400).json({ error: 'Неизвестная сумма' });
+    }
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    if (!botToken) return res.status(500).json({ error: 'Бот не настроен' });
+
+    // Ссылка на оплату звёздами (валюта XTR, платёжный провайдер не нужен)
+    const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/createInvoiceLink`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Поддержать ДА! МИНСК',
+        description: 'Спасибо, что помогаешь приложению жить и развиваться 💛',
+        payload: `donate:${tgUser.id}:${stars}`,
+        currency: 'XTR',
+        prices: [{ label: 'Донат', amount: stars }]
+      })
+    });
+    const data: any = await tgRes.json();
+    if (!data.ok) return res.status(502).json({ error: data.description || 'Telegram не создал счёт' });
+
+    res.json({ url: data.result });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Ошибка создания доната' });
+  }
+});
+
+// «⚡ Есть время»: hours = 1…6 включает статус, 0 — выключает
 app.post('/api/users/available', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
@@ -299,7 +339,9 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     iLiked: Boolean(flags?.iLiked),
     likedMe: Boolean(flags?.likedMe),
     isMatch,
-    availableUntil: isAvailableNow(u) ? u.availableUntil : undefined
+    availableUntil: isAvailableNow(u) ? u.availableUntil : undefined,
+    isGuide: Boolean(u.isGuide) && !u.isTourist,
+    guideAbout: u.isGuide && !u.isTourist ? u.guideAbout || '' : undefined
   };
 }
 

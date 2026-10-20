@@ -3,6 +3,7 @@ import { Express, Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
 import { Event } from './models/Event';
+import { Donation } from './models/Donation';
 import { eventSummaryHtml, eventAppPath } from './eventNotify';
 
 /**
@@ -35,6 +36,20 @@ export function setupTelegramBot(app: Express) {
     // Сразу отвечаем Telegram «ок», а сообщение обрабатываем следом
     res.sendStatus(200);
 
+    // Донат звёздами: Telegram спрашивает «можно принять оплату?» — отвечаем «да» (в течение 10 секунд)
+    const preCheckout = req.body?.pre_checkout_query;
+    if (preCheckout) {
+      answerPreCheckout(preCheckout.id);
+      return;
+    }
+
+    // Оплата прошла — сохраняем и благодарим
+    const payment = req.body?.message?.successful_payment;
+    if (payment) {
+      handleDonation(req.body.message.chat.id, req.body.message.from?.id, payment);
+      return;
+    }
+
     const message = req.body?.message;
     const chatId = message?.chat?.id;
     // Отвечаем только в личной переписке с ботом
@@ -55,6 +70,32 @@ export function setupTelegramBot(app: Express) {
       sendTelegramMessage(chatId, HINT, 'Открыть YesMinsk');
     }
   });
+}
+
+async function answerPreCheckout(queryId: string) {
+  try {
+    await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/answerPreCheckoutQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pre_checkout_query_id: queryId, ok: true })
+    });
+  } catch (err: any) {
+    console.warn('⚠️ Ошибка подтверждения оплаты:', err?.message || err);
+  }
+}
+
+async function handleDonation(chatId: number, telegramId: number, payment: any) {
+  try {
+    await Donation.updateOne(
+      { chargeId: payment.telegram_payment_charge_id },
+      { $setOnInsert: { telegramId, stars: payment.total_amount, chargeId: payment.telegram_payment_charge_id } },
+      { upsert: true }
+    );
+    console.log(`💛 Донат: ${payment.total_amount} ⭐ от ${telegramId}`);
+  } catch (err: any) {
+    console.warn('⚠️ Не удалось сохранить донат:', err?.message || err);
+  }
+  sendTelegramMessage(chatId, `💛 <b>Спасибо за поддержку!</b>\n\nТвои ${payment.total_amount} ⭐ помогают ДА! МИНСК оставаться бесплатным и становиться лучше.`);
 }
 
 // Ответ на ссылку-приглашение: карточка сходки и кнопка, открывающая её в приложении
@@ -92,7 +133,7 @@ export async function registerTelegramWebhook() {
       body: JSON.stringify({
         url: `${publicUrl}${WEBHOOK_PATH}`,
         secret_token: getWebhookSecret(botToken),
-        allowed_updates: ['message'],
+        allowed_updates: ['message', 'pre_checkout_query'],
         drop_pending_updates: true
       })
     });
