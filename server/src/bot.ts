@@ -8,6 +8,7 @@ import { handleNewsMessage } from './news';
 import { handleModerationCallback, handleModerationCommand } from './moderation';
 import { handleStatsCommand } from './stats';
 import { handleInviteStart } from './invites';
+import { handlePlaceMessage, handlePlaceCallback } from './places';
 import { eventSummaryHtml, eventAppPath } from './eventNotify';
 
 /**
@@ -42,7 +43,10 @@ export function setupTelegramBot(app: Express) {
 
     // Нажатие кнопки под жалобой (бан / всё в порядке)
     if (req.body?.callback_query) {
-      handleModerationCallback(req.body.callback_query).catch((err) => console.warn('⚠️ Ошибка модерации:', err?.message || err));
+      const q = req.body.callback_query;
+      (async () => (await handlePlaceCallback(q)) || (await handleModerationCallback(q)))().catch((err) =>
+        console.warn('⚠️ Ошибка обработки кнопки:', err?.message || err)
+      );
       return;
     }
 
@@ -70,6 +74,8 @@ export function setupTelegramBot(app: Express) {
 }
 
 async function handleMessage(message: any, chatId: number) {
+  // Добавление мест (/place …) — раньше новостей, чтобы фото места не попали в новости
+  if (await handlePlaceMessage(message)) return;
   // Новости проекта (/news, /delnews, /myid) — в том числе фото и альбомы
   if (await handleNewsMessage(message)) return;
   if (await handleModerationCommand(message)) return;
@@ -157,6 +163,10 @@ async function registerBotCommands(botToken: string) {
 
   const adminCommands = [
     { command: 'stats', description: 'Статистика приложения' },
+    { command: 'place', description: 'Добавить место' },
+    { command: 'places', description: 'Список мест' },
+    { command: 'delplace', description: 'Удалить место: /delplace номер' },
+    { command: 'cancel', description: 'Отменить добавление места' },
     { command: 'news', description: 'Опубликовать новость: /news текст' },
     { command: 'delnews', description: 'Удалить последнюю новость' },
     { command: 'unban', description: 'Разбанить: /unban ID' },

@@ -1,6 +1,7 @@
 import { Express, Request, Response } from 'express';
 import { News } from './models/News';
 import { sendTelegramMessage } from './utils/telegramNotify';
+import { sendTelegramPhoto } from './utils/telegramFile';
 
 /**
  * «Новости проекта»: автор пишет посты боту, приложение их показывает.
@@ -100,16 +101,7 @@ export function setupNewsRoutes(app: Express) {
       const exists = await News.exists({ isPublished: true, photos: fileId });
       if (!exists) return res.sendStatus(404);
 
-      const token = process.env.TELEGRAM_BOT_TOKEN;
-      const info: any = await (await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`)).json();
-      if (!info.ok) return res.sendStatus(404);
-
-      const file = await fetch(`https://api.telegram.org/file/bot${token}/${info.result.file_path}`);
-      if (!file.ok) return res.sendStatus(502);
-
-      res.setHeader('Content-Type', file.headers.get('content-type') || 'image/jpeg');
-      res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
-      res.send(Buffer.from(await file.arrayBuffer()));
+      await sendTelegramPhoto(res, fileId);
     } catch (err) {
       res.sendStatus(500);
     }

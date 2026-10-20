@@ -12,6 +12,7 @@ import { setupTelegramBot, registerTelegramWebhook } from './bot';
 import { setupNewsRoutes, isAdmin } from './news';
 import { banGuard, setupModerationRoutes } from './moderation';
 import { markInviteJoined } from './invites';
+import { setupPlacesRoutes } from './places';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen } from './eventNotify';
 
 dotenv.config();
@@ -1037,6 +1038,9 @@ setupNewsRoutes(app);
 
 // Жалобы и модерация
 setupModerationRoutes(app);
+
+// Места по вайбу
+setupPlacesRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);

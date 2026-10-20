@@ -4,6 +4,7 @@ import { Event } from './models/Event';
 import { Reaction } from './models/Reaction';
 import { Donation } from './models/Donation';
 import { News } from './models/News';
+import { Place, PlaceTip } from './models/Place';
 import { sendTelegramMessage } from './utils/telegramNotify';
 import { isAdmin } from './news';
 
@@ -89,6 +90,7 @@ export async function buildStats(): Promise<string> {
   const openReports = Report ? await Report.countDocuments({ status: 'open' }) : 0;
   const newsCount = await News.countDocuments({ isPublished: true });
   const invitedJoined = await User.countDocuments({ ...real, invitedBy: { $exists: true } });
+  const [placesCount, tipsCount] = await Promise.all([Place.countDocuments({}), PlaceTip.countDocuments({})]);
 
   const date = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 
@@ -115,6 +117,7 @@ export async function buildStats(): Promise<string> {
     `💛 <b>Донаты звёздами</b>: ${donations.length} шт., всего ⭐ ${starsTotal} (за 30 дней ⭐ ${stars30})`,
     ``,
     `🛡 Открытых жалоб: ${openReports}${openReports ? ' ⚠️' : ''} · скрыто после жалоб ${hidden} · забанено ${banned}`,
-    `📰 Новостей опубликовано: ${newsCount}`
+    `📰 Новостей опубликовано: ${newsCount}`,
+    `📍 Мест: ${placesCount} · советов от людей: ${tipsCount}`
   ].join('\n');
 }
