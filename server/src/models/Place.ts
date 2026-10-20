@@ -22,6 +22,7 @@ export type PlacePrice = keyof typeof PLACE_PRICES;
 
 export interface IPlace extends Document {
   name: string;
+  category: string; // что это: достопримечательность, кафе, парк… (автор пишет сам)
   description: string;
   moods: PlaceMood[];
   photos: string[]; // file_id фото в Telegram (до 5)
@@ -40,6 +41,7 @@ export interface IPlace extends Document {
 const PlaceSchema = new Schema<IPlace>(
   {
     name: { type: String, required: true, maxlength: 80 },
+    category: { type: String, default: '', maxlength: 40 },
     description: { type: String, default: '', maxlength: 300 },
     moods: { type: [String], enum: Object.keys(PLACE_MOODS), default: [] },
     photos: { type: [String], default: [] },

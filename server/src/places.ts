@@ -14,6 +14,7 @@ import { isAdmin } from './news';
 const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false) => ({
   id: p._id.toString(),
   name: p.name,
+  category: p.category || '',
   description: p.description,
   moods: p.moods,
   photos: p.photos.map((f) => `/api/places/photo/${encodeURIComponent(f)}`),
@@ -146,12 +147,13 @@ export function setupPlacesRoutes(app: Express) {
  * Бот: добавление мест (/place), список (/places), удаление (/delplace)
  * ==================================================================== */
 
-type Step = 'photos' | 'name' | 'desc' | 'moods' | 'address' | 'address_confirm' | 'maplink' | 'price' | 'marks' | 'tip' | 'blog' | 'preview';
+type Step = 'photos' | 'name' | 'category' | 'desc' | 'moods' | 'address' | 'address_confirm' | 'maplink' | 'price' | 'marks' | 'tip' | 'blog' | 'preview';
 
 interface Draft {
   step: Step;
   photos: string[];
   name: string;
+  category: string;
   description: string;
   moods: PlaceMood[];
   address: string;
@@ -214,7 +216,7 @@ const marksKeyboard = (d: Draft): Keyboard => [
 
 const previewHtml = (d: Draft) =>
   [
-    `<b>${escapeHtml(d.name)}</b>`,
+    `<b>${escapeHtml(d.name)}</b>${d.category ? ` · ${escapeHtml(d.category)}` : ''}`,
     escapeHtml(d.description),
     '',
     d.moods.map((m) => `${PLACE_MOODS[m].emoji} ${PLACE_MOODS[m].label}`).join(' · '),
@@ -304,6 +306,13 @@ async function ask(chatId: number, d: Draft) {
       return say(chatId, '📍 <b>Новое место</b>\n\nШаг 1/8. Пришли от 1 до 5 фото (можно альбомом).\n\n<i>Отменить — /cancel</i>');
     case 'name':
       return say(chatId, 'Шаг 2/8. Как называется место?');
+    case 'category':
+      return say(chatId, 'Что это за место? Нажми или напиши своё:', [
+        ...[['Достопримечательность', 'Парк'], ['Кафе', 'Ресторан', 'Бар'], ['Музей', 'Водоём', 'Смотровая']].map((row) =>
+          row.map((c) => ({ text: c, callback_data: `pl:cat:${c}` }))
+        ),
+        [{ text: 'Пропустить ⏭', callback_data: 'pl:cat:' }]
+      ]);
     case 'desc':
       return say(chatId, 'Шаг 3/8. Одна фраза о месте — почему туда стоит сходить?');
     case 'moods':
@@ -342,6 +351,7 @@ const newDraft = (): Draft => ({
   step: 'photos',
   photos: [],
   name: '',
+  category: '',
   description: '',
   moods: [],
   address: '',
@@ -362,7 +372,7 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
   const text: string = (message.text || '').trim();
   const draft = drafts.get(chatId);
 
-  const isPlaceCommand = /^\/(place|places|delplace|placelink|cancel)\b/i.test(text);
+  const isPlaceCommand = /^\/(place|places|delplace|placelink|placecat|cancel)\b/i.test(text);
   if (!draft && !isPlaceCommand) return false;
   if (!isAdmin(fromId)) {
     if (isPlaceCommand) say(chatId, 'Добавлять места может только автор проекта 🙂');
@@ -387,7 +397,7 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
     say(
       chatId,
       places.length
-        ? `📍 <b>Места (${places.length})</b>\n\n${places.map((p, i) => `${i + 1}. ${escapeHtml(p.name)}`).join('\n')}\n\nУдалить: <code>/delplace номер</code>`
+        ? `📍 <b>Места (${places.length})</b>\n\n${places.map((p, i) => `${i + 1}. ${escapeHtml(p.name)}${p.category ? ` · ${escapeHtml(p.category)}` : ''}`).join('\n')}\n\nУдалить: <code>/delplace номер</code>`
         : 'Мест пока нет. Добавь первое: /place'
     );
     return true;
@@ -407,6 +417,24 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
     }
     return true;
   }
+  // Категория для уже опубликованного места: /placecat 2 Кафе
+  const cat = text.match(/^\/placecat\s+(\d+)\s+(.+)$/i);
+  if (cat) {
+    const places = await Place.find({}).sort({ createdAt: 1 });
+    const target = places[Number(cat[1]) - 1];
+    if (!target) say(chatId, 'Нет места с таким номером. Список — /places');
+    else {
+      target.category = cat[2].trim().slice(0, 40);
+      await target.save();
+      say(chatId, `🏷 «${escapeHtml(target.name)}» — ${escapeHtml(target.category)}.`);
+    }
+    return true;
+  }
+  if (/^\/placecat\b/i.test(text)) {
+    say(chatId, 'Так: <code>/placecat номер категория</code>, например <code>/placecat 1 Достопримечательность</code>');
+    return true;
+  }
+
   if (/^\/placelink\b/i.test(text)) {
     say(chatId, 'Так: <code>/placelink номер ссылка</code>. Номер — из /places');
     return true;
@@ -454,6 +482,11 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
     case 'name':
       if (!text) return say(chatId, 'Напиши название текстом'), true;
       draft.name = text.slice(0, 80);
+      draft.step = 'category';
+      await ask(chatId, draft);
+      return true;
+    case 'category':
+      draft.category = text.slice(0, 40);
       draft.step = 'desc';
       await ask(chatId, draft);
       return true;
@@ -576,6 +609,12 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
       removeKeyboard();
       await ask(chatId, d);
       break;
+    case 'cat':
+      d.category = (value || '').slice(0, 40);
+      d.step = 'desc';
+      removeKeyboard();
+      await ask(chatId, d);
+      break;
     case 'mood': {
       const m = value as PlaceMood;
       d.moods = d.moods.includes(m) ? d.moods.filter((x) => x !== m) : [...d.moods, m];
@@ -626,6 +665,7 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
       if (!d.coords) return answer('Нет адреса'), true;
       await Place.create({
         name: d.name,
+        category: d.category,
         description: d.description,
         moods: d.moods,
         photos: d.photos,
