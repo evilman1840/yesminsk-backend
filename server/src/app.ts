@@ -9,6 +9,7 @@ import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils'
 import { Reaction, ReactionType } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
+import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen } from './eventNotify';
 
 dotenv.config();
 
@@ -538,6 +539,17 @@ app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: Auth
     });
 
     await event.save();
+
+    // Организатору приятно знать, что кто-то присоединился
+    if (event.creator.telegramId !== tgUser.id) {
+      sendTelegramMessage(
+        event.creator.telegramId,
+        `🙌 <b>${escapeHtml(user?.firstName || tgUser.first_name)}</b> идёт на твою сходку!\n\n${eventSummaryHtml(event)}`,
+        'Открыть сходку',
+        eventAppPath(event)
+      );
+    }
+
     res.json({ success: true, event });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка присоединения' });
@@ -600,6 +612,9 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       maxParticipants
     } = req.body;
 
+    const oldTime = event.dateTime.getTime();
+    const oldPlace = event.locationName;
+
     if (title) event.title = title.slice(0, 100);
     if (description) event.description = description.slice(0, 600);
     if (category) event.category = category;
@@ -614,7 +629,23 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       };
     }
 
+    const timeChanged = event.dateTime.getTime() !== oldTime;
+    const placeChanged = event.locationName !== oldPlace;
+    if (timeChanged) {
+      // Новое время — напоминания нужно отправить заново
+      event.reminderDaySentAt = undefined;
+      event.reminderHourSentAt = undefined;
+    }
+
     await event.save();
+
+    if (timeChanged || placeChanged) {
+      const changes = [
+        timeChanged ? `🕒 Новое время: <b>${formatWhen(event.dateTime)}</b>` : '',
+        placeChanged ? `📍 Новое место: <b>${escapeHtml(event.locationName)}</b>` : ''
+      ].filter(Boolean).join('\n');
+      notifyParticipants(event, `✏️ <b>Сходка изменилась</b>\n\n${changes}\n\n${eventSummaryHtml(event)}`, tgUser.id);
+    }
 
     res.json({
       id: event._id.toString(),
@@ -662,6 +693,20 @@ const handleDeleteEventLogic = async (req: AuthenticatedRequest, res: Response) 
     }
 
     await Event.findByIdAndDelete(event._id);
+
+    // Предупреждаем участников, если сходка ещё не прошла
+    if (event.dateTime.getTime() > Date.now()) {
+      for (const p of event.participants) {
+        if (p.telegramId === tgUser.id) continue;
+        sendTelegramMessage(
+          p.telegramId,
+          `😔 <b>Сходка отменена</b>\n\n«${escapeHtml(event.title)}», ${formatWhen(event.dateTime)}.\n\nЗагляни в приложение — там есть другие встречи.`,
+          'Найти другую сходку',
+          '?tab=events'
+        );
+      }
+    }
+
     res.json({ success: true, message: 'Событие успешно удалено' });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка удаления события' });
@@ -853,4 +898,5 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🚀 YesMinsk API запущен на порту ${PORT}`);
   registerTelegramWebhook();
+  startReminderLoop();
 });

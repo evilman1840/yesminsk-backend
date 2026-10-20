@@ -29,6 +29,8 @@ export interface IEvent extends Document {
   participants: IEventParticipant[];
   maxParticipants?: number;
   isActive: boolean;
+  reminderDaySentAt?: Date;  // напоминание «завтра сходка» уже отправлено
+  reminderHourSentAt?: Date; // напоминание «через час» уже отправлено
   createdAt: Date;
   updatedAt: Date;
 }
@@ -65,7 +67,9 @@ const EventSchema = new Schema<IEvent>(
       }
     ],
     maxParticipants: { type: Number, default: 0 }, // 0 = без ограничений
-    isActive: { type: Boolean, default: true, index: true }
+    isActive: { type: Boolean, default: true, index: true },
+    reminderDaySentAt: { type: Date },
+    reminderHourSentAt: { type: Date }
   },
   { timestamps: true }
 );

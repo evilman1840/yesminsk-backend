@@ -1,6 +1,9 @@
 import crypto from 'crypto';
 import { Express, Request, Response } from 'express';
+import mongoose from 'mongoose';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
+import { Event } from './models/Event';
+import { eventSummaryHtml, eventAppPath } from './eventNotify';
 
 /**
  * Telegram-бот: отвечает на /start приветствием и кнопкой «Открыть YesMinsk».
@@ -38,12 +41,39 @@ export function setupTelegramBot(app: Express) {
     if (!chatId || message.chat.type !== 'private' || typeof message.text !== 'string') return;
 
     const text = message.text.trim();
+
+    // Ссылка-приглашение на сходку: t.me/<бот>?start=event_<id>
+    const eventMatch = text.match(/^\/start\s+event_([a-f0-9]{24})$/i);
+    if (eventMatch) {
+      sendEventInvite(chatId, eventMatch[1], message.from?.first_name);
+      return;
+    }
+
     if (text.startsWith('/start') || text.startsWith('/help')) {
       sendTelegramMessage(chatId, GREETING(message.from?.first_name), 'Открыть YesMinsk');
     } else {
       sendTelegramMessage(chatId, HINT, 'Открыть YesMinsk');
     }
   });
+}
+
+// Ответ на ссылку-приглашение: карточка сходки и кнопка, открывающая её в приложении
+async function sendEventInvite(chatId: number, eventId: string, firstName?: string) {
+  try {
+    const event = mongoose.Types.ObjectId.isValid(eventId) ? await Event.findById(eventId) : null;
+    if (!event || !event.isActive || event.dateTime.getTime() < Date.now() - 2 * 60 * 60 * 1000) {
+      sendTelegramMessage(chatId, `Эта сходка уже прошла или отменена 😔\nНо в приложении есть другие встречи — загляни!`, 'Открыть YesMinsk', '?tab=events');
+      return;
+    }
+    sendTelegramMessage(
+      chatId,
+      `👋 Привет${firstName ? `, ${escapeHtml(firstName)}` : ''}! Тебя зовут на сходку:\n\n${eventSummaryHtml(event)}\n\nОткрой, чтобы посмотреть подробности и присоединиться 👇`,
+      'Открыть сходку',
+      eventAppPath(event)
+    );
+  } catch (err: any) {
+    console.warn('⚠️ Ошибка приглашения на сходку:', err?.message || err);
+  }
 }
 
 // Регистрирует вебхук в Telegram при запуске сервера

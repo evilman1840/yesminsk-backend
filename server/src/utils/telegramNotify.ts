@@ -10,7 +10,15 @@ export const escapeHtml = (text: string): string =>
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-export async function sendTelegramMessage(chatId: number, html: string, buttonText = 'Открыть YesMinsk'): Promise<boolean> {
+/**
+ * appPath — что открыть в приложении, например `?event=<id>` (откроет сразу нужную сходку)
+ */
+export async function sendTelegramMessage(
+  chatId: number,
+  html: string,
+  buttonText = 'Открыть YesMinsk',
+  appPath = ''
+): Promise<boolean> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!botToken || !chatId) return false;
 
@@ -25,7 +33,7 @@ export async function sendTelegramMessage(chatId: number, html: string, buttonTe
   // Кнопка, открывающая мини-приложение прямо из уведомления
   if (miniAppUrl) {
     body.reply_markup = {
-      inline_keyboard: [[{ text: buttonText, web_app: { url: miniAppUrl } }]]
+      inline_keyboard: [[{ text: buttonText, web_app: { url: `${miniAppUrl.replace(/\/+$/, '')}/${appPath}` } }]]
     };
   }
 
