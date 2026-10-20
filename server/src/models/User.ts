@@ -32,6 +32,7 @@ export interface IUser extends Document {
   hasAgreedToRules: boolean;
   isProfileActive: boolean;
   blockedUsers: number[]; // Список telegramId заблокированных пользователей
+  availableUntil?: Date;  // «⚡ Свободен сейчас» — до этого времени
   lastActiveAt: Date;
 }
 
@@ -77,6 +78,7 @@ const UserSchema = new Schema<IUser>(
     hasAgreedToRules: { type: Boolean, default: false },
     isProfileActive: { type: Boolean, default: true },
     blockedUsers: { type: [Number], default: [] },
+    availableUntil: { type: Date },
     lastActiveAt: { type: Date, default: Date.now }
   },
   { timestamps: true }

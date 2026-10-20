@@ -11,7 +11,8 @@ const CATEGORY_EMOJI: Record<string, string> = {
   expo_cinema: '🎨',
   trip_outdoors: '🌲',
   boardgames: '🎲',
-  sport: '🚴'
+  sport: '🚴',
+  talk: '🤗'
 };
 
 // «суббота, 25 октября, 18:00» — всегда по минскому времени, где бы ни стоял сервер

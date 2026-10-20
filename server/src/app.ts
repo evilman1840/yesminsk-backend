@@ -162,6 +162,22 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
 app.post('/api/users/profile', telegramAuthMiddleware as any, handleUpdateProfile);
 app.put('/api/users/profile', telegramAuthMiddleware as any, handleUpdateProfile);
 
+// «⚡ Свободен сейчас»: hours = 1…6 включает статус, 0 — выключает
+app.post('/api/users/available', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const hours = Math.min(Math.max(Number(req.body.hours) || 0, 0), 6);
+    const availableUntil = hours > 0 ? new Date(Date.now() + hours * 60 * 60 * 1000) : null;
+    await User.updateOne(
+      { telegramId: tgUser.id },
+      availableUntil ? { $set: { availableUntil, lastActiveAt: new Date() } } : { $unset: { availableUntil: 1 } }
+    );
+    res.json({ success: true, availableUntil });
+  } catch (err) {
+    res.status(500).json({ error: 'Не удалось изменить статус' });
+  }
+});
+
 // ==========================================
 // 3. БЛОКИРОВКА ПОЛЬЗОВАТЕЛЯ (ЧЕРНЫЙ СПИСОК)
 // ==========================================
@@ -213,6 +229,8 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
     }
 
     const users = await User.find(query).limit(50).sort({ lastActiveAt: -1 });
+    // «⚡ Свободен сейчас» — первыми в списке
+    users.sort((a, b) => Number(isAvailableNow(b)) - Number(isAvailableNow(a)));
     const flags = await getReactionFlags(tgUser.id, users.map((u) => u.telegramId));
 
     res.json(users.map((u) => formatPublicUser(u, currentUser, flags.get(u.telegramId))));
@@ -280,9 +298,12 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     distanceMeters,
     iLiked: Boolean(flags?.iLiked),
     likedMe: Boolean(flags?.likedMe),
-    isMatch
+    isMatch,
+    availableUntil: isAvailableNow(u) ? u.availableUntil : undefined
   };
 }
+
+const isAvailableNow = (u: any) => Boolean(u?.availableUntil && new Date(u.availableUntil).getTime() > Date.now());
 
 // ==========================================
 // 4.1 👋 ПООБЩАТЬСЯ / 🙈 СКРЫТЬ И «НА СВЯЗИ»
