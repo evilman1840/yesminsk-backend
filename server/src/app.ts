@@ -268,7 +268,10 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
       query.goal = goal;
     }
 
-    const users = await User.find(query).limit(50).sort({ lastActiveAt: -1 });
+    // Уважаем предпочтения других: не показываем меня тем, кто не хочет встречаться с моим полом или возрастом
+    query.$and = theirPreferencesAllow(currentUser);
+
+    const users = await User.find(query).limit(100).sort({ lastActiveAt: -1 });
     // «⚡ Свободен сейчас» — первыми в списке
     users.sort((a, b) => Number(isAvailableNow(b)) - Number(isAvailableNow(a)));
     const flags = await getReactionFlags(tgUser.id, users.map((u) => u.telegramId));
@@ -341,9 +344,37 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     isMatch,
     availableUntil: isAvailableNow(u) ? u.availableUntil : undefined,
     isGuide: Boolean(u.isGuide) && !u.isTourist,
+    // Для фильтра «Были недавно» — без точного времени, только «заходил за последние 3 дня»
+    activeRecently: Boolean(u.lastActiveAt && Date.now() - new Date(u.lastActiveAt).getTime() < 3 * DAY),
     guideAbout: u.isGuide && !u.isTourist ? u.guideAbout || '' : undefined
   };
 }
+
+// Раньше анкета по умолчанию сохраняла «возраст компании 18–45» — такие значения считаем «не указано»
+const LEGACY_DEFAULT_AGE = { min: 18, max: 45 };
+
+/**
+ * Условия «их предпочтения допускают меня»: пол и возраст компании, которые человек указал в анкете
+ */
+function theirPreferencesAllow(me: any): any[] {
+  const myGender = me?.gender;
+  const myAge = Number(me?.age) || 25;
+  return [
+    {
+      preferredGender:
+        myGender === 'male' ? { $in: ['all', 'male', null] } : myGender === 'female' ? { $in: ['all', 'female', null] } : { $in: ['all', null] }
+    },
+    {
+      $or: [
+        { preferredAgeRange: { $exists: false } },
+        { 'preferredAgeRange.min': LEGACY_DEFAULT_AGE.min, 'preferredAgeRange.max': LEGACY_DEFAULT_AGE.max },
+        { 'preferredAgeRange.min': { $lte: myAge }, 'preferredAgeRange.max': { $gte: myAge } }
+      ]
+    }
+  ];
+}
+
+const DAY = 24 * 60 * 60 * 1000;
 
 const isAvailableNow = (u: any) => Boolean(u?.availableUntil && new Date(u.availableUntil).getTime() > Date.now());
 
