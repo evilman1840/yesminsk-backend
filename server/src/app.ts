@@ -16,14 +16,40 @@ dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '1mb' })); // фото приходят уже сжатыми (~100 КБ)
 
 // Подключение к MongoDB
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/yesminsk';
 mongoose
   .connect(MONGODB_URI)
-  .then(() => console.log('✅ MongoDB успешно подключена'))
+  .then(() => {
+    console.log('✅ MongoDB успешно подключена');
+    removeTestProfiles();
+  })
   .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));
+
+// Самое большое фото в анкете (data:-строка, ~450 КБ)
+const MAX_AVATAR_CHARS = 600_000;
+
+// Выдуманные анкеты из /api/users/seed — удаляем с рабочего сервера, чтобы люди не писали «пустоте»
+const TEST_PROFILES = [
+  'daria_minsk', 'max_oktyabr', 'alena_art', 'andrei_borovaya', 'polly_uruchye',
+  'dzmitry_chelyusk', 'sveta_pobeda', 'ilya_zyba', 'olga_komarovka', 'evgeny_vostok'
+].map((username, i) => ({ telegramId: 90000001 + i, username }));
+
+async function removeTestProfiles() {
+  if (process.env.ALLOW_SEED === 'true') return; // при разработке тестовые анкеты нужны
+  try {
+    const result = await User.deleteMany({ $or: TEST_PROFILES });
+    if (result.deletedCount) {
+      const ids = TEST_PROFILES.map((p) => p.telegramId);
+      await Reaction.deleteMany({ $or: [{ fromTelegramId: { $in: ids } }, { toTelegramId: { $in: ids } }] });
+      console.log(`🧹 Удалены тестовые анкеты: ${result.deletedCount}`);
+    }
+  } catch (err: any) {
+    console.warn('⚠️ Не удалось удалить тестовые анкеты:', err?.message || err);
+  }
+}
 
 // Строгое извлечение string из req.params (устраняет TS2345 на Render)
 const getParamId = (id: unknown): string => {
@@ -125,7 +151,13 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
 
     const updateData: any = {};
     if (firstName || name) updateData.firstName = firstName || name;
-    if (avatarUrl) updateData.avatarUrl = avatarUrl;
+    if (avatarUrl) {
+      // Защита базы от огромных фото (приложение сжимает их до ~100 КБ)
+      if (String(avatarUrl).length > MAX_AVATAR_CHARS) {
+        return res.status(413).json({ error: 'Фото слишком большое. Загрузи его ещё раз — приложение сожмёт автоматически' });
+      }
+      updateData.avatarUrl = avatarUrl;
+    }
     if (bio !== undefined) updateData.bio = bio.slice(0, 200);
     if (goal) updateData.goal = goal as ActivityGoal;
     if (age !== undefined) updateData.age = Number(age);
@@ -815,6 +847,8 @@ app.post('/api/events/:id/delete', telegramAuthMiddleware as any, handleDeleteEv
 // 6. РОУТ СИДИРОВАНИЯ (10 ТЕСТОВЫХ АНКЕТ В МИНСКЕ)
 // ==========================================
 app.get('/api/users/seed', async (_req: Request, res: Response) => {
+  // Тестовые анкеты только для разработки: на рабочем сервере адрес закрыт
+  if (process.env.ALLOW_SEED !== 'true') return res.sendStatus(404);
   try {
     const seedProfiles = [
       {
