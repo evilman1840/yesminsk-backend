@@ -1,5 +1,6 @@
 import { Place, PlaceImport, PlaceMood, PlacePrice } from './models/Place';
 import { PLACES_IMPORT_2026_10_21 } from './data/places-2026-10-21';
+import { PLACE_REVIEWS_2026_10_21 } from './data/reviews-2026-10-21';
 
 /**
  * Загрузка мест из таблиц автора. Каждая таблица применяется один раз:
@@ -26,6 +27,15 @@ export interface PlaceImportItem {
   evening?: boolean;
   oneDay?: boolean;
 }
+
+// Отзыв из таблицы: к какому месту (по названию), оценка и текст
+export interface PlaceReviewImport {
+  place: string;
+  rating: number | null;
+  text: string;
+}
+
+const REVIEW_IMPORTS: { key: string; items: PlaceReviewImport[] }[] = [{ key: 'reviews-2026-10-21', items: PLACE_REVIEWS_2026_10_21 }];
 
 const IMPORTS: { key: string; items: PlaceImportItem[] }[] = [{ key: 'places-2026-10-21', items: PLACES_IMPORT_2026_10_21 }];
 
@@ -73,6 +83,36 @@ export async function runPlaceImports() {
       console.log(`📍 Импорт мест «${key}»: добавлено ${created}, обновлено ${updated}`);
     } catch (err: any) {
       console.warn(`⚠️ Импорт мест «${key}» не удался:`, err?.message || err);
+    }
+  }
+
+  // Отзывы — после мест, чтобы было к чему их прикрепить. Таблица заменяет отзывы этих мест целиком
+  for (const { key, items } of REVIEW_IMPORTS) {
+    try {
+      if (await PlaceImport.exists({ key })) continue;
+      const byPlace = new Map<string, PlaceReviewImport[]>();
+      items.forEach((r) => byPlace.set(r.place, [...(byPlace.get(r.place) || []), r]));
+      let added = 0;
+      const missing: string[] = [];
+      for (const [name, reviews] of byPlace) {
+        const place = await Place.findOne({ name });
+        if (!place) {
+          missing.push(name);
+          continue;
+        }
+        place.set(
+          'reviews',
+          reviews.map((r) => ({ rating: r.rating ?? undefined, text: r.text.slice(0, 600), source: 'Яндекс Карты' }))
+        );
+        await place.save();
+        added += reviews.length;
+      }
+      // Не нашли какие-то места — не помечаем как загруженное, попробуем при следующем запуске
+      if (missing.length) console.warn(`⚠️ Отзывы «${key}»: нет мест ${missing.join(', ')}`);
+      else await PlaceImport.create({ key });
+      console.log(`💬 Отзывы «${key}»: добавлено ${added}`);
+    } catch (err: any) {
+      console.warn(`⚠️ Импорт отзывов «${key}» не удался:`, err?.message || err);
     }
   }
 }

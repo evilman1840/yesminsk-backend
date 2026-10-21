@@ -34,6 +34,7 @@ const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false) => ({
   phone: p.phone || '',
   website: p.website || '',
   amenities: p.amenities || [],
+  reviews: (p.reviews || []).map((r) => ({ rating: r.rating ?? null, text: r.text, source: r.source || 'Яндекс Карты' })),
   tipsCount
 });
 

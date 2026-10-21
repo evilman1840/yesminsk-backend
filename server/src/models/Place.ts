@@ -52,6 +52,7 @@ export interface IPlace extends Document {
   phone: string;
   website: string;
   amenities: string[];   // «Собаки», «Карты, NFC», «Доступная среда (вход, парковка)»
+  reviews: { rating?: number; text: string; source: string }[]; // отзывы из таблиц автора (с Яндекс Карт)
   createdAt: Date;
 }
 
@@ -79,7 +80,11 @@ const PlaceSchema = new Schema<IPlace>(
     hours: { type: String, default: '', maxlength: 120 },
     phone: { type: String, default: '', maxlength: 40 },
     website: { type: String, default: '', maxlength: 300 },
-    amenities: { type: [String], default: [] }
+    amenities: { type: [String], default: [] },
+    reviews: {
+      type: [{ rating: { type: Number, min: 1, max: 5 }, text: { type: String, maxlength: 600 }, source: { type: String, default: 'Яндекс Карты' } }],
+      default: []
+    }
   },
   { timestamps: true }
 );
