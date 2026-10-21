@@ -1,6 +1,7 @@
 import { Schema, model, Document } from 'mongoose';
 
-export type ActivityGoal = 'walk' | 'cafe_bar' | 'expo_cinema' | 'trip_outdoors';
+export type ActivityGoal = 'walk' | 'cafe_bar' | 'expo_cinema' | 'trip_outdoors' | 'boardgames' | 'sport' | 'other';
+export const ACTIVITY_GOALS: ActivityGoal[] = ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'other'];
 export type Gender = 'male' | 'female' | 'not_specified';
 export type PreferredGender = 'all' | 'male' | 'female';
 
@@ -18,7 +19,9 @@ export interface IUser extends Document {
     min: number;
     max: number;
   };
-  goal: ActivityGoal;
+  goal: ActivityGoal;      // главная цель (первая из выбранных)
+  goals: ActivityGoal[];   // все цели «Что тебе интересно?»
+  customGoal?: string;     // своя идея, когда среди целей есть 'other'
   locationExact?: {
     type: 'Point';
     coordinates: [number, number]; // [lng, lat]
@@ -67,10 +70,12 @@ const UserSchema = new Schema<IUser>(
     },
     goal: {
       type: String,
-      enum: ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors'],
+      enum: ACTIVITY_GOALS,
       default: 'walk',
       required: true
     },
+    goals: { type: [{ type: String, enum: ACTIVITY_GOALS }], default: undefined },
+    customGoal: { type: String, trim: true, maxlength: 30, default: '' },
     locationExact: {
       type: { type: String, enum: ['Point'], default: 'Point' },
       coordinates: { type: [Number] }

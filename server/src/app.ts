@@ -3,7 +3,7 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
-import { User, ActivityGoal, Gender, PreferredGender } from './models/User';
+import { User, ActivityGoal, ACTIVITY_GOALS, Gender, PreferredGender } from './models/User';
 import { Event, EventCategory } from './models/Event';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
 import { Reaction, ReactionType } from './models/Reaction';
@@ -147,6 +147,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       preferredAgeRange,
       bio,
       goal,
+      goals,
+      customGoal,
       coordinates,
       areaName,
       isTourist,
@@ -167,6 +169,14 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     }
     if (bio !== undefined) updateData.bio = bio.slice(0, 200);
     if (goal) updateData.goal = goal as ActivityGoal;
+    if (Array.isArray(goals)) {
+      const clean = [...new Set(goals.filter((g: any) => ACTIVITY_GOALS.includes(g)))] as ActivityGoal[];
+      if (clean.length) {
+        updateData.goals = clean;
+        updateData.goal = clean[0];
+      }
+    }
+    if (customGoal !== undefined) updateData.customGoal = String(customGoal).trim().slice(0, 30);
     if (age !== undefined) updateData.age = Number(age);
     if (gender) updateData.gender = gender as Gender;
     if (preferredGender) updateData.preferredGender = preferredGender as PreferredGender;
@@ -307,7 +317,7 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
     query.hiddenByReports = { $ne: true };
 
     if (goal && goal !== 'all') {
-      query.goal = goal;
+      query.$or = [{ goal }, { goals: goal }];
     }
 
     // Уважаем предпочтения других: не показываем меня тем, кто не хочет встречаться с моим полом или возрастом
@@ -376,6 +386,8 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     age: u.age,
     gender: u.gender,
     goal: u.goal,
+    goals: u.goals?.length ? u.goals : [u.goal],
+    customGoal: u.goals?.includes('other') ? u.customGoal || '' : '',
     bio: u.bio,
     areaName: u.areaName,
     isTourist: u.isTourist,
