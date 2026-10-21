@@ -7,6 +7,7 @@ import { Donation } from './models/Donation';
 import { handleNewsMessage } from './news';
 import { handleModerationCallback, handleModerationCommand } from './moderation';
 import { handleStatsCommand } from './stats';
+import { handleIdeasCommand } from './ideas';
 import { handleInviteStart } from './invites';
 import { handlePlaceMessage, handlePlaceCallback } from './places';
 import { eventSummaryHtml, eventAppPath } from './eventNotify';
@@ -80,6 +81,7 @@ async function handleMessage(message: any, chatId: number) {
   if (await handleNewsMessage(message)) return;
   if (await handleModerationCommand(message)) return;
   if (await handleStatsCommand(message)) return;
+  if (await handleIdeasCommand(message)) return;
 
   if (typeof message.text !== 'string') return;
   const text = message.text.trim();
@@ -163,6 +165,7 @@ async function registerBotCommands(botToken: string) {
 
   const adminCommands = [
     { command: 'stats', description: 'Статистика приложения' },
+    { command: 'ideas', description: 'Что вписывают в «Своя идея»' },
     { command: 'place', description: 'Добавить место' },
     { command: 'places', description: 'Список мест' },
     { command: 'delplace', description: 'Удалить место: /delplace номер' },
