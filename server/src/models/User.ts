@@ -40,6 +40,8 @@ export interface IUser extends Document {
   isBanned?: boolean;        // забанен модератором
   invitedBy?: number;        // кто позвал в приложение
   savedPlaces?: string[];    // 🔖 места, которые человек хочет посетить
+  hiddenPlaces?: string[];   // места, смахнутые «Неинтересно»
+  hiddenEvents?: string[];   // сходки, смахнутые «Неинтересно»
   hiddenByReports?: boolean; // скрыт после 3 жалоб до решения модератора
   guideAbout?: string;    // что может показать
   lastActiveAt: Date;
@@ -94,6 +96,8 @@ const UserSchema = new Schema<IUser>(
     isBanned: { type: Boolean, default: false },
     invitedBy: { type: Number },
     savedPlaces: { type: [String], default: [] },
+    hiddenPlaces: { type: [String], default: [] },
+    hiddenEvents: { type: [String], default: [] },
     hiddenByReports: { type: Boolean, default: false },
     guideAbout: { type: String, maxlength: 140, default: '' },
     lastActiveAt: { type: Date, default: Date.now }

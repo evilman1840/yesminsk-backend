@@ -37,13 +37,44 @@ export function setupPlacesRoutes(app: Express) {
       const [places, counts, me] = await Promise.all([
         Place.find({}).sort({ createdAt: -1 }).limit(300),
         PlaceTip.aggregate([{ $group: { _id: '$placeId', n: { $sum: 1 } } }]),
-        User.findOne({ telegramId: req.telegramUser!.id }, { savedPlaces: 1 }).lean()
+        User.findOne({ telegramId: req.telegramUser!.id }, { savedPlaces: 1, hiddenPlaces: 1 }).lean()
       ]);
       const countById = new Map(counts.map((c) => [String(c._id), c.n]));
       const saved = new Set(me?.savedPlaces || []);
-      res.json(places.map((p) => formatPlace(p, countById.get(p._id.toString()) || 0, saved.has(p._id.toString()))));
+      // «Неинтересно» не показываем; сохранённые — всегда
+      const hidden = new Set(me?.hiddenPlaces || []);
+      res.json(
+        places
+          .filter((p) => !hidden.has(p._id.toString()) || saved.has(p._id.toString()))
+          .map((p) => formatPlace(p, countById.get(p._id.toString()) || 0, saved.has(p._id.toString())))
+      );
     } catch (err) {
       res.status(500).json({ error: 'Ошибка загрузки мест' });
+    }
+  });
+
+  // Скрытые места — список в анкете, чтобы можно было вернуть
+  app.get('/api/places/hidden', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const me = await User.findOne({ telegramId: req.telegramUser!.id }, { hiddenPlaces: 1 }).lean();
+      const ids = (me?.hiddenPlaces || []).filter((id) => mongoose.Types.ObjectId.isValid(id));
+      const places = ids.length ? await Place.find({ _id: { $in: ids } }) : [];
+      res.json(places.map((p) => formatPlace(p)));
+    } catch {
+      res.status(500).json({ error: 'Ошибка загрузки скрытых мест' });
+    }
+  });
+
+  // «Неинтересно»: скрыть место из ленты ({ hidden: false } — вернуть)
+  app.post('/api/places/:id/hide', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ error: 'Место не найдено' });
+      const hidden = req.body?.hidden !== false;
+      await User.updateOne({ telegramId: req.telegramUser!.id }, hidden ? { $addToSet: { hiddenPlaces: id } } : { $pull: { hiddenPlaces: id } });
+      res.json({ hidden });
+    } catch {
+      res.status(500).json({ error: 'Не удалось скрыть место' });
     }
   });
 

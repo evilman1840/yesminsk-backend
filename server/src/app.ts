@@ -558,6 +558,13 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
       dateTime: { $gte: new Date(Date.now() - 4 * 60 * 60 * 1000) }
     };
 
+    // «Неинтересно» не показываем — кроме тех, куда человек сам записался
+    const me = await User.findOne({ telegramId: tgUser.id }, { hiddenEvents: 1 }).lean();
+    const hiddenIds = (me?.hiddenEvents || []).filter((id) => mongoose.Types.ObjectId.isValid(id));
+    if (hiddenIds.length) {
+      filter.$or = [{ _id: { $nin: hiddenIds } }, { 'participants.telegramId': tgUser.id }];
+    }
+
     if (category && category !== 'all') {
       filter.category = category as EventCategory;
     }
@@ -662,6 +669,19 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Ошибка создания события' });
+  }
+});
+
+// «Неинтересно»: скрыть сходку из ленты ({ hidden: false } — вернуть)
+app.post('/api/events/:id/hide', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const id = getParamId(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ error: 'Сходка не найдена' });
+    const hidden = req.body?.hidden !== false;
+    await User.updateOne({ telegramId: req.telegramUser!.id }, hidden ? { $addToSet: { hiddenEvents: id } } : { $pull: { hiddenEvents: id } });
+    res.json({ hidden });
+  } catch {
+    res.status(500).json({ error: 'Не удалось скрыть сходку' });
   }
 });
 
