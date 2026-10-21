@@ -27,12 +27,19 @@ export const formatWhen = (date: Date) =>
     minute: '2-digit'
   });
 
+// Сколько мест занято: каждый участник плюс его гости
+export const seatsTaken = (event: IEvent) => event.participants.reduce((sum, p) => sum + 1 + (p.guests || 0), 0);
+
+// «+1, с детьми» — как человек идёт (для сообщений организатору)
+export const companyNote = (guests = 0, withKids = false) =>
+  [guests > 0 ? `+${guests}` : '', withKids ? 'с детьми 👶' : ''].filter(Boolean).join(', ');
+
 // Карточка сходки для сообщения бота
 export const eventSummaryHtml = (event: IEvent) =>
   `${CATEGORY_EMOJI[event.category] || '📍'} <b>${escapeHtml(event.title)}</b>\n` +
   `🕒 ${formatWhen(event.dateTime)}\n` +
   `📍 ${escapeHtml(event.locationName)}\n` +
-  `👥 Идут: ${event.participants.length}`;
+  `👥 Идут: ${seatsTaken(event)}`;
 
 export const eventAppPath = (event: IEvent) => `?event=${event._id.toString()}`;
 

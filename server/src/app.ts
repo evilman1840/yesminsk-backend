@@ -3,8 +3,8 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
-import { User, ActivityGoal, ACTIVITY_GOALS, Gender, PreferredGender } from './models/User';
-import { Event, EventCategory } from './models/Event';
+import { User, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, Gender, PreferredGender } from './models/User';
+import { Event, EventCategory, IEvent, EVENT_TAGS } from './models/Event';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
 import { Reaction, ReactionType } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
@@ -13,7 +13,7 @@ import { setupNewsRoutes, isAdmin } from './news';
 import { banGuard, setupModerationRoutes } from './moderation';
 import { markInviteJoined } from './invites';
 import { setupPlacesRoutes } from './places';
-import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen } from './eventNotify';
+import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
 
 dotenv.config();
 
@@ -149,6 +149,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       goal,
       goals,
       customGoal,
+      goesWith,
       coordinates,
       areaName,
       isTourist,
@@ -177,6 +178,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       }
     }
     if (customGoal !== undefined) updateData.customGoal = String(customGoal).trim().slice(0, 30);
+    if (GOES_WITH.includes(goesWith)) updateData.goesWith = goesWith;
     if (age !== undefined) updateData.age = Number(age);
     if (gender) updateData.gender = gender as Gender;
     if (preferredGender) updateData.preferredGender = preferredGender as PreferredGender;
@@ -388,6 +390,7 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     goal: u.goal,
     goals: u.goals?.length ? u.goals : [u.goal],
     customGoal: u.goals?.includes('other') ? u.customGoal || '' : '',
+    goesWith: u.goesWith,
     bio: u.bio,
     areaName: u.areaName,
     isTourist: u.isTourist,
@@ -547,6 +550,37 @@ app.get('/api/reactions/inbox', telegramAuthMiddleware as any, async (req: Authe
 // 5. СОБЫТИЯ / СХОДКИ (EVENTS API)
 // ==========================================
 
+// Сходка для приложения. participantsCount — занятые места (с гостями), groupsCount — сколько записей
+const formatEvent = (ev: IEvent, viewerId: number) => {
+  const mine = ev.participants.find((p) => p.telegramId === viewerId);
+  return {
+    id: ev._id.toString(),
+    _id: ev._id.toString(),
+    title: ev.title,
+    description: ev.description,
+    category: ev.category,
+    customCategory: ev.customCategory || '',
+    tags: ev.tags || [],
+    locationName: ev.locationName,
+    coordinates: [ev.location.coordinates[1], ev.location.coordinates[0]], // [lat, lng]
+    dateTime: ev.dateTime,
+    creator: ev.creator,
+    participantsCount: seatsTaken(ev),
+    groupsCount: ev.participants.length,
+    withKidsCount: ev.participants.filter((p) => p.withKids).length,
+    maxParticipants: ev.maxParticipants || 0,
+    isJoined: Boolean(mine),
+    myGuests: mine?.guests || 0,
+    myWithKids: Boolean(mine?.withKids),
+    participants: ev.participants.slice(0, 5),
+    // «⭐ От ДА! МИНСК» — сходки автора проекта
+    isOfficial: isAdmin(ev.creator.telegramId)
+  };
+};
+
+const cleanTags = (tags: unknown) =>
+  Array.isArray(tags) ? [...new Set(tags.filter((t: any) => EVENT_TAGS.includes(t)))] : undefined;
+
 // Получить список событий
 app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -571,24 +605,7 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
 
     const events = await Event.find(filter).sort({ dateTime: 1 }).limit(40);
 
-    const formatted = events.map((ev) => ({
-      id: ev._id.toString(),
-      _id: ev._id.toString(),
-      title: ev.title,
-      description: ev.description,
-      category: ev.category,
-      customCategory: ev.customCategory || '',
-      locationName: ev.locationName,
-      coordinates: [ev.location.coordinates[1], ev.location.coordinates[0]], // [lat, lng]
-      dateTime: ev.dateTime,
-      creator: ev.creator,
-      participantsCount: ev.participants.length,
-      maxParticipants: ev.maxParticipants || 0,
-      isJoined: ev.participants.some((p) => p.telegramId === tgUser.id),
-      participants: ev.participants.slice(0, 5),
-      // «⭐ От ДА! МИНСК» — сходки автора проекта
-      isOfficial: isAdmin(ev.creator.telegramId)
-    }));
+    const formatted = events.map((ev) => formatEvent(ev, tgUser.id));
 
     // Официальные сходки — первыми
     formatted.sort((a, b) => Number(b.isOfficial) - Number(a.isOfficial));
@@ -609,6 +626,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       description,
       category,
       customCategory,
+      tags,
       locationName,
       coordinates, // [lat, lng]
       dateTime,
@@ -626,6 +644,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       description: description.slice(0, 600),
       category: category || 'walk',
       customCategory: category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '',
+      tags: cleanTags(tags) || [],
       locationName,
       location: {
         type: 'Point',
@@ -651,22 +670,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       isActive: true
     });
 
-    res.status(201).json({
-      id: newEvent._id.toString(),
-      _id: newEvent._id.toString(),
-      title: newEvent.title,
-      description: newEvent.description,
-      category: newEvent.category,
-      customCategory: newEvent.customCategory || '',
-      locationName: newEvent.locationName,
-      coordinates: [newEvent.location.coordinates[1], newEvent.location.coordinates[0]],
-      dateTime: newEvent.dateTime,
-      creator: newEvent.creator,
-      participantsCount: 1,
-      maxParticipants: newEvent.maxParticipants || 0,
-      isJoined: true,
-      participants: newEvent.participants.slice(0, 5)
-    });
+    res.status(201).json(formatEvent(newEvent, tgUser.id));
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Ошибка создания события' });
   }
@@ -697,36 +701,53 @@ app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: Auth
       return res.status(404).json({ error: 'Событие не найдено' });
     }
 
-    const alreadyJoined = event.participants.some((p) => p.telegramId === tgUser.id);
-    if (alreadyJoined) {
-      return res.json({ success: true, message: 'Уже участвуешь', event });
+    // Сколько человек ведёт с собой и идёт ли с детьми
+    const guests = Math.max(0, Math.floor(Number(req.body?.guests) || 0));
+    const withKids = Boolean(req.body?.withKids);
+    const mine = event.participants.find((p) => p.telegramId === tgUser.id);
+
+    // Места: каждый участник со своими гостями. Свою прошлую запись не считаем — её заменяем
+    if (event.maxParticipants && event.maxParticipants > 0) {
+      const othersSeats = seatsTaken(event) - (mine ? 1 + (mine.guests || 0) : 0);
+      const free = event.maxParticipants - othersSeats;
+      if (1 + guests > free) {
+        return res.status(400).json({
+          error: free <= 0 ? 'Все места заняты' : free === 1 ? 'Осталось одно место — только для тебя' : `Осталось мест: ${free} — можно взять не больше +${free - 1}`
+        });
+      }
     }
 
-    if (event.maxParticipants && event.maxParticipants > 0 && event.participants.length >= event.maxParticipants) {
-      return res.status(400).json({ error: 'Все места заняты' });
+    const changed = !mine || (mine.guests || 0) !== guests || Boolean(mine.withKids) !== withKids;
+    if (mine) {
+      mine.guests = guests;
+      mine.withKids = withKids;
+    } else {
+      event.participants.push({
+        telegramId: tgUser.id,
+        name: user?.firstName || tgUser.first_name,
+        username: user?.username || tgUser.username,
+        avatarUrl: user?.avatarUrl || tgUser.photo_url || '',
+        joinedAt: new Date(),
+        guests,
+        withKids
+      });
     }
-
-    event.participants.push({
-      telegramId: tgUser.id,
-      name: user?.firstName || tgUser.first_name,
-      username: user?.username || tgUser.username,
-      avatarUrl: user?.avatarUrl || tgUser.photo_url || '',
-      joinedAt: new Date()
-    });
 
     await event.save();
 
-    // Организатору приятно знать, что кто-то присоединился
-    if (event.creator.telegramId !== tgUser.id) {
+    // Организатору — кто идёт и с кем
+    if (changed && event.creator.telegramId !== tgUser.id) {
+      const name = escapeHtml(user?.firstName || tgUser.first_name);
+      const note = companyNote(guests, withKids);
       sendTelegramMessage(
         event.creator.telegramId,
-        `🙌 <b>${escapeHtml(user?.firstName || tgUser.first_name)}</b> идёт на твою сходку!\n\n${eventSummaryHtml(event)}`,
+        `${mine ? '✏️' : '🙌'} <b>${name}</b> ${mine ? 'теперь идёт' : 'идёт на твою сходку'}${note ? ` (${escapeHtml(note)})` : ''}!\n\n${eventSummaryHtml(event)}`,
         'Открыть сходку',
         eventAppPath(event)
       );
     }
 
-    res.json({ success: true, event });
+    res.json({ success: true, event: formatEvent(event, tgUser.id) });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка присоединения' });
   }
@@ -783,6 +804,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       description,
       category,
       customCategory,
+      tags,
       locationName,
       coordinates,
       dateTime,
@@ -798,6 +820,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       event.category = category;
       event.customCategory = category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '';
     }
+    if (cleanTags(tags)) event.tags = cleanTags(tags);
     if (locationName) event.locationName = locationName;
     if (dateTime) event.dateTime = new Date(dateTime);
     if (maxParticipants !== undefined) event.maxParticipants = Number(maxParticipants) || 0;
@@ -827,22 +850,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       notifyParticipants(event, `✏️ <b>Сходка изменилась</b>\n\n${changes}\n\n${eventSummaryHtml(event)}`, tgUser.id);
     }
 
-    res.json({
-      id: event._id.toString(),
-      _id: event._id.toString(),
-      title: event.title,
-      description: event.description,
-      category: event.category,
-      customCategory: event.customCategory || '',
-      locationName: event.locationName,
-      coordinates: [event.location.coordinates[1], event.location.coordinates[0]],
-      dateTime: event.dateTime,
-      creator: event.creator,
-      participantsCount: event.participants.length,
-      maxParticipants: event.maxParticipants || 0,
-      isJoined: event.participants.some((p) => p.telegramId === tgUser.id),
-      participants: event.participants.slice(0, 5)
-    });
+    res.json(formatEvent(event, tgUser.id));
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Ошибка обновления события' });
   }

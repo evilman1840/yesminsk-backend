@@ -8,13 +8,20 @@ export interface IEventParticipant {
   username?: string;
   avatarUrl: string;
   joinedAt: Date;
+  guests?: number;     // сколько человек ведёт с собой (+1, +2…)
+  withKids?: boolean;  // идёт с детьми
 }
+
+// Пометки организатора: для кого сходка
+export type EventTag = 'kids' | 'couples' | 'dogs';
+export const EVENT_TAGS: EventTag[] = ['kids', 'couples', 'dogs'];
 
 export interface IEvent extends Document {
   title: string;
   description: string;
   category: EventCategory;
   customCategory?: string; // своя идея, когда category = 'other' («Караоке», «Йога»…)
+  tags?: EventTag[];
   location: {
     type: 'Point';
     coordinates: [number, number]; // [lng, lat]
@@ -47,6 +54,7 @@ const EventSchema = new Schema<IEvent>(
       required: true
     },
     customCategory: { type: String, trim: true, maxlength: 30 },
+    tags: { type: [{ type: String, enum: EVENT_TAGS }], default: [] },
     location: {
       type: { type: String, enum: ['Point'], default: 'Point' },
       coordinates: { type: [Number], required: true } // [lng, lat]
@@ -65,7 +73,9 @@ const EventSchema = new Schema<IEvent>(
         name: { type: String, required: true },
         username: { type: String },
         avatarUrl: { type: String, required: true },
-        joinedAt: { type: Date, default: Date.now }
+        joinedAt: { type: Date, default: Date.now },
+        guests: { type: Number, default: 0, min: 0 },
+        withKids: { type: Boolean, default: false }
       }
     ],
     maxParticipants: { type: Number, default: 0 }, // 0 = без ограничений
