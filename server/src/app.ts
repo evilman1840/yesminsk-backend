@@ -558,6 +558,7 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
       title: ev.title,
       description: ev.description,
       category: ev.category,
+      customCategory: ev.customCategory || '',
       locationName: ev.locationName,
       coordinates: [ev.location.coordinates[1], ev.location.coordinates[0]], // [lat, lng]
       dateTime: ev.dateTime,
@@ -588,6 +589,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       title,
       description,
       category,
+      customCategory,
       locationName,
       coordinates, // [lat, lng]
       dateTime,
@@ -604,6 +606,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       title: title.slice(0, 100),
       description: description.slice(0, 600),
       category: category || 'walk',
+      customCategory: category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '',
       locationName,
       location: {
         type: 'Point',
@@ -635,6 +638,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       title: newEvent.title,
       description: newEvent.description,
       category: newEvent.category,
+      customCategory: newEvent.customCategory || '',
       locationName: newEvent.locationName,
       coordinates: [newEvent.location.coordinates[1], newEvent.location.coordinates[0]],
       dateTime: newEvent.dateTime,
@@ -746,6 +750,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       title,
       description,
       category,
+      customCategory,
       locationName,
       coordinates,
       dateTime,
@@ -757,7 +762,10 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
 
     if (title) event.title = title.slice(0, 100);
     if (description) event.description = description.slice(0, 600);
-    if (category) event.category = category;
+    if (category) {
+      event.category = category;
+      event.customCategory = category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '';
+    }
     if (locationName) event.locationName = locationName;
     if (dateTime) event.dateTime = new Date(dateTime);
     if (maxParticipants !== undefined) event.maxParticipants = Number(maxParticipants) || 0;
@@ -793,6 +801,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       title: event.title,
       description: event.description,
       category: event.category,
+      customCategory: event.customCategory || '',
       locationName: event.locationName,
       coordinates: [event.location.coordinates[1], event.location.coordinates[0]],
       dateTime: event.dateTime,

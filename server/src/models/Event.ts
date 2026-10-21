@@ -1,6 +1,6 @@
 import { Schema, model, Document } from 'mongoose';
 
-export type EventCategory = 'walk' | 'cafe_bar' | 'expo_cinema' | 'trip_outdoors' | 'boardgames' | 'sport' | 'talk';
+export type EventCategory = 'walk' | 'cafe_bar' | 'expo_cinema' | 'trip_outdoors' | 'boardgames' | 'sport' | 'talk' | 'other';
 
 export interface IEventParticipant {
   telegramId: number;
@@ -14,6 +14,7 @@ export interface IEvent extends Document {
   title: string;
   description: string;
   category: EventCategory;
+  customCategory?: string; // своя идея, когда category = 'other' («Караоке», «Йога»…)
   location: {
     type: 'Point';
     coordinates: [number, number]; // [lng, lat]
@@ -41,10 +42,11 @@ const EventSchema = new Schema<IEvent>(
     description: { type: String, required: true, trim: true, maxlength: 600 },
     category: {
       type: String,
-      enum: ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'talk'],
+      enum: ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'talk', 'other'],
       default: 'walk',
       required: true
     },
+    customCategory: { type: String, trim: true, maxlength: 30 },
     location: {
       type: { type: String, enum: ['Point'], default: 'Point' },
       coordinates: { type: [Number], required: true } // [lng, lat]
