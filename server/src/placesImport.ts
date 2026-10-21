@@ -1,6 +1,7 @@
 import { Place, PlaceImport, PlaceMood, PlacePrice } from './models/Place';
 import { PLACES_IMPORT_2026_10_21 } from './data/places-2026-10-21';
 import { PLACE_REVIEWS_2026_10_21 } from './data/reviews-2026-10-21';
+import { PLACE_MOODS_2026_10_21 } from './data/moods-2026-10-21';
 
 /**
  * Загрузка мест из таблиц автора. Каждая таблица применяется один раз:
@@ -36,6 +37,8 @@ export interface PlaceReviewImport {
 }
 
 const REVIEW_IMPORTS: { key: string; items: PlaceReviewImport[] }[] = [{ key: 'reviews-2026-10-21', items: PLACE_REVIEWS_2026_10_21 }];
+
+const MOOD_IMPORTS: { key: string; items: { place: string; moods: PlaceMood[] }[] }[] = [{ key: 'moods-2026-10-21', items: PLACE_MOODS_2026_10_21 }];
 
 const IMPORTS: { key: string; items: PlaceImportItem[] }[] = [{ key: 'places-2026-10-21', items: PLACES_IMPORT_2026_10_21 }];
 
@@ -113,6 +116,23 @@ export async function runPlaceImports() {
       console.log(`💬 Отзывы «${key}»: добавлено ${added}`);
     } catch (err: any) {
       console.warn(`⚠️ Импорт отзывов «${key}» не удался:`, err?.message || err);
+    }
+  }
+
+  // Настроения от автора — заменяют те, что были у места
+  for (const { key, items } of MOOD_IMPORTS) {
+    try {
+      if (await PlaceImport.exists({ key })) continue;
+      const missing: string[] = [];
+      for (const { place, moods } of items) {
+        const res = await Place.updateOne({ name: place }, { $set: { moods } });
+        if (!res.matchedCount) missing.push(place);
+      }
+      if (missing.length) console.warn(`⚠️ Настроения «${key}»: нет мест ${missing.join(', ')}`);
+      else await PlaceImport.create({ key });
+      console.log(`🌤 Настроения «${key}»: обновлено ${items.length - missing.length}`);
+    } catch (err: any) {
+      console.warn(`⚠️ Импорт настроений «${key}» не удался:`, err?.message || err);
     }
   }
 }
