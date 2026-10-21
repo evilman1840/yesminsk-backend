@@ -27,6 +27,10 @@ export const PLACE_TYPES = [
 export const matchPlaceType = (text: string) =>
   PLACE_TYPES.find((t) => t.toLowerCase() === text.trim().toLowerCase().replace(/ё/g, 'е')) || null;
 
+// Куда с детьми: top — ехать специально, age — с поправкой на возраст, nearby — если живёшь рядом
+export const KIDS_LEVELS = ['top', 'age', 'nearby'] as const;
+export type KidsLevel = (typeof KIDS_LEVELS)[number];
+
 export const PLACE_PRICES = { free: '💸 Бесплатно', cheap: '💸 Недорого', mid: '💸💸 Средне' } as const;
 export type PlacePrice = keyof typeof PLACE_PRICES;
 
@@ -53,6 +57,8 @@ export interface IPlace extends Document {
   website: string;
   amenities: string[];   // «Собаки», «Карты, NFC», «Доступная среда (вход, парковка)»
   reviews: { rating?: number; text: string; source: string }[]; // отзывы из таблиц автора (с Яндекс Карт)
+  kidsLevel?: KidsLevel;
+  kidsNote: string;      // что там детям, с какого возраста, минусы
   createdAt: Date;
 }
 
@@ -81,6 +87,8 @@ const PlaceSchema = new Schema<IPlace>(
     phone: { type: String, default: '', maxlength: 40 },
     website: { type: String, default: '', maxlength: 300 },
     amenities: { type: [String], default: [] },
+    kidsLevel: { type: String, enum: KIDS_LEVELS },
+    kidsNote: { type: String, default: '', maxlength: 600 },
     reviews: {
       type: [{ rating: { type: Number, min: 1, max: 5 }, text: { type: String, maxlength: 600 }, source: { type: String, default: 'Яндекс Карты' } }],
       default: []

@@ -1,7 +1,8 @@
-import { Place, PlaceImport, PlaceMood, PlacePrice } from './models/Place';
+import { Place, PlaceImport, PlaceMood, PlacePrice, KidsLevel } from './models/Place';
 import { PLACES_IMPORT_2026_10_21 } from './data/places-2026-10-21';
 import { PLACE_REVIEWS_2026_10_21 } from './data/reviews-2026-10-21';
 import { PLACE_MOODS_2026_10_21 } from './data/moods-2026-10-21';
+import { PLACE_KIDS_2026_10_21 } from './data/kids-2026-10-21';
 
 /**
  * Загрузка мест из таблиц автора. Каждая таблица применяется один раз:
@@ -39,6 +40,8 @@ export interface PlaceReviewImport {
 const REVIEW_IMPORTS: { key: string; items: PlaceReviewImport[] }[] = [{ key: 'reviews-2026-10-21', items: PLACE_REVIEWS_2026_10_21 }];
 
 const MOOD_IMPORTS: { key: string; items: { place: string; moods: PlaceMood[] }[] }[] = [{ key: 'moods-2026-10-21', items: PLACE_MOODS_2026_10_21 }];
+
+const KIDS_IMPORTS: { key: string; items: { place: string; level: KidsLevel; note: string }[] }[] = [{ key: 'kids-2026-10-21', items: PLACE_KIDS_2026_10_21 }];
 
 const IMPORTS: { key: string; items: PlaceImportItem[] }[] = [{ key: 'places-2026-10-21', items: PLACES_IMPORT_2026_10_21 }];
 
@@ -133,6 +136,23 @@ export async function runPlaceImports() {
       console.log(`🌤 Настроения «${key}»: обновлено ${items.length - missing.length}`);
     } catch (err: any) {
       console.warn(`⚠️ Импорт настроений «${key}» не удался:`, err?.message || err);
+    }
+  }
+
+  // Куда с детьми — уровень и описание от автора
+  for (const { key, items } of KIDS_IMPORTS) {
+    try {
+      if (await PlaceImport.exists({ key })) continue;
+      const missing: string[] = [];
+      for (const { place, level, note } of items) {
+        const res = await Place.updateOne({ name: place }, { $set: { kidsLevel: level, kidsNote: note.slice(0, 600) } });
+        if (!res.matchedCount) missing.push(place);
+      }
+      if (missing.length) console.warn(`⚠️ «С детьми» «${key}»: нет мест ${missing.join(', ')}`);
+      else await PlaceImport.create({ key });
+      console.log(`👶 «С детьми» «${key}»: обновлено ${items.length - missing.length}`);
+    } catch (err: any) {
+      console.warn(`⚠️ Импорт «С детьми» «${key}» не удался:`, err?.message || err);
     }
   }
 }
