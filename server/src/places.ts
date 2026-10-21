@@ -1,7 +1,7 @@
 import { Express, Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
-import { Place, PlaceTip, PLACE_MOODS, PLACE_PRICES, PlaceMood, PlacePrice, IPlace } from './models/Place';
+import { Place, PlaceTip, PLACE_MOODS, PLACE_PRICES, PLACE_TYPES, matchPlaceType, PlaceMood, PlacePrice, IPlace } from './models/Place';
 import { User } from './models/User';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { sendTelegramPhoto } from './utils/telegramFile';
@@ -28,6 +28,12 @@ const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false) => ({
   rainOk: p.rainOk,
   evening: p.evening,
   oneDay: p.oneDay,
+  rating: p.rating ?? null,
+  ratingCount: p.ratingCount ?? null,
+  hours: p.hours || '',
+  phone: p.phone || '',
+  website: p.website || '',
+  amenities: p.amenities || [],
   tipsCount
 });
 
@@ -231,6 +237,38 @@ function notifyAdmins(html: string, keyboard: Keyboard) {
 
 const SKIP_BTN: Keyboard = [[{ text: 'Пропустить ⏭', callback_data: 'pl:skip' }]];
 
+// Типы мест кнопками по два в ряд; prefix — что вернётся в callback (+ номер типа)
+const typesKeyboard = (prefix: string): Keyboard => {
+  const rows: Keyboard = [];
+  PLACE_TYPES.forEach((t, i) => {
+    if (i % 2 === 0) rows.push([]);
+    rows[rows.length - 1].push({ text: t, callback_data: `${prefix}${i}` });
+  });
+  return rows;
+};
+
+const MAX_PHOTOS = 10;
+
+// Фото к уже опубликованному месту: /placephoto номер → дальше просто шли фото
+const photoTargets = new Map<number, { placeId: string; until: number; added: number; timer?: NodeJS.Timeout }>();
+
+// Чей альбом: фото альбома приходят отдельными сообщениями (подпись — у одного), обрабатываются параллельно
+const albumOwners = new Map<string, { kind: 'news' | 'place'; placeId?: string }>();
+const rememberAlbum = (groupId: string, owner: { kind: 'news' | 'place'; placeId?: string }) => {
+  albumOwners.set(groupId, owner);
+  setTimeout(() => albumOwners.delete(groupId), 5 * 60 * 1000);
+};
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Номер из /places или название — найти место
+async function findPlaceByRef(ref: string) {
+  const places = await Place.find({}).sort({ createdAt: 1 });
+  const n = Number(ref.trim());
+  if (Number.isInteger(n) && n > 0) return places[n - 1] || null;
+  const q = ref.trim().toLowerCase().replace(/ё/g, 'е');
+  return places.find((p) => p.name.toLowerCase().replace(/ё/g, 'е') === q) || places.find((p) => p.name.toLowerCase().replace(/ё/g, 'е').includes(q)) || null;
+}
+
 const moodsKeyboard = (d: Draft): Keyboard => [
   ...(Object.keys(PLACE_MOODS) as PlaceMood[]).map((k) => [
     { text: `${d.moods.includes(k) ? '✅' : '▫️'} ${PLACE_MOODS[k].emoji} ${PLACE_MOODS[k].label}`, callback_data: `pl:mood:${k}` }
@@ -338,12 +376,7 @@ async function ask(chatId: number, d: Draft) {
     case 'name':
       return say(chatId, 'Шаг 2/8. Как называется место?');
     case 'category':
-      return say(chatId, 'Что это за место? Нажми или напиши своё:', [
-        ...[['Достопримечательность', 'Парк'], ['Кафе', 'Ресторан', 'Бар'], ['Музей', 'Водоём', 'Смотровая']].map((row) =>
-          row.map((c) => ({ text: c, callback_data: `pl:cat:${c}` }))
-        ),
-        [{ text: 'Пропустить ⏭', callback_data: 'pl:cat:' }]
-      ]);
+      return say(chatId, 'Какой это тип места?', [...typesKeyboard('pl:cat:'), [{ text: 'Пропустить ⏭', callback_data: 'pl:cat:' }]]);
     case 'desc':
       return say(chatId, 'Шаг 3/8. Одна фраза о месте — почему туда стоит сходить?');
     case 'moods':
@@ -403,8 +436,44 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
   const text: string = (message.text || '').trim();
   const draft = drafts.get(chatId);
 
-  const isPlaceCommand = /^\/(place|places|delplace|placelink|placecat|cancel)\b/i.test(text);
-  if (!draft && !isPlaceCommand) return false;
+  const isPlaceCommand = /^\/(place|places|delplace|placelink|placecat|placephoto|delphotos|cancel)\b/i.test(text);
+  const caption: string = (message.caption || '').trim();
+  const groupId: string | undefined = message.media_group_id;
+
+  // Фото без черновика: к месту из /placephoto или с подписью «номер / название».
+  // Подпись с командой (/news …) — не наше; такой альбом целиком отдаём новостям
+  let photoPlaceId: string | null = null;
+  if (!draft && message.photo && isAdmin(fromId)) {
+    if (caption.startsWith('/')) {
+      if (groupId) rememberAlbum(groupId, { kind: 'news' });
+    } else if (caption) {
+      const target = await findPlaceByRef(caption);
+      if (!target) {
+        if (groupId) rememberAlbum(groupId, { kind: 'news' });
+        say(chatId, `Не нашёл место «${escapeHtml(caption)}». Подпиши фото номером из /places или точным названием.`);
+        return true;
+      }
+      photoPlaceId = target._id.toString();
+      if (groupId) rememberAlbum(groupId, { kind: 'place', placeId: photoPlaceId });
+    } else {
+      // Без подписи: часть альбома — ждём подписанное фото этого альбома; иначе — место из /placephoto
+      if (groupId) {
+        for (let i = 0; i < 8 && !albumOwners.has(groupId); i++) await sleep(250);
+        const owner = albumOwners.get(groupId);
+        if (owner?.kind === 'place') photoPlaceId = owner.placeId || null;
+        else if (owner?.kind === 'news') photoPlaceId = null;
+        else {
+          const t = photoTargets.get(chatId);
+          if (t && t.until > Date.now()) photoPlaceId = t.placeId;
+        }
+      } else {
+        const t = photoTargets.get(chatId);
+        if (t && t.until > Date.now()) photoPlaceId = t.placeId;
+      }
+    }
+  }
+  const isPlacePhoto = Boolean(photoPlaceId);
+  if (!draft && !isPlaceCommand && !isPlacePhoto) return false;
   if (!isAdmin(fromId)) {
     if (isPlaceCommand) say(chatId, 'Добавлять места может только автор проекта 🙂');
     return isPlaceCommand;
@@ -412,7 +481,63 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
 
   if (/^\/cancel\b/i.test(text)) {
     drafts.delete(chatId);
+    photoTargets.delete(chatId);
     say(chatId, 'Отменено.');
+    return true;
+  }
+
+  // Фото к опубликованному месту
+  if (isPlacePhoto && photoPlaceId) {
+    const fileId = message.photo[message.photo.length - 1].file_id;
+    // $push атомарный — фото альбома, пришедшие одновременно, не затрут друг друга
+    const before = await Place.findById(photoPlaceId, { photos: 1, name: 1 });
+    if (!before) return true;
+    if (before.photos.length >= MAX_PHOTOS) {
+      say(chatId, `У «${escapeHtml(before.name)}» уже ${MAX_PHOTOS} фото — это максимум. Убрать все: <code>/delphotos номер</code>`);
+      return true;
+    }
+    const fresh = await Place.findByIdAndUpdate(photoPlaceId, { $push: { photos: fileId } }, { new: true });
+    if (!fresh) return true;
+    // Альбом приходит пачкой: отвечаем один раз, когда все фото пришли. Подписан обычно только первый
+    const t = photoTargets.get(chatId);
+    const state = t && t.placeId === fresh._id.toString() ? t : { placeId: fresh._id.toString(), until: 0, added: 0 };
+    state.until = Date.now() + 10 * 60 * 1000;
+    state.added += 1;
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = setTimeout(() => {
+      Place.findById(fresh._id, { photos: 1 }).then((p) =>
+        say(chatId, `🖼 К «${escapeHtml(fresh.name)}» добавлено фото: ${state.added} (всего ${p?.photos.length ?? fresh.photos.length}). Можно слать ещё или /cancel.`)
+      );
+      state.added = 0;
+    }, 1500);
+    photoTargets.set(chatId, state);
+    return true;
+  }
+
+  const photoCmd = text.match(/^\/placephoto\s+(.+)$/i);
+  if (photoCmd) {
+    const target = await findPlaceByRef(photoCmd[1]);
+    if (!target) say(chatId, 'Нет такого места. Список — /places');
+    else {
+      photoTargets.set(chatId, { placeId: target._id.toString(), until: Date.now() + 10 * 60 * 1000, added: 0 });
+      say(chatId, `🖼 Шли фото для «${escapeHtml(target.name)}» — можно альбомом, до ${MAX_PHOTOS} всего (сейчас ${target.photos.length}). Закончить — /cancel`);
+    }
+    return true;
+  }
+  if (/^\/placephoto\b/i.test(text)) {
+    say(chatId, 'Так: <code>/placephoto номер</code> (из /places) или <code>/placephoto Парк Горького</code>, а потом просто шли фото.\n\nИли сразу пришли фото с подписью — номером или названием места.');
+    return true;
+  }
+  const delPhotos = text.match(/^\/delphotos\s+(.+)$/i);
+  if (delPhotos) {
+    const target = await findPlaceByRef(delPhotos[1]);
+    if (!target) say(chatId, 'Нет такого места. Список — /places');
+    else {
+      const n = target.photos.length;
+      target.photos = [];
+      await target.save();
+      say(chatId, `🗑 У «${escapeHtml(target.name)}» убраны все фото (${n}).`);
+    }
     return true;
   }
 
@@ -428,7 +553,7 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
     say(
       chatId,
       places.length
-        ? `📍 <b>Места (${places.length})</b>\n\n${places.map((p, i) => `${i + 1}. ${escapeHtml(p.name)}${p.category ? ` · ${escapeHtml(p.category)}` : ''}`).join('\n')}\n\nУдалить: <code>/delplace номер</code>`
+        ? `📍 <b>Места (${places.length})</b>\n\n${places.map((p, i) => `${i + 1}. ${escapeHtml(p.name)}${p.category ? ` · ${escapeHtml(p.category)}` : ''} · 🖼 ${p.photos.length}`).join('\n')}\n\nФото: <code>/placephoto номер</code> · удалить место: <code>/delplace номер</code>`
         : 'Мест пока нет. Добавь первое: /place'
     );
     return true;
@@ -449,20 +574,25 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
     return true;
   }
   // Категория для уже опубликованного места: /placecat 2 Кафе
-  const cat = text.match(/^\/placecat\s+(\d+)\s+(.+)$/i);
+  const cat = text.match(/^\/placecat\s+(\d+)(?:\s+(.+))?$/i);
   if (cat) {
     const places = await Place.find({}).sort({ createdAt: 1 });
     const target = places[Number(cat[1]) - 1];
     if (!target) say(chatId, 'Нет места с таким номером. Список — /places');
+    else if (!cat[2]) say(chatId, `Какой тип у «${escapeHtml(target.name)}»?`, typesKeyboard(`plcat:${target._id}:`));
     else {
-      target.category = cat[2].trim().slice(0, 40);
-      await target.save();
-      say(chatId, `🏷 «${escapeHtml(target.name)}» — ${escapeHtml(target.category)}.`);
+      const type = matchPlaceType(cat[2]);
+      if (!type) say(chatId, `Такого типа нет. Выбери кнопкой:`, typesKeyboard(`plcat:${target._id}:`));
+      else {
+        target.category = type;
+        await target.save();
+        say(chatId, `🏷 «${escapeHtml(target.name)}» — ${escapeHtml(type)}.`);
+      }
     }
     return true;
   }
   if (/^\/placecat\b/i.test(text)) {
-    say(chatId, 'Так: <code>/placecat номер категория</code>, например <code>/placecat 1 Достопримечательность</code>');
+    say(chatId, 'Так: <code>/placecat номер</code> — и выбери тип кнопкой. Номер — из /places');
     return true;
   }
 
@@ -516,11 +646,14 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
       draft.step = 'category';
       await ask(chatId, draft);
       return true;
-    case 'category':
-      draft.category = text.slice(0, 40);
+    case 'category': {
+      const type = matchPlaceType(text);
+      if (!type) return say(chatId, 'Выбери тип кнопкой 👆 — так места попадут в фильтры', typesKeyboard('pl:cat:')), true;
+      draft.category = type;
       draft.step = 'desc';
       await ask(chatId, draft);
       return true;
+    }
     case 'desc':
       if (!text) return say(chatId, 'Напиши одну фразу текстом'), true;
       draft.description = text.slice(0, 300);
@@ -605,13 +738,29 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
  */
 export async function handlePlaceCallback(query: any): Promise<boolean> {
   const data: string = query.data || '';
-  if (!data.startsWith('pl:') && !data.startsWith('tipdel:')) return false;
+  if (!data.startsWith('pl:') && !data.startsWith('tipdel:') && !data.startsWith('plcat:')) return false;
 
   const chatId: number = query.message?.chat?.id;
   const answer = (text = '') => callBot('answerCallbackQuery', { callback_query_id: query.id, text });
 
   if (!isAdmin(query.from?.id)) {
     answer('Только для автора проекта');
+    return true;
+  }
+
+  // Тип для опубликованного места: plcat:<id места>:<номер типа>
+  if (data.startsWith('plcat:')) {
+    const [, id, i] = data.split(':');
+    const type = PLACE_TYPES[Number(i)];
+    if (type && mongoose.Types.ObjectId.isValid(id)) {
+      const place = await Place.findByIdAndUpdate(id, { category: type }, { new: true });
+      if (place) {
+        callBot('editMessageText', { chat_id: chatId, message_id: query.message.message_id, text: `🏷 «${place.name}» — ${type}.` });
+        answer(type);
+        return true;
+      }
+    }
+    answer('Не получилось');
     return true;
   }
 
@@ -641,7 +790,7 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
       await ask(chatId, d);
       break;
     case 'cat':
-      d.category = (value || '').slice(0, 40);
+      d.category = value ? PLACE_TYPES[Number(value)] || '' : '';
       d.step = 'desc';
       removeKeyboard();
       await ask(chatId, d);

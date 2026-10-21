@@ -17,6 +17,16 @@ export const PLACE_MOODS = {
 } as const;
 export type PlaceMood = keyof typeof PLACE_MOODS;
 
+// Типы мест — автор выбирает из этого списка (в боте кнопками), в приложении по ним фильтр
+export const PLACE_TYPES = [
+  'Архитектура', 'Галерея', 'Достопримечательность', 'Зоопарк', 'Исторический', 'Культурный', 'Мемориал', 'Музей',
+  'Памятник', 'Парк', 'Площадь', 'Развлечения', 'Скульптура', 'Смотровая', 'Театр', 'Храм'
+] as const;
+
+// «парк» → «Парк»; не из списка — null
+export const matchPlaceType = (text: string) =>
+  PLACE_TYPES.find((t) => t.toLowerCase() === text.trim().toLowerCase().replace(/ё/g, 'е')) || null;
+
 export const PLACE_PRICES = { free: '💸 Бесплатно', cheap: '💸 Недорого', mid: '💸💸 Средне' } as const;
 export type PlacePrice = keyof typeof PLACE_PRICES;
 
@@ -35,6 +45,13 @@ export interface IPlace extends Document {
   rainOk: boolean;   // ☔ ок в дождь
   evening: boolean;  // 🌙 лучше вечером
   oneDay: boolean;   // 🧳 за один день (туристам)
+  // Из Яндекс Карт (таблицы автора)
+  rating?: number;       // 4.8
+  ratingCount?: number;  // сколько оценок
+  hours: string;         // «24/7», «Вт-Вс 10:00-19:00, Пн выходной»
+  phone: string;
+  website: string;
+  amenities: string[];   // «Собаки», «Карты, NFC», «Доступная среда (вход, парковка)»
   createdAt: Date;
 }
 
@@ -56,12 +73,22 @@ const PlaceSchema = new Schema<IPlace>(
     price: { type: String, enum: Object.keys(PLACE_PRICES) },
     rainOk: { type: Boolean, default: false },
     evening: { type: Boolean, default: false },
-    oneDay: { type: Boolean, default: false }
+    oneDay: { type: Boolean, default: false },
+    rating: { type: Number, min: 0, max: 5 },
+    ratingCount: { type: Number, min: 0 },
+    hours: { type: String, default: '', maxlength: 120 },
+    phone: { type: String, default: '', maxlength: 40 },
+    website: { type: String, default: '', maxlength: 300 },
+    amenities: { type: [String], default: [] }
   },
   { timestamps: true }
 );
 
 export const Place = model<IPlace>('Place', PlaceSchema);
+
+// Какие таблицы с местами уже загружены (чтобы не применять повторно при каждом запуске)
+const PlaceImportSchema = new Schema({ key: { type: String, required: true, unique: true }, appliedAt: { type: Date, default: Date.now } });
+export const PlaceImport = model('PlaceImport', PlaceImportSchema);
 
 // Совет к месту от любого человека
 export interface IPlaceTip extends Document {

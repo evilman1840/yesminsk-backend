@@ -13,6 +13,7 @@ import { setupNewsRoutes, isAdmin } from './news';
 import { banGuard, setupModerationRoutes } from './moderation';
 import { markInviteJoined } from './invites';
 import { setupPlacesRoutes } from './places';
+import { runPlaceImports } from './placesImport';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
 
 dotenv.config();
@@ -30,6 +31,7 @@ mongoose
   .then(() => {
     console.log('✅ MongoDB успешно подключена');
     removeTestProfiles();
+    runPlaceImports();
   })
   .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));
 
