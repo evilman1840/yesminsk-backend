@@ -3,7 +3,8 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
-import { User, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, Gender, PreferredGender } from './models/User';
+import { User, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, DIGEST_FREQUENCIES, Gender, PreferredGender } from './models/User';
+import { startDigestLoop } from './digest';
 import { Event, EventCategory, IEvent, EVENT_TAGS } from './models/Event';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
 import { Reaction, ReactionType } from './models/Reaction';
@@ -152,6 +153,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       goals,
       customGoal,
       goesWith,
+      digest,
       coordinates,
       areaName,
       isTourist,
@@ -181,6 +183,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     }
     if (customGoal !== undefined) updateData.customGoal = String(customGoal).trim().slice(0, 30);
     if (GOES_WITH.includes(goesWith)) updateData.goesWith = goesWith;
+    if (DIGEST_FREQUENCIES.includes(digest)) updateData.digest = digest;
     if (age !== undefined) updateData.age = Number(age);
     if (gender) updateData.gender = gender as Gender;
     if (preferredGender) updateData.preferredGender = preferredGender as PreferredGender;
@@ -1101,4 +1104,5 @@ app.listen(PORT, () => {
   console.log(`🚀 YesMinsk API запущен на порту ${PORT}`);
   registerTelegramWebhook();
   startReminderLoop();
+  startDigestLoop();
 });

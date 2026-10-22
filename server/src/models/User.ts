@@ -1,6 +1,9 @@
 import { Schema, model, Document } from 'mongoose';
 
 export type ActivityGoal = 'walk' | 'cafe_bar' | 'expo_cinema' | 'trip_outdoors' | 'boardgames' | 'sport' | 'other';
+// Подборки от бота: как часто присылать
+export type DigestFrequency = 'daily' | 'weekend' | 'weekly' | 'off';
+export const DIGEST_FREQUENCIES: DigestFrequency[] = ['daily', 'weekend', 'weekly', 'off'];
 export type GoesWith = 'solo' | 'couple' | 'friends' | 'kids';
 export const GOES_WITH: GoesWith[] = ['solo', 'couple', 'friends', 'kids'];
 export const ACTIVITY_GOALS: ActivityGoal[] = ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'other'];
@@ -25,6 +28,8 @@ export interface IUser extends Document {
   goals: ActivityGoal[];   // все цели «Что тебе интересно?»
   customGoal?: string;     // своя идея, когда среди целей есть 'other'
   goesWith?: GoesWith;     // «Обычно хожу»: один, парой, компанией, с детьми
+  digest?: DigestFrequency; // подборки от бота; не выбрано — «на выходные»
+  lastDigestAt?: Date;
   locationExact?: {
     type: 'Point';
     coordinates: [number, number]; // [lng, lat]
@@ -82,6 +87,8 @@ const UserSchema = new Schema<IUser>(
     goals: { type: [{ type: String, enum: ACTIVITY_GOALS }], default: undefined },
     customGoal: { type: String, trim: true, maxlength: 30, default: '' },
     goesWith: { type: String, enum: GOES_WITH },
+    digest: { type: String, enum: DIGEST_FREQUENCIES },
+    lastDigestAt: { type: Date },
     locationExact: {
       type: { type: String, enum: ['Point'], default: 'Point' },
       coordinates: { type: [Number] }

@@ -8,6 +8,7 @@ import { handleNewsMessage } from './news';
 import { handleModerationCallback, handleModerationCommand } from './moderation';
 import { handleStatsCommand } from './stats';
 import { handleIdeasCommand } from './ideas';
+import { handleDigestCommand } from './digest';
 import { handleInviteStart } from './invites';
 import { handlePlaceMessage, handlePlaceCallback } from './places';
 import { handleCsvMessage, handleCsvCallback } from './csvImport';
@@ -87,6 +88,7 @@ async function handleMessage(message: any, chatId: number) {
   if (await handleModerationCommand(message)) return;
   if (await handleStatsCommand(message)) return;
   if (await handleIdeasCommand(message)) return;
+  if (await handleDigestCommand(message)) return;
 
   if (typeof message.text !== 'string') return;
   const text = message.text.trim();
@@ -171,6 +173,7 @@ async function registerBotCommands(botToken: string) {
   const adminCommands = [
     { command: 'stats', description: 'Статистика приложения' },
     { command: 'ideas', description: 'Что вписывают в «Своя идея»' },
+    { command: 'digest', description: 'Моя подборка сейчас: /digest daily|weekend|weekly' },
     { command: 'template', description: 'Шаблоны таблиц (места, отзывы)' },
     { command: 'place', description: 'Добавить место' },
     { command: 'places', description: 'Список мест' },
