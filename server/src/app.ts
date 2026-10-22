@@ -7,6 +7,7 @@ import { User, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, DIGEST_FREQUENCIES, Gend
 import { startDigestLoop } from './digest';
 import { startFeedbackLoop } from './feedback';
 import { Event, EventCategory, IEvent, EVENT_TAGS } from './models/Event';
+import { Place } from './models/Place';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
 import { Reaction, ReactionType } from './models/Reaction';
 import { sendLike } from './social';
@@ -585,6 +586,26 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
 const cleanTags = (tags: unknown) =>
   Array.isArray(tags) ? [...new Set(tags.filter((t: any) => EVENT_TAGS.includes(t)))] : undefined;
 
+// «В Лошицкий парк из твоих сохранённых собирают сходку» — тем, кто сохранил место
+async function notifyPlaceSavers(event: IEvent) {
+  const place = await Place.findById(event.placeId, { name: 1 }).lean();
+  if (!place) return;
+  const savers = await User.find(
+    { savedPlaces: event.placeId, telegramId: { $ne: event.creator.telegramId }, isBanned: { $ne: true }, hasAgreedToRules: true },
+    { telegramId: 1, hiddenEvents: 1 }
+  ).lean();
+  for (const u of savers) {
+    sendTelegramMessage(
+      u.telegramId,
+      `🔖 В «<b>${escapeHtml(place.name)}</b>» из твоих сохранённых собирают сходку!\n\n${eventSummaryHtml(event)}\n\nПойдёшь? 👇`,
+      'Открыть сходку',
+      eventAppPath(event)
+    );
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  if (savers.length) console.log(`🔖 Сходка в «${place.name}»: написали ${savers.length} сохранившим`);
+}
+
 // Получить список событий
 app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -631,6 +652,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       category,
       customCategory,
       tags,
+      placeId,
       locationName,
       coordinates, // [lat, lng]
       dateTime,
@@ -649,6 +671,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       category: category || 'walk',
       customCategory: category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '',
       tags: cleanTags(tags) || [],
+      placeId: placeId && mongoose.Types.ObjectId.isValid(String(placeId)) ? String(placeId) : undefined,
       locationName,
       location: {
         type: 'Point',
@@ -675,6 +698,9 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     });
 
     res.status(201).json(formatEvent(newEvent, tgUser.id));
+
+    // Сходка в место — пишем тем, у кого оно в 🔖 сохранённых
+    if (newEvent.placeId) notifyPlaceSavers(newEvent).catch((err) => console.warn('⚠️ Уведомление сохранившим место:', err?.message || err));
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Ошибка создания события' });
   }

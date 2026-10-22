@@ -11,7 +11,8 @@ import { isAdmin } from './news';
  * Адреса для приложения
  * ==================================================================== */
 
-const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false) => ({
+// savedByOthers — сколько ещё людей сохранили место (кроме меня)
+const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false, savedByOthers = 0) => ({
   id: p._id.toString(),
   name: p.name,
   category: p.category || '',
@@ -37,25 +38,33 @@ const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false) => ({
   kidsLevel: p.kidsLevel || null,
   kidsNote: p.kidsNote || '',
   reviews: (p.reviews || []).map((r) => ({ rating: r.rating ?? null, text: r.text, source: r.source || 'Яндекс Карты' })),
+  savedByOthers,
   tipsCount
 });
 
 export function setupPlacesRoutes(app: Express) {
   app.get('/api/places', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const [places, counts, me] = await Promise.all([
+      const [places, counts, me, savedCounts] = await Promise.all([
         Place.find({}).sort({ createdAt: -1 }).limit(300),
         PlaceTip.aggregate([{ $group: { _id: '$placeId', n: { $sum: 1 } } }]),
-        User.findOne({ telegramId: req.telegramUser!.id }, { savedPlaces: 1, hiddenPlaces: 1 }).lean()
+        User.findOne({ telegramId: req.telegramUser!.id }, { savedPlaces: 1, hiddenPlaces: 1 }).lean(),
+        // Сколько людей сохранили каждое место
+        User.aggregate([{ $match: { isBanned: { $ne: true } } }, { $unwind: '$savedPlaces' }, { $group: { _id: '$savedPlaces', n: { $sum: 1 } } }])
       ]);
       const countById = new Map(counts.map((c) => [String(c._id), c.n]));
+      const savedById = new Map(savedCounts.map((c: any) => [String(c._id), c.n as number]));
       const saved = new Set(me?.savedPlaces || []);
       // «Неинтересно» не показываем; сохранённые — всегда
       const hidden = new Set(me?.hiddenPlaces || []);
       res.json(
         places
           .filter((p) => !hidden.has(p._id.toString()) || saved.has(p._id.toString()))
-          .map((p) => formatPlace(p, countById.get(p._id.toString()) || 0, saved.has(p._id.toString())))
+          .map((p) => {
+            const id = p._id.toString();
+            const total = savedById.get(id) || 0;
+            return formatPlace(p, countById.get(id) || 0, saved.has(id), Math.max(0, total - (saved.has(id) ? 1 : 0)));
+          })
       );
     } catch (err) {
       res.status(500).json({ error: 'Ошибка загрузки мест' });

@@ -22,6 +22,7 @@ export interface IEvent extends Document {
   category: EventCategory;
   customCategory?: string; // своя идея, когда category = 'other' («Караоке», «Йога»…)
   tags?: EventTag[];
+  placeId?: string; // сходка в место из «Мест» — тогда пишем тем, кто его сохранил
   location: {
     type: 'Point';
     coordinates: [number, number]; // [lng, lat]
@@ -59,6 +60,7 @@ const EventSchema = new Schema<IEvent>(
     },
     customCategory: { type: String, trim: true, maxlength: 30 },
     tags: { type: [{ type: String, enum: EVENT_TAGS }], default: [] },
+    placeId: { type: String },
     location: {
       type: { type: String, enum: ['Point'], default: 'Point' },
       coordinates: { type: [Number], required: true } // [lng, lat]

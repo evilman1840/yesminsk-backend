@@ -121,8 +121,26 @@ export async function buildDigest(user: IUser, freq: DigestFrequency, now = Date
     if (pick.description) lines.push(escapeHtml(pick.description));
   }
 
-  const saved = (user.savedPlaces || []).length;
-  if (saved) lines.push('', `🔖 В сохранённых ${saved} ${saved === 1 ? 'место' : saved < 5 ? 'места' : 'мест'} — позови кого-нибудь с собой`);
+  // Сохранённое место, которое хотят посетить и другие, — повод собрать компанию
+  const savedIds = (user.savedPlaces || []).filter((id) => !hiddenPlaces.has(id));
+  if (savedIds.length) {
+    const popular = await User.aggregate([
+      { $match: { savedPlaces: { $in: savedIds }, telegramId: { $ne: user.telegramId }, isBanned: { $ne: true } } },
+      { $unwind: '$savedPlaces' },
+      { $match: { savedPlaces: { $in: savedIds } } },
+      { $group: { _id: '$savedPlaces', n: { $sum: 1 } } },
+      { $sort: { n: -1 } },
+      { $limit: 1 }
+    ]);
+    const top = popular[0] ? await Place.findById(popular[0]._id, { name: 1 }).lean() : null;
+    if (top && popular[0].n > 0) {
+      const n = popular[0].n;
+      lines.push('', `🔖 «${escapeHtml(top.name)}» из твоих сохранённых хотят посетить ещё ${n} ${n === 1 ? 'человек' : n < 5 ? 'человека' : 'человек'} — собери компанию?`);
+    } else {
+      const k = savedIds.length;
+      lines.push('', `🔖 В сохранённых ${k} ${k === 1 ? 'место' : k < 5 ? 'места' : 'мест'} — позови кого-нибудь с собой`);
+    }
+  }
 
   lines.push('', '<i>Как часто присылать — в анкете, раздел «Подборки».</i>');
 
