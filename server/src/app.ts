@@ -578,6 +578,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     myGuests: mine?.guests || 0,
     myWithKids: Boolean(mine?.withKids),
     participants: ev.participants.slice(0, 5),
+    placeId: ev.placeId ? String(ev.placeId) : undefined, // сходка в месте из «Мест» — покажем её в карточке места
     // «⭐ От ДА! МИНСК» — сходки автора проекта
     isOfficial: isAdmin(ev.creator.telegramId)
   };
