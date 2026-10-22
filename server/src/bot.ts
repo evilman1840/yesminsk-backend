@@ -12,6 +12,7 @@ import { handleDigestCommand } from './digest';
 import { handleInviteStart } from './invites';
 import { handlePlaceMessage, handlePlaceCallback } from './places';
 import { handleCsvMessage, handleCsvCallback } from './csvImport';
+import { handleFeedbackCallback, handleFeedbackText, handleFeedbackCommand } from './feedback';
 import { eventSummaryHtml, eventAppPath } from './eventNotify';
 
 /**
@@ -49,7 +50,7 @@ export function setupTelegramBot(app: Express) {
     // Нажатие кнопки под жалобой (бан / всё в порядке)
     if (req.body?.callback_query) {
       const q = req.body.callback_query;
-      (async () => (await handleCsvCallback(q)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)))().catch((err) =>
+      (async () => (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)))().catch((err) =>
         console.warn('⚠️ Ошибка обработки кнопки:', err?.message || err)
       );
       return;
@@ -79,6 +80,8 @@ export function setupTelegramBot(app: Express) {
 }
 
 async function handleMessage(message: any, chatId: number) {
+  // Пара слов организатору после «Как прошло?»
+  if (await handleFeedbackText(message)) return;
   // Таблицы (CSV-файл) и шаблоны (/template) — раньше мест, чтобы файл не попал в черновик места
   if (await handleCsvMessage(message)) return;
   // Добавление мест (/place …) — раньше новостей, чтобы фото места не попали в новости
@@ -89,6 +92,7 @@ async function handleMessage(message: any, chatId: number) {
   if (await handleStatsCommand(message)) return;
   if (await handleIdeasCommand(message)) return;
   if (await handleDigestCommand(message)) return;
+  if (await handleFeedbackCommand(message)) return;
 
   if (typeof message.text !== 'string') return;
   const text = message.text.trim();
@@ -174,6 +178,7 @@ async function registerBotCommands(botToken: string) {
     { command: 'stats', description: 'Статистика приложения' },
     { command: 'ideas', description: 'Что вписывают в «Своя идея»' },
     { command: 'digest', description: 'Моя подборка сейчас: /digest daily|weekend|weekly' },
+    { command: 'feedback', description: 'Проверить «Как прошло?» на своей сходке' },
     { command: 'template', description: 'Шаблоны таблиц (места, отзывы)' },
     { command: 'place', description: 'Добавить место' },
     { command: 'places', description: 'Список мест' },

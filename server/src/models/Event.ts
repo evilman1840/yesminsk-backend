@@ -39,6 +39,10 @@ export interface IEvent extends Document {
   isActive: boolean;
   reminderDaySentAt?: Date;  // напоминание «завтра сходка» уже отправлено
   reminderHourSentAt?: Date; // напоминание «через час» уже отправлено
+  // «Как прошло?» после сходки
+  feedback?: { telegramId: number; name: string; score: number; comment?: string; wantsContact?: boolean; createdAt: Date }[];
+  feedbackAskedAt?: Date;        // участникам задан вопрос
+  feedbackSummarySentAt?: Date;  // организатору отправлена сводка
   createdAt: Date;
   updatedAt: Date;
 }
@@ -81,7 +85,19 @@ const EventSchema = new Schema<IEvent>(
     maxParticipants: { type: Number, default: 0 }, // 0 = без ограничений
     isActive: { type: Boolean, default: true, index: true },
     reminderDaySentAt: { type: Date },
-    reminderHourSentAt: { type: Date }
+    reminderHourSentAt: { type: Date },
+    feedback: [
+      {
+        telegramId: { type: Number, required: true },
+        name: { type: String, default: '' },
+        score: { type: Number, min: 1, max: 3, required: true }, // 3 — отлично, 2 — нормально, 1 — не очень
+        comment: { type: String, maxlength: 300 },
+        wantsContact: { type: Boolean },
+        createdAt: { type: Date, default: Date.now }
+      }
+    ],
+    feedbackAskedAt: { type: Date },
+    feedbackSummarySentAt: { type: Date }
   },
   { timestamps: true }
 );

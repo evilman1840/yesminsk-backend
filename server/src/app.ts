@@ -5,9 +5,11 @@ import dotenv from 'dotenv';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import { User, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, DIGEST_FREQUENCIES, Gender, PreferredGender } from './models/User';
 import { startDigestLoop } from './digest';
+import { startFeedbackLoop } from './feedback';
 import { Event, EventCategory, IEvent, EVENT_TAGS } from './models/Event';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
 import { Reaction, ReactionType } from './models/Reaction';
+import { sendLike } from './social';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
 import { setupNewsRoutes, isAdmin } from './news';
@@ -464,44 +466,16 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
       return res.status(404).json({ error: 'Пользователь не найден' });
     }
 
-    const previous = await Reaction.findOne({ fromTelegramId: tgUser.id, toTelegramId: targetId });
-    await Reaction.findOneAndUpdate(
-      { fromTelegramId: tgUser.id, toTelegramId: targetId },
-      { $set: { type } },
-      { upsert: true }
-    );
-
     // 🙈 Скрыть = больше не видим друг друга
     if (type === 'dislike') {
+      await Reaction.findOneAndUpdate({ fromTelegramId: tgUser.id, toTelegramId: targetId }, { $set: { type } }, { upsert: true });
       await User.updateOne({ telegramId: tgUser.id }, { $addToSet: { blockedUsers: targetId } });
       return res.json({ success: true, isMatch: false });
     }
 
-    const reverse = await Reaction.findOne({ fromTelegramId: targetId, toTelegramId: tgUser.id, type: 'like' });
-    const isMatch = Boolean(reverse);
-    const isNewLike = previous?.type !== 'like'; // не спамим уведомлениями при повторном нажатии
-
-    if (isNewLike) {
-      if (isMatch) {
-        // Оба нажали 👋 — уведомляем обоих, что они на связи
-        sendTelegramMessage(
-          target.telegramId,
-          `🤝 <b>Вы на связи!</b>\n\nВы и ${userMentionHtml(me)} оба хотите пообщаться. Можно написать прямо сейчас!`,
-          'Открыть ДА! МИНСК'
-        );
-        sendTelegramMessage(
-          me.telegramId,
-          `🤝 <b>Вы на связи!</b>\n\nВы и ${userMentionHtml(target)} оба хотите пообщаться. Можно написать прямо сейчас!`,
-          'Открыть ДА! МИНСК'
-        );
-      } else {
-        sendTelegramMessage(
-          target.telegramId,
-          `👋 <b>${escapeHtml(me.firstName)}</b> передаёт вам привет и хочет пообщаться!\n\nЗагляните в раздел «Хотят пообщаться». Если тоже захотите — нажмите 👋, и сможете написать друг другу.`,
-          'Посмотреть анкету'
-        );
-      }
-    }
+    const liked = await sendLike(me, target);
+    if (!liked) return res.status(403).json({ error: 'Этому человеку нельзя передать привет' });
+    const { isMatch } = liked;
 
     res.json({
       success: true,
@@ -1120,4 +1094,5 @@ app.listen(PORT, () => {
   registerTelegramWebhook();
   startReminderLoop();
   startDigestLoop();
+  startFeedbackLoop();
 });
