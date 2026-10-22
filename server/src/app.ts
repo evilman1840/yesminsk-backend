@@ -484,12 +484,12 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
         sendTelegramMessage(
           target.telegramId,
           `🤝 <b>Вы на связи!</b>\n\nВы и ${userMentionHtml(me)} оба хотите пообщаться. Можно написать прямо сейчас!`,
-          'Открыть YesMinsk'
+          'Открыть ДА! МИНСК'
         );
         sendTelegramMessage(
           me.telegramId,
           `🤝 <b>Вы на связи!</b>\n\nВы и ${userMentionHtml(target)} оба хотите пообщаться. Можно написать прямо сейчас!`,
-          'Открыть YesMinsk'
+          'Открыть ДА! МИНСК'
         );
       } else {
         sendTelegramMessage(
