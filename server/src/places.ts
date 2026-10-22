@@ -309,7 +309,7 @@ const previewHtml = (d: Draft) =>
 const FILLER_RE = /(?:^|[\s,]+)(у|возле|около|напротив|рядом\s+с|за|перед|во\s+дворе|вход|подъезд|этаж)(?=[\s,.]|$).*$/i;
 const inMinskArea = (lat: number, lng: number) => lat > 53.3 && lat < 54.6 && lng > 26.8 && lng < 28.6;
 
-async function geocode(address: string): Promise<{ coords: [number, number]; label: string } | null> {
+export async function geocode(address: string): Promise<{ coords: [number, number]; label: string } | null> {
   const variants = [address, address.replace(FILLER_RE, '').trim(), address.split(',')[0].trim()].filter(
     (v, i, a) => v && a.indexOf(v) === i
   );
