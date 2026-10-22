@@ -191,7 +191,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     if (isTourist !== undefined) updateData.isTourist = Boolean(isTourist);
     if (areaName) {
       updateData.areaName = areaName;
-      if (areaName.includes('турист')) {
+      if (/турист|проездом/i.test(areaName)) {
         updateData.isTourist = true;
       }
     }
@@ -678,6 +678,21 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     res.status(201).json(formatEvent(newEvent, tgUser.id));
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Ошибка создания события' });
+  }
+});
+
+// Скрытые сходки (ещё не прошедшие) — список в анкете, чтобы можно было вернуть
+app.get('/api/events/hidden', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const me = await User.findOne({ telegramId: tgUser.id }, { hiddenEvents: 1 }).lean();
+    const ids = (me?.hiddenEvents || []).filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const events = ids.length
+      ? await Event.find({ _id: { $in: ids }, isActive: true, dateTime: { $gte: new Date(Date.now() - 4 * 60 * 60 * 1000) } }).sort({ dateTime: 1 })
+      : [];
+    res.json(events.map((ev) => formatEvent(ev, tgUser.id)));
+  } catch {
+    res.status(500).json({ error: 'Ошибка загрузки скрытых сходок' });
   }
 });
 
