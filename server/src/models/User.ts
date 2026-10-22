@@ -29,6 +29,8 @@ export interface IUser extends Document {
   customGoal?: string;     // своя идея, когда среди целей есть 'other'
   goesWith?: GoesWith;     // «Обычно хожу»: один, парой, компанией, с детьми
   digest?: DigestFrequency; // подборки от бота; не выбрано — «на выходные»
+  isEmpath?: boolean;      // «🫶 Эмпат» — человек отметил сам в анкете
+  ventUntil?: Date;        // «🫂 Хочется поныть» — до этого времени (видят только эмпаты)
   lastDigestAt?: Date;
   locationExact?: {
     type: 'Point';
@@ -63,7 +65,7 @@ const UserSchema = new Schema<IUser>(
     lastName: { type: String, trim: true },
     avatarUrl: { type: String, required: true },
     bio: { type: String, maxlength: 200, default: '' },
-    age: { type: Number, default: 25, min: 16, max: 99 },
+    age: { type: Number, default: 25, min: 16, max: 99 }, // в приложении — только 18+ (проверка при сохранении анкеты)
     gender: {
       type: String,
       enum: ['male', 'female', 'not_specified'],
@@ -88,6 +90,8 @@ const UserSchema = new Schema<IUser>(
     customGoal: { type: String, trim: true, maxlength: 30, default: '' },
     goesWith: { type: String, enum: GOES_WITH },
     digest: { type: String, enum: DIGEST_FREQUENCIES },
+    isEmpath: { type: Boolean, default: false },
+    ventUntil: { type: Date },
     lastDigestAt: { type: Date },
     locationExact: {
       type: { type: String, enum: ['Point'], default: 'Point' },

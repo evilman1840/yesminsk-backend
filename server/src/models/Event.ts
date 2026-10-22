@@ -1,6 +1,6 @@
 import { Schema, model, Document } from 'mongoose';
 
-export type EventCategory = 'walk' | 'cafe_bar' | 'expo_cinema' | 'trip_outdoors' | 'boardgames' | 'sport' | 'talk' | 'other';
+export type EventCategory = 'walk' | 'cafe_bar' | 'expo_cinema' | 'trip_outdoors' | 'boardgames' | 'sport' | 'talk' | 'support' | 'other';
 
 export interface IEventParticipant {
   telegramId: number;
@@ -13,8 +13,8 @@ export interface IEventParticipant {
 }
 
 // Пометки организатора: для кого сходка
-export type EventTag = 'kids' | 'couples' | 'dogs';
-export const EVENT_TAGS: EventTag[] = ['kids', 'couples', 'dogs'];
+export type EventTag = 'kids' | 'couples' | 'dogs' | 'empaths';
+export const EVENT_TAGS: EventTag[] = ['kids', 'couples', 'dogs', 'empaths'];
 
 export interface IEvent extends Document {
   title: string;
@@ -53,7 +53,7 @@ const EventSchema = new Schema<IEvent>(
     description: { type: String, required: true, trim: true, maxlength: 600 },
     category: {
       type: String,
-      enum: ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'talk', 'other'],
+      enum: ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'talk', 'support', 'other'],
       default: 'walk',
       required: true
     },

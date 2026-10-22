@@ -13,6 +13,7 @@ const CATEGORY_EMOJI: Record<string, string> = {
   boardgames: '🎲',
   sport: '🚴',
   talk: '🤗',
+  support: '🫂',
   other: '✨'
 };
 

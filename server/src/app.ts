@@ -156,6 +156,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       customGoal,
       goesWith,
       digest,
+      isEmpath,
       coordinates,
       areaName,
       isTourist,
@@ -186,7 +187,12 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     if (customGoal !== undefined) updateData.customGoal = String(customGoal).trim().slice(0, 30);
     if (GOES_WITH.includes(goesWith)) updateData.goesWith = goesWith;
     if (DIGEST_FREQUENCIES.includes(digest)) updateData.digest = digest;
-    if (age !== undefined) updateData.age = Number(age);
+    if (age !== undefined) {
+      // ДА! МИНСК — только для взрослых
+      if (Number(age) < 18) return res.status(400).json({ error: 'ДА! МИНСК — только для тех, кому 18+' });
+      updateData.age = Number(age);
+    }
+    if (isEmpath !== undefined) updateData.isEmpath = Boolean(isEmpath);
     if (gender) updateData.gender = gender as Gender;
     if (preferredGender) updateData.preferredGender = preferredGender as PreferredGender;
     if (preferredAgeRange) updateData.preferredAgeRange = preferredAgeRange;
@@ -262,6 +268,22 @@ app.post('/api/donate/invoice', telegramAuthMiddleware as any, async (req: Authe
 });
 
 // «⚡ Есть время»: hours = 1…6 включает статус, 0 — выключает
+// «🫂 Хочется поныть» на несколько часов (0 — выключить). Видят только эмпаты
+app.post('/api/users/vent', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const hours = Math.min(Math.max(Number(req.body.hours) || 0, 0), 6);
+    const ventUntil = hours > 0 ? new Date(Date.now() + hours * 60 * 60 * 1000) : null;
+    await User.updateOne(
+      { telegramId: tgUser.id },
+      ventUntil ? { $set: { ventUntil, lastActiveAt: new Date() } } : { $unset: { ventUntil: 1 } }
+    );
+    res.json({ success: true, ventUntil });
+  } catch (err) {
+    res.status(500).json({ error: 'Не удалось изменить статус' });
+  }
+});
+
 app.post('/api/users/available', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
@@ -398,6 +420,9 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     goals: u.goals?.length ? u.goals : [u.goal],
     customGoal: u.goals?.includes('other') ? u.customGoal || '' : '',
     goesWith: u.goesWith,
+    isEmpath: Boolean(u.isEmpath),
+    // «Хочется поныть» — только для эмпатов (и не прошедший)
+    ventUntil: currentUser?.isEmpath && u.ventUntil && new Date(u.ventUntil).getTime() > Date.now() ? u.ventUntil : undefined,
     bio: u.bio,
     areaName: u.areaName,
     isTourist: u.isTourist,
@@ -693,6 +718,11 @@ app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: Auth
 
     if (!event || !event.isActive) {
       return res.status(404).json({ error: 'Событие не найдено' });
+    }
+
+    // «Только эмпаты» — записаться может тот, кто отметил «Эмпат» в анкете (организатор — всегда)
+    if ((event.tags || []).includes('empaths') && !user?.isEmpath && event.creator.telegramId !== tgUser.id) {
+      return res.status(403).json({ error: 'Эта сходка только для эмпатов. Если это про тебя — отметь «Эмпат» в анкете' });
     }
 
     // Сколько человек ведёт с собой и идёт ли с детьми

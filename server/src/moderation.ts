@@ -13,7 +13,7 @@ import { formatWhen } from './eventNotify';
  * Жалобы приходят администраторам (ADMIN_TELEGRAM_IDS) в чат с ботом.
  */
 
-export type ReportReason = 'flirt' | 'rude' | 'spam' | 'fake' | 'danger' | 'other';
+export type ReportReason = 'flirt' | 'rude' | 'spam' | 'fake' | 'danger' | 'minor' | 'other';
 
 const REASONS: Record<ReportReason, string> = {
   flirt: '💋 Флирт, намёки на свидания',
@@ -21,6 +21,7 @@ const REASONS: Record<ReportReason, string> = {
   spam: '📢 Спам или реклама',
   fake: '🎭 Фейк, чужие фото',
   danger: '⚠️ Опасное поведение',
+  minor: '🔞 Похоже, младше 18',
   other: '❓ Другое'
 };
 
