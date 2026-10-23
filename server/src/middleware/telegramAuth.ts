@@ -57,6 +57,11 @@ export function verifyTelegramWebAppData(initData: string, botToken: string): Te
 
     if (!isValid) return null;
 
+    // Подпись верна, но строка могла утечь: принимаем только свежие сессии
+    const authDate = Number(urlParams.get('auth_date'));
+    const maxAgeSec = Number(process.env.TELEGRAM_INIT_DATA_MAX_AGE_SEC) || 24 * 60 * 60;
+    if (!authDate || Date.now() / 1000 - authDate > maxAgeSec) return null;
+
     const userParam = urlParams.get('user');
     return userParam ? JSON.parse(userParam) : null;
   } catch (err) {
