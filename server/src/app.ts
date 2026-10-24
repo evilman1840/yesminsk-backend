@@ -23,6 +23,7 @@ import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish } from './wishes';
 import { Wish, WishGroup } from './models/Wish';
 import { startNudgeLoop } from './nudges';
+import { setupAccountRoutes } from './account';
 import { runPlaceImports } from './placesImport';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
 
@@ -1291,6 +1292,9 @@ setupPhotoRoutes(app);
 
 // «Хочу сходить»
 setupWishRoutes(app);
+
+// Удаление аккаунта
+setupAccountRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);

@@ -34,7 +34,7 @@ const MeetupFormEventSchema = new Schema<IMeetupFormEvent>({
   createdAt: { type: Date, default: Date.now, expires: 180 * 24 * 60 * 60 } // храним полгода
 });
 
-const MeetupFormEvent = model<IMeetupFormEvent>('MeetupFormEvent', MeetupFormEventSchema);
+export const MeetupFormEvent = model<IMeetupFormEvent>('MeetupFormEvent', MeetupFormEventSchema);
 
 export function setupMeetupMetricsRoutes(app: Express) {
   app.post('/api/metrics/meetup-form', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {

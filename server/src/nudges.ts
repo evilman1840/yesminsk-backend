@@ -26,7 +26,7 @@ const MAX_AGE = 6 * DAY; // старше — уже не новичок, не п
 type Variant = 'A' | 'B' | 'C' | 'second';
 
 // Журнал отправок: какой вариант работает лучше
-const NudgeLog = model(
+export const NudgeLog = model(
   'NudgeLog',
   new Schema({
     telegramId: { type: Number, required: true, index: true },

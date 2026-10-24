@@ -51,7 +51,7 @@ const ReportSchema = new Schema<IReport>(
 // Один человек — одна жалоба на одну цель
 ReportSchema.index({ fromTelegramId: 1, targetType: 1, targetId: 1 }, { unique: true });
 
-const Report = model<IReport>('Report', ReportSchema);
+export const Report = model<IReport>('Report', ReportSchema);
 
 /* ---------- Сообщения администраторам ---------- */
 

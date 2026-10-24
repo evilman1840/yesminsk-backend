@@ -171,3 +171,12 @@ export const PROFILE_NUDGE_TEXTS = {
   statsTitle: '✏️ <b>Напоминание про анкету</b>',
   statsLine: (sent: number, filled: number, rate: string) => `Отправлено ${sent} · из них дополнили анкету ${filled} (${rate})`
 };
+
+// Удаление аккаунта
+export const ACCOUNT_TEXTS = {
+  bannedCantDelete: 'Аккаунт заблокирован модератором, удалить его нельзя',
+  failed: 'Не получилось удалить аккаунт, попробуй ещё раз',
+  eventCancelled: (title: string, when: string) =>
+    `😔 <b>Сходка отменена</b>\n\n«${title}», ${when}. Организатор удалил аккаунт.\n\nЗагляни в приложение, там есть другие встречи.`,
+  findOther: 'Найти другую сходку'
+};
