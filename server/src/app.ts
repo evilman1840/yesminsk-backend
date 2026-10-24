@@ -118,6 +118,7 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     } else {
       userObj.coordinates = [53.9045, 27.5615];
     }
+    userObj.photos = (user.photos || []).map(photoUrl); // ещё фото в анкете — адресами
 
     res.json(userObj);
   } catch (err) {
@@ -168,10 +169,13 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       avatarUrl,
       isProfileActive,
       isGuide,
-      guideAbout
+      guideAbout,
+      photos
     } = req.body;
 
     const updateData: any = {};
+    // Ещё до 5 фото в анкете (id из /api/photos)
+    if (cleanPhotoIds(photos)) updateData.photos = cleanPhotoIds(photos);
     if (firstName || name) updateData.firstName = firstName || name;
     if (avatarUrl) {
       // Защита базы от огромных фото (приложение сжимает их до ~100 КБ)
@@ -440,7 +444,8 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     isGuide: Boolean(u.isGuide) && !u.isTourist,
     // Для фильтра «Были недавно» — без точного времени, только «заходил за последние 3 дня»
     activeRecently: Boolean(u.lastActiveAt && Date.now() - new Date(u.lastActiveAt).getTime() < 3 * DAY),
-    guideAbout: u.isGuide && !u.isTourist ? u.guideAbout || '' : undefined
+    guideAbout: u.isGuide && !u.isTourist ? u.guideAbout || '' : undefined,
+    photos: (u.photos || []).map(photoUrl)
   };
 }
 
