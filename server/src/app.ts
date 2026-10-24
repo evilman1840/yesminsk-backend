@@ -42,9 +42,20 @@ mongoose
     console.log('✅ MongoDB успешно подключена');
     removeTestProfiles();
     runPlaceImports();
+    markCompletedProfiles();
     seedEventTemplates();
   })
   .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));
+
+// Анкеты, заполненные до пометки «анкета заполнена»: интересы выбирали — значит, форму сохраняли
+async function markCompletedProfiles() {
+  try {
+    const res = await User.updateMany({ profileCompleted: { $exists: false }, 'goals.0': { $exists: true } }, { $set: { profileCompleted: true } });
+    if (res.modifiedCount) console.log(`✅ Отмечены заполненные анкеты: ${res.modifiedCount}`);
+  } catch (err: any) {
+    console.warn('⚠️ Пометка заполненных анкет:', err?.message || err);
+  }
+}
 
 // Самое большое фото в анкете (data:-строка, ~450 КБ)
 const MAX_AVATAR_CHARS = 600_000;
@@ -205,6 +216,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       if (Number(age) < 18) return res.status(400).json({ error: 'ДА! МИНСК только для тех, кому 18+' });
       updateData.age = Number(age);
       if (ageConfirmed) updateData.ageConfirmed = true;
+      // Возраст указан сам и интересы выбраны — анкету можно показывать
+      if (ageConfirmed && Array.isArray(goals) && goals.length) updateData.profileCompleted = true;
     }
     if (isEmpath !== undefined) updateData.isEmpath = Boolean(isEmpath);
     if (gender) updateData.gender = gender as Gender;
@@ -349,6 +362,7 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
     const query: any = {
       isProfileActive: true,
       hasAgreedToRules: true,
+      profileCompleted: true, // пока человек не указал возраст и интересы, анкету не показываем
       telegramId: { $ne: tgUser.id }
     };
 
@@ -383,6 +397,7 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
 const visibleUserQuery = (me: any, targetId: number) => ({
   telegramId: targetId,
   hasAgreedToRules: true,
+  profileCompleted: true,
   isBanned: { $ne: true },
   hiddenByReports: { $ne: true },
   blockedUsers: { $ne: me?.telegramId },
@@ -1231,6 +1246,7 @@ app.get('/api/users/seed', async (_req: Request, res: Response) => {
             areaName: item.areaName,
             isTourist: false,
             hasAgreedToRules: true,
+            profileCompleted: true,
             isProfileActive: true,
             blockedUsers: [],
             locationExact: { type: 'Point', coordinates: [lng, lat] },

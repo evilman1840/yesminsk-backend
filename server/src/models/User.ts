@@ -20,6 +20,7 @@ export interface IUser extends Document {
   bio: string;
   age: number;
   ageConfirmed?: boolean; // человек сам указал возраст (по умолчанию стоит 25)
+  profileCompleted?: boolean; // сам указал возраст и интересы — только тогда анкету видят другие
   gender: Gender;
   preferredGender: PreferredGender;
   preferredAgeRange: {
@@ -73,7 +74,8 @@ const UserSchema = new Schema<IUser>(
     photos: { type: [String], default: undefined },
     bio: { type: String, maxlength: 200, default: '' },
     age: { type: Number, default: 25, min: 16, max: 99 },
-    ageConfirmed: { type: Boolean }, // в приложении — только 18+ (проверка при сохранении анкеты)
+    ageConfirmed: { type: Boolean },
+    profileCompleted: { type: Boolean, index: true }, // в приложении — только 18+ (проверка при сохранении анкеты)
     gender: {
       type: String,
       enum: ['male', 'female', 'not_specified'],
