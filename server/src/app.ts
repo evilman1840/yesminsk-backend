@@ -18,6 +18,7 @@ import { banGuard, setupModerationRoutes } from './moderation';
 import { markInviteJoined } from './invites';
 import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
+import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { runPlaceImports } from './placesImport';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
 
@@ -1180,8 +1181,9 @@ setupModerationRoutes(app);
 // Места по вайбу
 setupPlacesRoutes(app);
 
-// Шаблоны сходок
+// Шаблоны сходок и воронка формы
 setupEventTemplateRoutes(app);
+setupMeetupMetricsRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);

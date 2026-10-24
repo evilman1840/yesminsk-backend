@@ -42,3 +42,16 @@ export const MEETUP_ERRORS = {
   badOption: (label: string) => `В поле «${label}» нет такого варианта`,
   badAmount: 'Сумма: просто число, например 15'
 };
+
+// Раздел /stats про шаблоны сходок и форму
+export const METRICS_TEXTS = {
+  title: '🧩 <b>Сборка сходок за 30 дней</b>',
+  created: (viaTemplate: number, custom: number, noTemplate: number) =>
+    `Создано по шаблонам ${viaTemplate} · через «Свою идею» ${custom}${noTemplate ? ` · по старой форме ${noTemplate}` : ''}`,
+  top: (list: string) => `Чаще выбирают: ${list}`,
+  funnel: (opened: number, picked: number, published: number, rate: string) =>
+    `Форма: открыли ${opened} → выбрали идею ${picked} → опубликовали ${published} (${rate})`,
+  quit: (atPick: number, atForm: number) => `Бросили: на выборе идеи ${atPick} · в заполненной форме ${atForm}`,
+  sources: (list: string) => `Откуда открывают: ${list}`,
+  sourceNames: { feed: 'лента', empty: 'пустая лента', place: 'карточка места', link: 'ссылка' } as Record<string, string>
+};
