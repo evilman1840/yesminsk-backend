@@ -171,7 +171,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       isProfileActive,
       isGuide,
       guideAbout,
-      photos
+      photos,
+      ageConfirmed
     } = req.body;
 
     const updateData: any = {};
@@ -201,6 +202,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       // ДА! МИНСК — только для взрослых
       if (Number(age) < 18) return res.status(400).json({ error: 'ДА! МИНСК только для тех, кому 18+' });
       updateData.age = Number(age);
+      if (ageConfirmed) updateData.ageConfirmed = true;
     }
     if (isEmpath !== undefined) updateData.isEmpath = Boolean(isEmpath);
     if (gender) updateData.gender = gender as Gender;

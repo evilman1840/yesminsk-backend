@@ -19,6 +19,7 @@ export interface IUser extends Document {
   photos?: string[]; // ещё до 5 фото в анкете (file_id в Telegram)
   bio: string;
   age: number;
+  ageConfirmed?: boolean; // человек сам указал возраст (по умолчанию стоит 25)
   gender: Gender;
   preferredGender: PreferredGender;
   preferredAgeRange: {
@@ -67,7 +68,8 @@ const UserSchema = new Schema<IUser>(
     avatarUrl: { type: String, required: true },
     photos: { type: [String], default: undefined },
     bio: { type: String, maxlength: 200, default: '' },
-    age: { type: Number, default: 25, min: 16, max: 99 }, // в приложении — только 18+ (проверка при сохранении анкеты)
+    age: { type: Number, default: 25, min: 16, max: 99 },
+    ageConfirmed: { type: Boolean }, // в приложении — только 18+ (проверка при сохранении анкеты)
     gender: {
       type: String,
       enum: ['male', 'female', 'not_specified'],
