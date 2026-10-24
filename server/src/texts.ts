@@ -95,6 +95,8 @@ export const WISH_TEXTS = {
   buildBtn: 'Соберу я',
   buildBtnFor: (what: string) => `Соберу я: ${what}`,
   waitBtn: 'Пойду, если кто-то соберёт',
+  whoBtn: '👀 Кто ещё хочет',
+  whoBtnFor: (what: string) => `👀 Кто ещё хочет ${what}`,
   cancelBtn: 'Уже не актуально',
   waitOk: 'Хорошо! Как только кто-то соберёт сходку, бот пришлёт ссылку 🙌',
   cancelOk: 'Убрали это желание. Можно отметить новое в «Сходках» 🙂',

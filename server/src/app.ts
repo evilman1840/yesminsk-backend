@@ -21,6 +21,7 @@ import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish } from './wishes';
+import { Wish, WishGroup } from './models/Wish';
 import { startNudgeLoop } from './nudges';
 import { runPlaceImports } from './placesImport';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
@@ -375,6 +376,54 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
     res.json(users.map((u) => formatPublicUser(u, currentUser, flags.get(u.telegramId))));
   } catch (err) {
     res.status(500).json({ error: 'Ошибка загрузки пользователей' });
+  }
+});
+
+// Можно ли мне видеть эту анкету: не забанен, не скрыт после жалоб, никто никого не заблокировал
+const visibleUserQuery = (me: any, targetId: number) => ({
+  telegramId: targetId,
+  hasAgreedToRules: true,
+  isBanned: { $ne: true },
+  hiddenByReports: { $ne: true },
+  blockedUsers: { $ne: me?.telegramId },
+  ...(me?.blockedUsers?.includes(targetId) ? { _id: null } : {})
+});
+
+// Одна анкета — для ссылки «Посмотреть анкету» из сообщения бота
+app.get('/api/users/:telegramId/public', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const targetId = Number(req.params.telegramId);
+    if (!Number.isFinite(targetId)) return res.sendStatus(404);
+    const me = await User.findOne({ telegramId: req.telegramUser!.id });
+    const target = await User.findOne(visibleUserQuery(me, targetId));
+    if (!target) return res.status(404).json({ error: 'Анкета скрыта или удалена' });
+    const flags = await getReactionFlags(req.telegramUser!.id, [targetId]);
+    res.json(formatPublicUser(target, me, flags.get(targetId)));
+  } catch {
+    res.status(500).json({ error: 'Не удалось загрузить анкету' });
+  }
+});
+
+// «Хочу сходить»: кто ещё в группе совпадения (видят только участники группы)
+app.get('/api/wishes/groups/:id/members', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const id = getParamId(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.sendStatus(404);
+    const myId = req.telegramUser!.id;
+    const group = await WishGroup.findById(id);
+    if (!group || !(await Wish.exists({ groupId: group._id, telegramId: myId }))) return res.sendStatus(404);
+    const ids = (await Wish.find({ groupId: group._id, status: { $in: ['matched', 'fulfilled'] }, telegramId: { $ne: myId } }).lean()).map((w) => w.telegramId);
+    const me = await User.findOne({ telegramId: myId });
+    const others = await User.find({ ...visibleUserQuery(me, 0), telegramId: { $in: ids, $nin: me?.blockedUsers || [] } });
+    const flags = await getReactionFlags(myId, others.map((u) => u.telegramId));
+    res.json({
+      kind: group.kind,
+      sport: group.sport || null,
+      eventId: group.meetupId || null,
+      members: others.map((u) => formatPublicUser(u, me, flags.get(u.telegramId)))
+    });
+  } catch {
+    res.status(500).json({ error: 'Не удалось загрузить' });
   }
 });
 

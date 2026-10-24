@@ -28,18 +28,21 @@ export async function sendLike(me: IUser, target: IUser, context = ''): Promise<
       sendTelegramMessage(
         target.telegramId,
         `🤝 <b>Вы на связи!</b>\n\nВы и ${userMentionHtml(me)} оба хотите пообщаться. Можно написать прямо сейчас!`,
-        'Открыть ДА! МИНСК'
+        'Открыть анкету',
+        `?user=${me.telegramId}`
       );
       sendTelegramMessage(
         me.telegramId,
         `🤝 <b>Вы на связи!</b>\n\nВы и ${userMentionHtml(target)} оба хотите пообщаться. Можно написать прямо сейчас!`,
-        'Открыть ДА! МИНСК'
+        'Открыть анкету',
+        `?user=${target.telegramId}`
       );
     } else {
       sendTelegramMessage(
         target.telegramId,
         `👋 <b>${escapeHtml(me.firstName)}</b> передаёт вам привет и хочет пообщаться${context ? ` ${escapeHtml(context)}` : ''}!\n\nЗагляните в раздел «Хотят пообщаться». Если тоже захотите, нажмите 👋, и сможете написать друг другу.`,
-        'Посмотреть анкету'
+        'Посмотреть анкету',
+        `?user=${me.telegramId}`
       );
     }
   }

@@ -271,12 +271,12 @@ export async function sendPending() {
         items.length === 1
           ? T.matchOne(items[0].n, items[0].what, items[0].when)
           : [T.matchManyTitle, '', ...items.map((i) => T.matchManyLine(i.n, i.what, i.when)), '', T.matchManyEnd].join('\n');
+      // Каждая кнопка на своей строке, чтобы текст не обрезался
       const rows: Btn[][] = items.flatMap((i) => [
         [{ text: items.length === 1 ? T.buildBtn : T.buildBtnFor(i.what), path: buildPath(i.g) }],
-        [
-          { text: T.waitBtn, data: `wsh:wait:${i.w._id}` },
-          { text: T.cancelBtn, data: `wsh:cancel:${i.w._id}` }
-        ]
+        [{ text: items.length === 1 ? T.whoBtn : T.whoBtnFor(i.what), path: `?wishGroup=${i.g._id}` }],
+        [{ text: T.waitBtn, data: `wsh:wait:${i.w._id}` }],
+        [{ text: T.cancelBtn, data: `wsh:cancel:${i.w._id}` }]
       ]);
       await sendWithButtons(telegramId, html, rows);
       await Wish.updateMany({ _id: { $in: wishes.map((w) => w._id) } }, { $set: { pending: null, notifiedAt: now } });
@@ -300,7 +300,10 @@ export async function sendPending() {
       g.reminderSentAt = now;
       await g.save();
       for (const w of await Wish.find({ groupId: g._id, status: 'matched' })) {
-        await sendWithButtons(w.telegramId, T.reminder(await phraseFor(w.kind, w.sport), T.when[w.timeWindow]), [[{ text: T.buildBtn, path: buildPath(g) }]]);
+        await sendWithButtons(w.telegramId, T.reminder(await phraseFor(w.kind, w.sport), T.when[w.timeWindow]), [
+          [{ text: T.buildBtn, path: buildPath(g) }],
+          [{ text: T.whoBtn, path: `?wishGroup=${g._id}` }]
+        ]);
       }
     }
   } finally {
