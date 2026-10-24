@@ -59,6 +59,26 @@ export function setupEventTemplateRoutes(app: Express) {
 export const findTemplate = (key?: unknown) =>
   typeof key === 'string' && /^[a-z0-9_]{1,30}$/.test(key) ? EventTemplate.findOne({ key }) : Promise.resolve(null);
 
+/* ---------- Ссылки «собрать сходку» ---------- */
+
+export interface CreateMeetupLink {
+  template?: string; // ключ шаблона
+  when?: 'today' | 'tomorrow' | 'saturday' | 'sunday' | 'weekend';
+  placeId?: string;
+}
+
+// Для кнопки бота (web_app): откроет форму с выбранным шаблоном, временем и местом
+export const meetupCreatePath = (link: CreateMeetupLink = {}) => {
+  const q = new URLSearchParams({ create: link.template || '' });
+  if (link.when) q.set('when', link.when);
+  if (link.placeId) q.set('place', link.placeId);
+  return `?${q.toString()}`;
+};
+
+// Для постов и Threads: t.me/<бот>?startapp=create_coffee_weekend_<id> (не длиннее 64 символов)
+export const meetupStartParam = (link: CreateMeetupLink = {}) =>
+  ['create', link.template, link.when, link.placeId].filter(Boolean).join('_').slice(0, 64);
+
 /* ---------- Доп. поля сходки → значения и метки ---------- */
 
 export interface TemplateExtras {
