@@ -1,4 +1,5 @@
 import { User, IUser, DigestFrequency } from './models/User';
+import { priceShort } from './texts';
 import { Event } from './models/Event';
 import { Place, PLACE_MOODS } from './models/Place';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
@@ -103,7 +104,7 @@ export async function buildDigest(user: IUser, freq: DigestFrequency, now = Date
       const joined = ev.participants.some((p: any) => p.telegramId === user.telegramId);
       const official = isAdmin(ev.creator?.telegramId) ? '⭐ ' : '';
       lines.push(
-        `• ${official}<b>${escapeHtml(when(ev.dateTime))}</b> ${CATEGORY_EMOJI[ev.category] || '📍'} ${escapeHtml(ev.title)} · ${escapeHtml(ev.locationName)}` +
+        `• ${official}<b>${escapeHtml(when(ev.dateTime))}</b> ${CATEGORY_EMOJI[ev.category] || '📍'} ${escapeHtml(ev.title)} · ${escapeHtml(ev.locationName)} · ${priceShort(ev)}` +
           (joined ? ' · ✅ ты идёшь' : ` · идут ${seats(ev)}`)
       );
     });

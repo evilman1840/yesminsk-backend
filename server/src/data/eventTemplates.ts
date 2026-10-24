@@ -5,7 +5,7 @@ import { IEventTemplate } from '../models/EventTemplate';
  * правки автора (через /templates в боте) не затираются. Чтобы убрать шаблон — «Вкл: нет» в таблице
  */
 export type TemplateSeed = { key: string; name: string } & Partial<
-  Pick<IEventTemplate, 'order' | 'active' | 'emoji' | 'category' | 'title' | 'fallbackTitle' | 'description' | 'seats' | 'durationMinutes' | 'placeTypes' | 'tags' | 'fields'>
+  Pick<IEventTemplate, 'order' | 'active' | 'emoji' | 'category' | 'title' | 'fallbackTitle' | 'description' | 'seats' | 'durationMinutes' | 'placeTypes' | 'tags' | 'fields' | 'paid'>
 >;
 
 export const DEFAULT_TEMPLATES: TemplateSeed[] = [
@@ -33,6 +33,7 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
     seats: 5,
     durationMinutes: 180,
     placeTypes: ['Кинотеатр'],
+    paid: true,
     fields: [{ key: 'movie', token: 'фильм', label: 'Какой фильм?', type: 'text', placeholder: 'Например: «Дюна»' }]
   },
   {
@@ -96,6 +97,7 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
     seats: 4,
     durationMinutes: 90,
     placeTypes: ['Спорт', 'Парк'],
+    paid: true,
     fields: [
       {
         key: 'sport',
@@ -137,15 +139,6 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
         type: 'text',
         placeholder: 'Например: ракетки дадут на месте, нужна спортивная обувь',
         badge: '🎒 {value}'
-      },
-      {
-        key: 'cost',
-        label: 'Сколько стоит?',
-        type: 'money',
-        freeLabel: 'Бесплатно',
-        amountLabel: 'Делим аренду, примерно {сумма} BYN с человека',
-        freeBadge: '💸 Бесплатно',
-        amountBadge: '💸 Примерно {сумма} BYN с человека'
       }
     ]
   },

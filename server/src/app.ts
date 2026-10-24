@@ -593,6 +593,8 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     extras: ev.extras || {},
     badges: ev.badges || [],
     photos: (ev.photos || []).map(photoUrl),
+    isPaid: Boolean(ev.isPaid),
+    price: ev.isPaid && ev.price ? ev.price : undefined,
     // «⭐ От ДА! МИНСК» — сходки автора проекта
     isOfficial: isAdmin(ev.creator.telegramId)
   };
@@ -606,6 +608,12 @@ async function templateFields(templateId: unknown, rawExtras: unknown) {
   if (built.error) return { error: built.error };
   return { templateId: tpl.key, extras: built.extras, badges: built.badges };
 }
+
+// Примерная цена в BYN: число от 0 до 10 000, иначе не указана
+const cleanPrice = (v: unknown) => {
+  const n = Number(String(v ?? '').replace(',', '.'));
+  return Number.isFinite(n) && n > 0 && n <= 10000 ? Math.round(n * 100) / 100 : undefined;
+};
 
 const cleanDuration = (v: unknown) => Math.min(24 * 60, Math.max(0, Math.round(Number(v) || 0)));
 
@@ -686,7 +694,9 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       templateId,
       durationMinutes,
       extras,
-      photos
+      photos,
+      isPaid,
+      price
     } = req.body;
 
     if (!title || !description || !locationName || !coordinates || !dateTime) {
@@ -710,6 +720,8 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       extras: tpl.extras,
       badges: tpl.badges,
       photos: cleanPhotoIds(photos) || [],
+      isPaid: Boolean(isPaid),
+      price: isPaid ? cleanPrice(price) : undefined,
       locationName,
       location: {
         type: 'Point',
@@ -899,9 +911,15 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       maxParticipants,
       durationMinutes,
       extras,
-      photos
+      photos,
+      isPaid,
+      price
     } = req.body;
 
+    if (isPaid !== undefined) {
+      event.isPaid = Boolean(isPaid);
+      event.price = event.isPaid ? cleanPrice(price) : undefined;
+    }
     if (cleanPhotoIds(photos)) event.photos = cleanPhotoIds(photos);
     // Доп. поля шаблона (вид спорта, уровень…) — пересобираем метки
     if (extras !== undefined && event.templateId) {

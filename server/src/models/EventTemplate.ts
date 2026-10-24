@@ -50,6 +50,7 @@ export interface IEventTemplate extends Document {
   durationMinutes: number;
   placeTypes: string[];  // для каких типов мест показывать
   tags: EventTag[];      // метки по умолчанию
+  paid: boolean;         // по умолчанию «Платно» (кино, спорт)
   fields: ITemplateField[];
 }
 
@@ -68,6 +69,7 @@ const EventTemplateSchema = new Schema<IEventTemplate>(
     durationMinutes: { type: Number, default: 0 },
     placeTypes: { type: [String], default: [] },
     tags: { type: [{ type: String, enum: EVENT_TAGS }], default: [] },
+    paid: { type: Boolean, default: false },
     fields: { type: Schema.Types.Mixed, default: [] }
   },
   { timestamps: true }

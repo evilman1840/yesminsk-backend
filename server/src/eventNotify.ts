@@ -1,4 +1,5 @@
 import { Event, IEvent } from './models/Event';
+import { priceLabel } from './texts';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
 
 /**
@@ -40,6 +41,7 @@ export const eventSummaryHtml = (event: IEvent) =>
   `${CATEGORY_EMOJI[event.category] || '📍'} <b>${escapeHtml(event.title)}</b>\n` +
   `🕒 ${formatWhen(event.dateTime)}\n` +
   `📍 ${escapeHtml(event.locationName)}\n` +
+  `${priceLabel(event)}\n` +
   `👥 Идут: ${seatsTaken(event)}`;
 
 export const eventAppPath = (event: IEvent) => `?event=${event._id.toString()}`;

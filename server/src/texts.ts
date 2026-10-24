@@ -8,7 +8,7 @@ export const TEMPLATE_TEXTS = {
   csvCaption:
     '🧩 <b>Шаблоны сходок.</b> Поправь и пришли файл обратно. Пустая ячейка ничего не меняет.\n\n' +
     'Ключ: латиницей, по нему шаблон и находится (новый ключ = новый шаблон).\n' +
-    'Вкл: да / нет. Категория: Кофе/бар, Прогулка, Арт/кино, За город, Настолки, Спорт/вело, Поныть, Своя идея.\n' +
+    'Вкл и Платно: да / нет. Категория: Кофе/бар, Прогулка, Арт/кино, За город, Настолки, Спорт/вело, Поныть, Своя идея.\n' +
     'Метки и типы мест: через «;». Длительность: в часах, например 1,5.\n' +
     'В названии и описании можно писать {фильм}, {спорт}, {уровень}: подставится из доп. полей.\n' +
     'Доп. поля (JSON) лучше не трогать без нужды.',
@@ -64,3 +64,18 @@ export const PHOTO_TEXTS = {
   tooBig: 'Фото слишком большое, выбери другое',
   failed: 'Не получилось сохранить фото, попробуй ещё раз'
 };
+
+// Цена сходки: бесплатно или платно (по умолчанию бесплатно)
+export const PRICE_TEXTS = {
+  free: '💚 Бесплатно',
+  paid: '💸 Платно',
+  paidAmount: (amount: number) => `💸 Платно, примерно ${String(amount).replace('.', ',')} BYN`,
+  freeShort: 'бесплатно',
+  paidShort: 'платно',
+  paidAmountShort: (amount: number) => `~${String(amount).replace('.', ',')} BYN`
+};
+
+export const priceLabel = (ev: { isPaid?: boolean; price?: number }) =>
+  !ev.isPaid ? PRICE_TEXTS.free : ev.price ? PRICE_TEXTS.paidAmount(ev.price) : PRICE_TEXTS.paid;
+export const priceShort = (ev: { isPaid?: boolean; price?: number }) =>
+  !ev.isPaid ? PRICE_TEXTS.freeShort : ev.price ? PRICE_TEXTS.paidAmountShort(ev.price) : PRICE_TEXTS.paidShort;

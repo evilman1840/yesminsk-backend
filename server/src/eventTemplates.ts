@@ -23,6 +23,9 @@ export async function seedEventTemplates() {
       DEFAULT_TEMPLATES.map((t) => ({ updateOne: { filter: { key: t.key }, update: { $setOnInsert: t }, upsert: true } }))
     );
     if (res.upsertedCount) console.log(`🧩 Добавлены шаблоны сходок: ${res.upsertedCount}`);
+    // Цена теперь общая для всех сходок: убираем старое поле «Сколько стоит?» у «Поиграем?», ставим «Платно»
+    await EventTemplate.updateOne({ key: 'sport', 'fields.key': 'cost' }, { $pull: { fields: { key: 'cost' } }, $set: { paid: true } });
+    await EventTemplate.updateOne({ key: 'cinema', paid: { $exists: false } }, { $set: { paid: true } });
   } catch (err: any) {
     console.warn('⚠️ Шаблоны сходок:', err?.message || err);
   }
@@ -42,6 +45,7 @@ export const formatTemplate = (t: IEventTemplate) => ({
   durationMinutes: t.durationMinutes || 0,
   placeTypes: t.placeTypes || [],
   tags: t.tags || [],
+  paid: Boolean(t.paid),
   fields: t.fields || []
 });
 
@@ -173,6 +177,7 @@ const COLUMNS = [
   ['duration', 'Длительность (ч)'],
   ['placeTypes', 'Типы мест'],
   ['tags', 'Метки'],
+  ['paid', 'Платно'],
   ['fields', 'Доп. поля (JSON)']
 ] as const;
 type ColumnKey = (typeof COLUMNS)[number][0];
@@ -196,6 +201,7 @@ export async function templatesCsv() {
       t.durationMinutes ? String(t.durationMinutes / 60).replace('.', ',') : '',
       (t.placeTypes || []).join('; '),
       (t.tags || []).map((tag) => TAG_LABELS[tag]).join('; '),
+      t.paid ? 'да' : 'нет',
       t.fields?.length ? JSON.stringify(t.fields) : ''
     ]
       .map(csvCell)
@@ -235,6 +241,7 @@ export async function planTemplates(rows: string[][]): Promise<TemplatesPlan> {
       Number.isFinite(n) ? (set.order = n) : plan.warnings.push(T.badNumber(key, 'Порядок', get('order')));
     }
     if (get('active')) set.active = !/^(нет|no|0|выкл)$/i.test(get('active'));
+    if (get('paid')) set.paid = /^(да|yes|1|платно)$/i.test(get('paid'));
     if (get('emoji')) set.emoji = get('emoji').slice(0, 8);
     if (get('name')) set.name = get('name').slice(0, 40);
     if (get('category')) {

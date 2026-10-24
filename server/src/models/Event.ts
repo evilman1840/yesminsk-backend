@@ -28,6 +28,8 @@ export interface IEvent extends Document {
   extras?: Record<string, string>; // доп. поля шаблона: фильм, вид спорта, уровень, что взять, стоимость
   badges?: string[];        // метки из доп. полей: «🏓 Настольный теннис · любой уровень»
   photos?: string[];        // до 5 фото (file_id в Telegram)
+  isPaid?: boolean;         // платная сходка (по умолчанию бесплатная)
+  price?: number;           // примерно сколько, BYN с человека
   location: {
     type: 'Point';
     coordinates: [number, number]; // [lng, lat]
@@ -71,6 +73,8 @@ const EventSchema = new Schema<IEvent>(
     extras: { type: Schema.Types.Mixed },
     badges: { type: [String], default: [] },
     photos: { type: [String], default: [] },
+    isPaid: { type: Boolean, default: false },
+    price: { type: Number, min: 0 },
     location: {
       type: { type: String, enum: ['Point'], default: 'Point' },
       coordinates: { type: [Number], required: true } // [lng, lat]
