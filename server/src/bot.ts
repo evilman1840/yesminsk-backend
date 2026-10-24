@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { handleTemplatesCommand, handleTemplatesCallback } from './eventTemplates';
 import { Express, Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
@@ -50,7 +51,7 @@ export function setupTelegramBot(app: Express) {
     // Нажатие кнопки под жалобой (бан / всё в порядке)
     if (req.body?.callback_query) {
       const q = req.body.callback_query;
-      (async () => (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)))().catch((err) =>
+      (async () => (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)))().catch((err) =>
         console.warn('⚠️ Ошибка обработки кнопки:', err?.message || err)
       );
       return;
@@ -93,6 +94,7 @@ async function handleMessage(message: any, chatId: number) {
   if (await handleIdeasCommand(message)) return;
   if (await handleDigestCommand(message)) return;
   if (await handleFeedbackCommand(message)) return;
+  if (await handleTemplatesCommand(message)) return;
 
   if (typeof message.text !== 'string') return;
   const text = message.text.trim();

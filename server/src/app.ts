@@ -17,6 +17,7 @@ import { setupNewsRoutes, isAdmin } from './news';
 import { banGuard, setupModerationRoutes } from './moderation';
 import { markInviteJoined } from './invites';
 import { setupPlacesRoutes } from './places';
+import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
 import { runPlaceImports } from './placesImport';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
 
@@ -36,6 +37,7 @@ mongoose
     console.log('✅ MongoDB успешно подключена');
     removeTestProfiles();
     runPlaceImports();
+    seedEventTemplates();
   })
   .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));
 
@@ -579,10 +581,25 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     myWithKids: Boolean(mine?.withKids),
     participants: ev.participants.slice(0, 5),
     placeId: ev.placeId ? String(ev.placeId) : undefined, // сходка в месте из «Мест» — покажем её в карточке места
+    templateId: ev.templateId || undefined,
+    durationMinutes: ev.durationMinutes || 0,
+    extras: ev.extras || {},
+    badges: ev.badges || [],
     // «⭐ От ДА! МИНСК» — сходки автора проекта
     isOfficial: isAdmin(ev.creator.telegramId)
   };
 };
+
+// Шаблон и его доп. поля из формы: { templateId, extras, badges } или ошибка для пользователя
+async function templateFields(templateId: unknown, rawExtras: unknown) {
+  const tpl = await findTemplate(templateId);
+  if (!tpl) return { templateId: undefined, extras: undefined, badges: [] as string[] };
+  const built = buildExtras(tpl.fields || [], rawExtras || {});
+  if (built.error) return { error: built.error };
+  return { templateId: tpl.key, extras: built.extras, badges: built.badges };
+}
+
+const cleanDuration = (v: unknown) => Math.min(24 * 60, Math.max(0, Math.round(Number(v) || 0)));
 
 const cleanTags = (tags: unknown) =>
   Array.isArray(tags) ? [...new Set(tags.filter((t: any) => EVENT_TAGS.includes(t)))] : undefined;
@@ -657,12 +674,18 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       locationName,
       coordinates, // [lat, lng]
       dateTime,
-      maxParticipants
+      maxParticipants,
+      templateId,
+      durationMinutes,
+      extras
     } = req.body;
 
     if (!title || !description || !locationName || !coordinates || !dateTime) {
       return res.status(400).json({ error: 'Заполните все обязательные поля события' });
     }
+
+    const tpl = await templateFields(templateId, extras);
+    if ('error' in tpl) return res.status(400).json({ error: tpl.error });
 
     const [lat, lng] = coordinates;
 
@@ -673,6 +696,10 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       customCategory: category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '',
       tags: cleanTags(tags) || [],
       placeId: placeId && mongoose.Types.ObjectId.isValid(String(placeId)) ? String(placeId) : undefined,
+      templateId: tpl.templateId,
+      durationMinutes: cleanDuration(durationMinutes),
+      extras: tpl.extras,
+      badges: tpl.badges,
       locationName,
       location: {
         type: 'Point',
@@ -859,8 +886,19 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       locationName,
       coordinates,
       dateTime,
-      maxParticipants
+      maxParticipants,
+      durationMinutes,
+      extras
     } = req.body;
+
+    // Доп. поля шаблона (вид спорта, уровень…) — пересобираем метки
+    if (extras !== undefined && event.templateId) {
+      const tpl = await templateFields(event.templateId, extras);
+      if ('error' in tpl) return res.status(400).json({ error: tpl.error });
+      event.extras = tpl.extras;
+      event.badges = tpl.badges;
+    }
+    if (durationMinutes !== undefined) event.durationMinutes = cleanDuration(durationMinutes);
 
     const oldTime = event.dateTime.getTime();
     const oldPlace = event.locationName;
@@ -1141,6 +1179,9 @@ setupModerationRoutes(app);
 
 // Места по вайбу
 setupPlacesRoutes(app);
+
+// Шаблоны сходок
+setupEventTemplateRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);

@@ -23,6 +23,10 @@ export interface IEvent extends Document {
   customCategory?: string; // своя идея, когда category = 'other' («Караоке», «Йога»…)
   tags?: EventTag[];
   placeId?: string; // сходка в место из «Мест» — тогда пишем тем, кто его сохранил
+  templateId?: string;      // по какому шаблону собрана (custom — «Своя идея»)
+  durationMinutes?: number; // примерно сколько длится
+  extras?: Record<string, string>; // доп. поля шаблона: фильм, вид спорта, уровень, что взять, стоимость
+  badges?: string[];        // метки из доп. полей: «🏓 Настольный теннис · любой уровень»
   location: {
     type: 'Point';
     coordinates: [number, number]; // [lng, lat]
@@ -61,6 +65,10 @@ const EventSchema = new Schema<IEvent>(
     customCategory: { type: String, trim: true, maxlength: 30 },
     tags: { type: [{ type: String, enum: EVENT_TAGS }], default: [] },
     placeId: { type: String },
+    templateId: { type: String, index: true },
+    durationMinutes: { type: Number, default: 0 },
+    extras: { type: Schema.Types.Mixed },
+    badges: { type: [String], default: [] },
     location: {
       type: { type: String, enum: ['Point'], default: 'Point' },
       coordinates: { type: [Number], required: true } // [lng, lat]

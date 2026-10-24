@@ -2,6 +2,8 @@ import { Place, PLACE_MOODS, PlaceMood, PlacePrice, KidsLevel, matchPlaceType, I
 import { escapeHtml } from './utils/telegramNotify';
 import { isAdmin } from './news';
 import { geocode, placeFromYandexLink } from './places';
+import { parseCsv } from './utils/csv';
+import { isTemplatesHeader, handleTemplatesRows } from './eventTemplates';
 
 /**
  * Загрузка таблиц в боте: автор присылает CSV — бот показывает, что изменится, и после «✅ Загрузить» применяет.
@@ -26,40 +28,6 @@ export const REVIEWS_TEMPLATE = [
 ].join('\n');
 
 /* ---------- CSV ---------- */
-
-// Разбор CSV: кавычки, переносы строк в ячейках, разделитель «,» или «;» (Excel с русскими настройками)
-export function parseCsv(raw: string): string[][] {
-  const text = raw.replace(/^﻿/, '');
-  const firstLine = text.split(/\r?\n/)[0] || '';
-  const sep = (firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length ? ';' : ',';
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"' && text[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else if (c === '"') inQuotes = false;
-      else field += c;
-    } else if (c === '"') inQuotes = true;
-    else if (c === sep) {
-      row.push(field);
-      field = '';
-    } else if (c === '\n' || c === '\r') {
-      if (c === '\r' && text[i + 1] === '\n') i++;
-      row.push(field);
-      field = '';
-      if (row.some((f) => f.trim())) rows.push(row);
-      row = [];
-    } else field += c;
-  }
-  row.push(field);
-  if (row.some((f) => f.trim())) rows.push(row);
-  return rows;
-}
 
 const norm = (s: string) => s.toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
 
@@ -445,6 +413,11 @@ export async function handleCsvMessage(message: any): Promise<boolean> {
       return true;
     }
     const header = rows[0].map(norm);
+    // Таблица шаблонов сходок (/templates) — у неё свой разбор
+    if (isTemplatesHeader(header)) {
+      await handleTemplatesRows(chatId, rows);
+      return true;
+    }
     const isReviews = header.some((h) => REVIEW_COLUMNS.text.includes(h));
     const plan = isReviews ? await planReviews(rows) : await planPlaces(rows);
     if (!hasChanges(plan)) {
