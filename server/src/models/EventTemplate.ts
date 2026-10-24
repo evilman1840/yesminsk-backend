@@ -51,6 +51,7 @@ export interface IEventTemplate extends Document {
   placeTypes: string[];  // для каких типов мест показывать
   tags: EventTag[];      // метки по умолчанию
   paid: boolean;         // по умолчанию «Платно» (кино, спорт)
+  wishPhrase: string;    // для «Хочу сходить»: «в кино», «поиграть в {спорт}»; пусто — не вид желания
   fields: ITemplateField[];
 }
 
@@ -70,6 +71,7 @@ const EventTemplateSchema = new Schema<IEventTemplate>(
     placeTypes: { type: [String], default: [] },
     tags: { type: [{ type: String, enum: EVENT_TAGS }], default: [] },
     paid: { type: Boolean, default: false },
+    wishPhrase: { type: String, default: '', maxlength: 60 },
     fields: { type: Schema.Types.Mixed, default: [] }
   },
   { timestamps: true }

@@ -5,12 +5,13 @@ import { IEventTemplate } from '../models/EventTemplate';
  * правки автора (через /templates в боте) не затираются. Чтобы убрать шаблон — «Вкл: нет» в таблице
  */
 export type TemplateSeed = { key: string; name: string } & Partial<
-  Pick<IEventTemplate, 'order' | 'active' | 'emoji' | 'category' | 'title' | 'fallbackTitle' | 'description' | 'seats' | 'durationMinutes' | 'placeTypes' | 'tags' | 'fields' | 'paid'>
+  Pick<IEventTemplate, 'order' | 'active' | 'emoji' | 'category' | 'title' | 'fallbackTitle' | 'description' | 'seats' | 'durationMinutes' | 'placeTypes' | 'tags' | 'fields' | 'paid' | 'wishPhrase'>
 >;
 
 export const DEFAULT_TEMPLATES: TemplateSeed[] = [
   {
     key: 'coffee',
+    wishPhrase: 'на кофе',
     order: 10,
     emoji: '☕',
     name: 'Кофе и поболтать',
@@ -23,6 +24,7 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
   },
   {
     key: 'cinema',
+    wishPhrase: 'в кино',
     order: 20,
     emoji: '🎬',
     name: 'Кино',
@@ -38,6 +40,7 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
   },
   {
     key: 'boardgames',
+    wishPhrase: 'в настолки',
     order: 30,
     emoji: '🎲',
     name: 'Настолки',
@@ -50,6 +53,7 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
   },
   {
     key: 'support',
+    wishPhrase: 'поныть',
     order: 40,
     emoji: '🫂',
     name: 'Поныть',
@@ -63,6 +67,7 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
   },
   {
     key: 'expo',
+    wishPhrase: 'на выставку',
     order: 50,
     emoji: '🖼',
     name: 'Выставка',
@@ -75,6 +80,7 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
   },
   {
     key: 'walk',
+    wishPhrase: 'погулять',
     order: 60,
     emoji: '🚶',
     name: 'Погулять и поболтать',
@@ -87,6 +93,7 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
   },
   {
     key: 'sport',
+    wishPhrase: 'поиграть в {спорт}',
     order: 70,
     emoji: '🏓',
     name: 'Поиграем?',

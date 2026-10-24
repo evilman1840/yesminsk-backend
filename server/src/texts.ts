@@ -11,6 +11,7 @@ export const TEMPLATE_TEXTS = {
     'Вкл и Платно: да / нет. Категория: Кофе/бар, Прогулка, Арт/кино, За город, Настолки, Спорт/вело, Поныть, Своя идея.\n' +
     'Метки и типы мест: через «;». Длительность: в часах, например 1,5.\n' +
     'В названии и описании можно писать {фильм}, {спорт}, {уровень}: подставится из доп. полей.\n' +
+    'Желание: как бот скажет в «Хочу сходить», например «в кино» или «поиграть в {спорт}». Пусто: шаблона нет среди желаний.\n' +
     'Доп. поля (JSON) лучше не трогать без нужды.',
   fileName: 'Шаблоны сходок.csv',
   summaryTitle: '🧩 <b>Таблица шаблонов</b>',
@@ -79,3 +80,46 @@ export const priceLabel = (ev: { isPaid?: boolean; price?: number }) =>
   !ev.isPaid ? PRICE_TEXTS.free : ev.price ? PRICE_TEXTS.paidAmount(ev.price) : PRICE_TEXTS.paid;
 export const priceShort = (ev: { isPaid?: boolean; price?: number }) =>
   !ev.isPaid ? PRICE_TEXTS.freeShort : ev.price ? PRICE_TEXTS.paidAmountShort(ev.price) : PRICE_TEXTS.paidShort;
+
+// «Хочу сходить»
+const people = (n: number) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? 'человек' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'человека' : 'человек'}`;
+
+export const WISH_TEXTS = {
+  when: { today: 'сегодня', tomorrow: 'завтра', weekend: 'на выходных', week: 'на неделе' } as Record<string, string>,
+  // Сообщение о совпадении (одно или несколько желаний сразу)
+  matchOne: (n: number, what: string, when: string) =>
+    `🙋 Вас уже ${n}, кто хочет ${what} ${when}!\n\nМожет, соберёте сходку? Это займёт минуту: шаблон уже готов, останется выбрать время и место.`,
+  matchManyTitle: '🙋 Нашлись люди с такими же желаниями!',
+  matchManyLine: (n: number, what: string, when: string) => `• ${what} ${when}: вас уже ${n}`,
+  matchManyEnd: 'Может, соберёте сходку? Это займёт минуту: шаблон уже готов, останется выбрать время и место.',
+  buildBtn: 'Соберу я',
+  buildBtnFor: (what: string) => `Соберу я: ${what}`,
+  waitBtn: 'Пойду, если кто-то соберёт',
+  cancelBtn: 'Уже не актуально',
+  waitOk: 'Хорошо! Как только кто-то соберёт сходку, бот пришлёт ссылку 🙌',
+  cancelOk: 'Убрали это желание. Можно отметить новое в «Сходках» 🙂',
+  // Кто-то собрал сходку
+  built: (title: string, when: string, where: string) => `🎉 Сходку собрали: ${title}, ${when}, ${where}. Записаться можно тут 👇`,
+  builtBtn: 'Пойду!',
+  // Через сутки, если никто не собрал
+  reminder: (what: string, when: string) => `Пока никто не собрал сходку ${what} ${when}. Если хочется, нажми «Соберу я», остальные уже готовы 🙂`,
+  // Ссылка из поста: t.me/<бот>?start=wish_cinema_weekend
+  linkAsk: (what: string, when: string) => `🙋 Хочешь ${what} ${when}?\n\nОтметь желание: как только найдутся ещё люди, бот вас познакомит с идеей сходки.`,
+  linkBtn: '✅ Хочу!',
+  linkBad: 'Ссылка устарела 🙂 Отметить, куда хочется, можно в приложении, в «Сходках».',
+  created: 'Готово! Как только найдутся ещё люди с таким же желанием, бот вас познакомит с идеей сходки 🙌',
+  sameCount: (n: number) => `Ещё ${people(n)} ${n === 1 ? 'хочет' : 'хотят'} то же самое.`,
+  openApp: 'Открыть ДА! МИНСК',
+  // Ошибки
+  tooMany: (max: number) => `Можно держать не больше ${max} желаний сразу. Убери одно из старых.`,
+  badKind: 'Такого варианта нет',
+  duplicate: 'Такое желание уже отмечено 🙂',
+  // /stats
+  statsTitle: '🙋 <b>«Хочу сходить» за 30 дней</b>',
+  statsCreated: (n: number, list: string) => `Желаний: ${n}${list ? ` (${list})` : ''}`,
+  statsGroups: (groups: number, built: number, rate: string) => `Совпало групп: ${groups} · из них собрали сходку: ${built} (${rate})`,
+  statsLinks: (n: number, withProfile: number) => `По ссылкам wish_: ${people(n)}, из них заполнили анкету ${withProfile}`,
+  statsActive: (n: number) => `Активных желаний сейчас: ${n}`
+};
+
+export const peopleCount = people;

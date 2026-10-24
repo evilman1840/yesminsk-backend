@@ -26,6 +26,10 @@ export async function seedEventTemplates() {
     // Цена теперь общая для всех сходок: убираем старое поле «Сколько стоит?» у «Поиграем?», ставим «Платно»
     await EventTemplate.updateOne({ key: 'sport', 'fields.key': 'cost' }, { $pull: { fields: { key: 'cost' } }, $set: { paid: true } });
     await EventTemplate.updateOne({ key: 'cinema', paid: { $exists: false } }, { $set: { paid: true } });
+    // «Хочу сходить»: фраза желания у шаблонов, созданных до неё
+    for (const t of DEFAULT_TEMPLATES.filter((d) => d.wishPhrase)) {
+      await EventTemplate.updateOne({ key: t.key, wishPhrase: { $exists: false } }, { $set: { wishPhrase: t.wishPhrase } });
+    }
   } catch (err: any) {
     console.warn('⚠️ Шаблоны сходок:', err?.message || err);
   }
@@ -46,6 +50,7 @@ export const formatTemplate = (t: IEventTemplate) => ({
   placeTypes: t.placeTypes || [],
   tags: t.tags || [],
   paid: Boolean(t.paid),
+  wishPhrase: t.wishPhrase || '',
   fields: t.fields || []
 });
 
@@ -178,6 +183,7 @@ const COLUMNS = [
   ['placeTypes', 'Типы мест'],
   ['tags', 'Метки'],
   ['paid', 'Платно'],
+  ['wishPhrase', 'Желание'],
   ['fields', 'Доп. поля (JSON)']
 ] as const;
 type ColumnKey = (typeof COLUMNS)[number][0];
@@ -202,6 +208,7 @@ export async function templatesCsv() {
       (t.placeTypes || []).join('; '),
       (t.tags || []).map((tag) => TAG_LABELS[tag]).join('; '),
       t.paid ? 'да' : 'нет',
+      t.wishPhrase || '',
       t.fields?.length ? JSON.stringify(t.fields) : ''
     ]
       .map(csvCell)
@@ -241,6 +248,7 @@ export async function planTemplates(rows: string[][]): Promise<TemplatesPlan> {
       Number.isFinite(n) ? (set.order = n) : plan.warnings.push(T.badNumber(key, 'Порядок', get('order')));
     }
     if (get('active')) set.active = !/^(нет|no|0|выкл)$/i.test(get('active'));
+    if (get('wishPhrase')) set.wishPhrase = /^(нет|-)$/i.test(get('wishPhrase')) ? '' : get('wishPhrase').slice(0, 60);
     if (get('paid')) set.paid = /^(да|yes|1|платно)$/i.test(get('paid'));
     if (get('emoji')) set.emoji = get('emoji').slice(0, 8);
     if (get('name')) set.name = get('name').slice(0, 40);

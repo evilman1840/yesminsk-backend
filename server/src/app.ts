@@ -20,6 +20,7 @@ import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
+import { setupWishRoutes, startWishLoop, onMeetupFromWish } from './wishes';
 import { runPlaceImports } from './placesImport';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
 
@@ -696,7 +697,8 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       extras,
       photos,
       isPaid,
-      price
+      price,
+      wishGroupId
     } = req.body;
 
     if (!title || !description || !locationName || !coordinates || !dateTime) {
@@ -750,6 +752,8 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     res.status(201).json(formatEvent(newEvent, tgUser.id));
 
     // Сходка в место — пишем тем, у кого оно в 🔖 сохранённых
+    // Собрали по «Хочу сходить» → остальным в группе «Сходку собрали»
+    if (wishGroupId) onMeetupFromWish(wishGroupId, newEvent, tgUser.id).catch((err) => console.warn('⚠️ «Хочу сходить» после сходки:', err?.message || err));
     if (newEvent.placeId) notifyPlaceSavers(newEvent).catch((err) => console.warn('⚠️ Уведомление сохранившим место:', err?.message || err));
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Ошибка создания события' });
@@ -1217,6 +1221,9 @@ setupMeetupMetricsRoutes(app);
 // Фото сходок и анкет (хранятся в Telegram)
 setupPhotoRoutes(app);
 
+// «Хочу сходить»
+setupWishRoutes(app);
+
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);
 
@@ -1227,4 +1234,5 @@ app.listen(PORT, () => {
   startReminderLoop();
   startDigestLoop();
   startFeedbackLoop();
+  startWishLoop();
 });

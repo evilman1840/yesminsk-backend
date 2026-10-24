@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { handleTemplatesCommand, handleTemplatesCallback } from './eventTemplates';
+import { handleWishCallback, handleWishStart } from './wishes';
 import { Express, Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
@@ -51,7 +52,7 @@ export function setupTelegramBot(app: Express) {
     // Нажатие кнопки под жалобой (бан / всё в порядке)
     if (req.body?.callback_query) {
       const q = req.body.callback_query;
-      (async () => (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)))().catch((err) =>
+      (async () => (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)))().catch((err) =>
         console.warn('⚠️ Ошибка обработки кнопки:', err?.message || err)
       );
       return;
@@ -103,6 +104,13 @@ async function handleMessage(message: any, chatId: number) {
   const inviteMatch = text.match(/^\/start\s+invite_(\d+)$/i);
   if (inviteMatch) {
     handleInviteStart(chatId, message.from?.id, Number(inviteMatch[1]), message.from?.first_name);
+    return;
+  }
+
+  // «Хочу сходить» из поста: t.me/<бот>?start=wish_cinema_weekend
+  const wishMatch = text.match(/^\/start\s+wish_([a-z0-9_]{3,60})$/i);
+  if (wishMatch) {
+    handleWishStart(chatId, wishMatch[1].toLowerCase());
     return;
   }
 

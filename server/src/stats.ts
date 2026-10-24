@@ -8,6 +8,7 @@ import { Place, PlaceTip } from './models/Place';
 import { sendTelegramMessage } from './utils/telegramNotify';
 import { isAdmin } from './news';
 import { meetupStatsLines } from './meetupMetrics';
+import { wishStatsLines } from './wishes';
 
 /**
  * /stats — сводка по приложению для автора (только ADMIN_TELEGRAM_IDS)
@@ -94,6 +95,7 @@ export async function buildStats(): Promise<string> {
   const [placesCount, tipsCount] = await Promise.all([Place.countDocuments({}), PlaceTip.countDocuments({})]);
 
   const meetupLines = await meetupStatsLines(ago(30));
+  const wishLines = await wishStatsLines(ago(30));
 
   const date = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 
@@ -118,6 +120,8 @@ export async function buildStats(): Promise<string> {
     `Создано за 7 дней ${plus(eventsCreated7)} · всего ${eventsTotal}`,
     ``,
     ...meetupLines,
+    ``,
+    ...wishLines,
     ``,
     `💛 <b>Донаты звёздами</b>: ${donations.length} шт., всего ⭐ ${starsTotal} (за 30 дней ⭐ ${stars30})`,
     ``,
