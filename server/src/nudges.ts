@@ -159,8 +159,9 @@ export const missingProfileParts = (u: IUser) => {
 };
 const PROFILE_PARTS = 5; // имя + 4 пункта выше
 
-const profileMessage = (u: IUser) => {
-  const missing = missingProfileParts(u);
+const profileMessage = (u: IUser | null) => {
+  // null — пример для пустой анкеты (превью /nudge)
+  const missing = u ? missingProfileParts(u) : [P.photo, P.bio, P.goals, P.goesWith];
   const percent = Math.round(((PROFILE_PARTS - missing.length) / PROFILE_PARTS) * 100);
   return { html: [P.intro(percent, missing.length), '', ...missing.map((m) => `• ${m}`), '', P.outro].join('\n'), rows: [[{ text: P.button, path: '?tab=profile' }]] as Btn[][] };
 };
@@ -212,10 +213,12 @@ export async function handleNudgeCommand(message: any): Promise<boolean> {
   if (!me) return false;
   const first = await firstMessage(me);
   const second = secondMessage();
-  const profile = profileMessage(me);
+  const isFull = !missingProfileParts(me).length;
+  const profile = profileMessage(isFull ? null : me);
   await sendWithButtons(message.chat.id, T.previewNote, []);
   await sendWithButtons(message.chat.id, first.html, first.rows.map((r) => r.map((b) => (b.data ? { ...b, data: 'ndg:preview' } : b))));
   await sendWithButtons(message.chat.id, second.html, second.rows.map((r) => r.map((b) => (b.data ? { ...b, data: 'ndg:preview' } : b))));
+  if (isFull) await sendWithButtons(message.chat.id, P.previewFull, []);
   await sendWithButtons(message.chat.id, profile.html, profile.rows);
   return true;
 }
