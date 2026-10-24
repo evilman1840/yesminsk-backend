@@ -169,7 +169,7 @@ export function setupPlacesRoutes(app: Express) {
 
       // Автору проекта — на проверку, с кнопкой удаления
       notifyAdmins(
-        `💡 <b>Новый совет к месту «${escapeHtml(place.name)}»</b>\n\n«${escapeHtml(text)}»\n\n— ${escapeHtml(tip.name)} · ID ${tgUser.id}`,
+        `💡 <b>Новый совет к месту «${escapeHtml(place.name)}»</b>\n\n«${escapeHtml(text)}»\n\nАвтор: ${escapeHtml(tip.name)} · ID ${tgUser.id}`,
         [[{ text: '🗑 Удалить совет', callback_data: `tipdel:${tip._id}` }]]
       );
 
@@ -384,19 +384,19 @@ export async function placeFromYandexLink(url: string): Promise<{ coords: [numbe
 async function ask(chatId: number, d: Draft) {
   switch (d.step) {
     case 'photos':
-      return say(chatId, '📍 <b>Новое место</b>\n\nШаг 1/8. Пришли от 1 до 5 фото (можно альбомом).\n\n<i>Отменить — /cancel</i>');
+      return say(chatId, '📍 <b>Новое место</b>\n\nШаг 1/8. Пришли от 1 до 5 фото (можно альбомом).\n\n<i>Отменить: /cancel</i>');
     case 'name':
       return say(chatId, 'Шаг 2/8. Как называется место?');
     case 'category':
       return say(chatId, 'Какой это тип места?', [...typesKeyboard('pl:cat:'), [{ text: 'Пропустить ⏭', callback_data: 'pl:cat:' }]]);
     case 'desc':
-      return say(chatId, 'Шаг 3/8. Одна фраза о месте — почему туда стоит сходить?');
+      return say(chatId, 'Шаг 3/8. Одна фраза о месте: почему туда стоит сходить?');
     case 'moods':
       return say(chatId, 'Шаг 4/8. Какие настроения? Можно несколько:', moodsKeyboard(d));
     case 'address':
       return say(
         chatId,
-        'Шаг 5/8. Где это? Пришли одно из трёх:\n• адрес — <code>Зыбицкая 6</code>\n• ссылку на место в Яндекс Картах (так в карточке появятся отзывы и фото)\n• геоточку: 📎 → Геопозиция'
+        'Шаг 5/8. Где это? Пришли одно из трёх:\n• адрес: <code>Зыбицкая 6</code>\n• ссылку на место в Яндекс Картах (так в карточке появятся отзывы и фото)\n• геоточку: 📎 → Геопозиция'
       );
     case 'maplink':
       return say(chatId, '🗺 Есть ссылка на это место в Яндекс Картах? Люди смогут почитать отзывы и посмотреть фото.', SKIP_BTN);
@@ -412,7 +412,7 @@ async function ask(chatId: number, d: Draft) {
     case 'marks':
       return say(chatId, 'Пометки (по желанию):', marksKeyboard(d));
     case 'tip':
-      return say(chatId, 'Шаг 7/8. 💡 Твой совет — фишка, которую знают только местные:', SKIP_BTN);
+      return say(chatId, 'Шаг 7/8. 💡 Твой совет: фишка, которую знают только местные:', SKIP_BTN);
     case 'blog':
       return say(chatId, 'Шаг 8/8. Ссылка на статью в блоге (если есть):', SKIP_BTN);
     case 'preview':
@@ -505,7 +505,7 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
     const before = await Place.findById(photoPlaceId, { photos: 1, name: 1 });
     if (!before) return true;
     if (before.photos.length >= MAX_PHOTOS) {
-      say(chatId, `У «${escapeHtml(before.name)}» уже ${MAX_PHOTOS} фото — это максимум. Убрать все: <code>/delphotos номер</code>`);
+      say(chatId, `У «${escapeHtml(before.name)}» уже ${MAX_PHOTOS} фото, это максимум. Убрать все: <code>/delphotos номер</code>`);
       return true;
     }
     const fresh = await Place.findByIdAndUpdate(photoPlaceId, { $push: { photos: fileId } }, { new: true });
@@ -529,21 +529,21 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
   const photoCmd = text.match(/^\/placephoto\s+(.+)$/i);
   if (photoCmd) {
     const target = await findPlaceByRef(photoCmd[1]);
-    if (!target) say(chatId, 'Нет такого места. Список — /places');
+    if (!target) say(chatId, 'Нет такого места. Список: /places');
     else {
       photoTargets.set(chatId, { placeId: target._id.toString(), until: Date.now() + 10 * 60 * 1000, added: 0 });
-      say(chatId, `🖼 Шли фото для «${escapeHtml(target.name)}» — можно альбомом, до ${MAX_PHOTOS} всего (сейчас ${target.photos.length}). Закончить — /cancel`);
+      say(chatId, `🖼 Шли фото для «${escapeHtml(target.name)}», можно альбомом, до ${MAX_PHOTOS} всего (сейчас ${target.photos.length}). Закончить: /cancel`);
     }
     return true;
   }
   if (/^\/placephoto\b/i.test(text)) {
-    say(chatId, 'Так: <code>/placephoto номер</code> (из /places) или <code>/placephoto Парк Горького</code>, а потом просто шли фото.\n\nИли сразу пришли фото с подписью — номером или названием места.');
+    say(chatId, 'Так: <code>/placephoto номер</code> (из /places) или <code>/placephoto Парк Горького</code>, а потом просто шли фото.\n\nИли сразу пришли фото с подписью: номером или названием места.');
     return true;
   }
   const delPhotos = text.match(/^\/delphotos\s+(.+)$/i);
   if (delPhotos) {
     const target = await findPlaceByRef(delPhotos[1]);
-    if (!target) say(chatId, 'Нет такого места. Список — /places');
+    if (!target) say(chatId, 'Нет такого места. Список: /places');
     else {
       const n = target.photos.length;
       target.photos = [];
@@ -576,7 +576,7 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
   if (link) {
     const places = await Place.find({}).sort({ createdAt: 1 });
     const target = places[Number(link[1]) - 1];
-    if (!target) say(chatId, 'Нет места с таким номером. Список — /places');
+    if (!target) say(chatId, 'Нет места с таким номером. Список: /places');
     else if (!isYandexMapsLink(link[2])) say(chatId, 'Это не похоже на ссылку Яндекс Карт.');
     else {
       target.mapUrl = link[2];
@@ -590,7 +590,7 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
   if (cat) {
     const places = await Place.find({}).sort({ createdAt: 1 });
     const target = places[Number(cat[1]) - 1];
-    if (!target) say(chatId, 'Нет места с таким номером. Список — /places');
+    if (!target) say(chatId, 'Нет места с таким номером. Список: /places');
     else if (!cat[2]) say(chatId, `Какой тип у «${escapeHtml(target.name)}»?`, typesKeyboard(`plcat:${target._id}:`));
     else {
       const type = matchPlaceType(cat[2]);
@@ -598,18 +598,18 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
       else {
         target.category = type;
         await target.save();
-        say(chatId, `🏷 «${escapeHtml(target.name)}» — ${escapeHtml(type)}.`);
+        say(chatId, `🏷 «${escapeHtml(target.name)}»: ${escapeHtml(type)}.`);
       }
     }
     return true;
   }
   if (/^\/placecat\b/i.test(text)) {
-    say(chatId, 'Так: <code>/placecat номер</code> — и выбери тип кнопкой. Номер — из /places');
+    say(chatId, 'Так: <code>/placecat номер</code>, и выбери тип кнопкой. Номер из /places');
     return true;
   }
 
   if (/^\/placelink\b/i.test(text)) {
-    say(chatId, 'Так: <code>/placelink номер ссылка</code>. Номер — из /places');
+    say(chatId, 'Так: <code>/placelink номер ссылка</code>. Номер из /places');
     return true;
   }
 
@@ -627,7 +627,7 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
     return true;
   }
   if (/^\/delplace\b/i.test(text)) {
-    say(chatId, 'Напиши номер места: <code>/delplace 3</code>. Список — /places');
+    say(chatId, 'Напиши номер места: <code>/delplace 3</code>. Список: /places');
     return true;
   }
 
@@ -646,7 +646,7 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
         const full = draft.photos.length >= 5;
         say(
           chatId,
-          `🖼 Фото: ${draft.photos.length}/5${full ? ' — максимум.' : '. Можно прислать ещё.'}`,
+          `🖼 Фото: ${draft.photos.length}/5${full ? ', это максимум.' : '. Можно прислать ещё.'}`,
           [[{ text: 'Фото готовы →', callback_data: 'pl:photos_done' }]]
         );
       }, 1500);
@@ -660,7 +660,7 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
       return true;
     case 'category': {
       const type = matchPlaceType(text);
-      if (!type) return say(chatId, 'Выбери тип кнопкой 👆 — так места попадут в фильтры', typesKeyboard('pl:cat:')), true;
+      if (!type) return say(chatId, 'Выбери тип кнопкой 👆, так места попадут в фильтры', typesKeyboard('pl:cat:')), true;
       draft.category = type;
       draft.step = 'desc';
       await ask(chatId, draft);
@@ -767,7 +767,7 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
     if (type && mongoose.Types.ObjectId.isValid(id)) {
       const place = await Place.findByIdAndUpdate(id, { category: type }, { new: true });
       if (place) {
-        callBot('editMessageText', { chat_id: chatId, message_id: query.message.message_id, text: `🏷 «${place.name}» — ${type}.` });
+        callBot('editMessageText', { chat_id: chatId, message_id: query.message.message_id, text: `🏷 «${place.name}»: ${type}.` });
         answer(type);
         return true;
       }
@@ -786,7 +786,7 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
 
   const d = drafts.get(chatId);
   if (!d) {
-    answer('Черновик не найден — начни заново: /place');
+    answer('Черновик не найден, начни заново: /place');
     return true;
   }
   const [, action, value] = data.split(':');
@@ -873,7 +873,7 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
       });
       drafts.delete(chatId);
       removeKeyboard();
-      sendTelegramMessage(chatId, `✅ Место «${escapeHtml(d.name)}» опубликовано! Добавить ещё — /place`, 'Открыть ДА! МИНСК', '?tab=places');
+      sendTelegramMessage(chatId, `✅ Место «${escapeHtml(d.name)}» опубликовано! Добавить ещё: /place`, 'Открыть ДА! МИНСК', '?tab=places');
       break;
     case 'cancel':
       drafts.delete(chatId);

@@ -176,7 +176,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     if (avatarUrl) {
       // Защита базы от огромных фото (приложение сжимает их до ~100 КБ)
       if (String(avatarUrl).length > MAX_AVATAR_CHARS) {
-        return res.status(413).json({ error: 'Фото слишком большое. Загрузи его ещё раз — приложение сожмёт автоматически' });
+        return res.status(413).json({ error: 'Фото слишком большое. Загрузи его ещё раз, приложение сожмёт автоматически' });
       }
       updateData.avatarUrl = avatarUrl;
     }
@@ -194,7 +194,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     if (DIGEST_FREQUENCIES.includes(digest)) updateData.digest = digest;
     if (age !== undefined) {
       // ДА! МИНСК — только для взрослых
-      if (Number(age) < 18) return res.status(400).json({ error: 'ДА! МИНСК — только для тех, кому 18+' });
+      if (Number(age) < 18) return res.status(400).json({ error: 'ДА! МИНСК только для тех, кому 18+' });
       updateData.age = Number(age);
     }
     if (isEmpath !== undefined) updateData.isEmpath = Boolean(isEmpath);
@@ -781,7 +781,7 @@ app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: Auth
 
     // «Только эмпаты» — записаться может тот, кто отметил «Эмпат» в анкете (организатор — всегда)
     if ((event.tags || []).includes('empaths') && !user?.isEmpath && event.creator.telegramId !== tgUser.id) {
-      return res.status(403).json({ error: 'Эта сходка только для эмпатов. Если это про тебя — отметь «Эмпат» в анкете' });
+      return res.status(403).json({ error: 'Эта сходка только для эмпатов. Если это про тебя, отметь «Эмпат» в анкете' });
     }
 
     // Сколько человек ведёт с собой и идёт ли с детьми
@@ -795,7 +795,7 @@ app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: Auth
       const free = event.maxParticipants - othersSeats;
       if (1 + guests > free) {
         return res.status(400).json({
-          error: free <= 0 ? 'Все места заняты' : free === 1 ? 'Осталось одно место — только для тебя' : `Осталось мест: ${free} — можно взять не больше +${free - 1}`
+          error: free <= 0 ? 'Все места заняты' : free === 1 ? 'Осталось одно место, только для тебя' : `Осталось мест: ${free}, можно взять не больше +${free - 1}`
         });
       }
     }
@@ -985,7 +985,7 @@ const handleDeleteEventLogic = async (req: AuthenticatedRequest, res: Response) 
         if (p.telegramId === tgUser.id) continue;
         sendTelegramMessage(
           p.telegramId,
-          `😔 <b>Сходка отменена</b>\n\n«${escapeHtml(event.title)}», ${formatWhen(event.dateTime)}.\n\nЗагляни в приложение — там есть другие встречи.`,
+          `😔 <b>Сходка отменена</b>\n\n«${escapeHtml(event.title)}», ${formatWhen(event.dateTime)}.\n\nЗагляни в приложение, там есть другие встречи.`,
           'Найти другую сходку',
           '?tab=events'
         );

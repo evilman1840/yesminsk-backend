@@ -103,13 +103,13 @@ export async function buildDigest(user: IUser, freq: DigestFrequency, now = Date
       const joined = ev.participants.some((p: any) => p.telegramId === user.telegramId);
       const official = isAdmin(ev.creator?.telegramId) ? '⭐ ' : '';
       lines.push(
-        `• ${official}<b>${escapeHtml(when(ev.dateTime))}</b> — ${CATEGORY_EMOJI[ev.category] || '📍'} ${escapeHtml(ev.title)} · ${escapeHtml(ev.locationName)}` +
+        `• ${official}<b>${escapeHtml(when(ev.dateTime))}</b> ${CATEGORY_EMOJI[ev.category] || '📍'} ${escapeHtml(ev.title)} · ${escapeHtml(ev.locationName)}` +
           (joined ? ' · ✅ ты идёшь' : ` · идут ${seats(ev)}`)
       );
     });
     if (events.length > shownEvents.length) lines.push(`…и ещё ${events.length - shownEvents.length} в приложении`);
   } else {
-    lines.push('Сходок пока нет — собери свою, это займёт минуту 🙂');
+    lines.push('Сходок пока нет. Собери свою, это займёт минуту 🙂');
   }
 
   if (newPlaces.length) {
@@ -135,14 +135,14 @@ export async function buildDigest(user: IUser, freq: DigestFrequency, now = Date
     const top = popular[0] ? await Place.findById(popular[0]._id, { name: 1 }).lean() : null;
     if (top && popular[0].n > 0) {
       const n = popular[0].n;
-      lines.push('', `🔖 «${escapeHtml(top.name)}» из твоих сохранённых хотят посетить ещё ${n} ${n === 1 ? 'человек' : n < 5 ? 'человека' : 'человек'} — собери компанию?`);
+      lines.push('', `🔖 «${escapeHtml(top.name)}» из твоих сохранённых хотят посетить ещё ${n} ${n === 1 ? 'человек' : n < 5 ? 'человека' : 'человек'}. Собери компанию?`);
     } else {
       const k = savedIds.length;
-      lines.push('', `🔖 В сохранённых ${k} ${k === 1 ? 'место' : k < 5 ? 'места' : 'мест'} — позови кого-нибудь с собой`);
+      lines.push('', `🔖 В сохранённых ${k} ${k === 1 ? 'место' : k < 5 ? 'места' : 'мест'}, позови кого-нибудь с собой`);
     }
   }
 
-  lines.push('', '<i>Как часто присылать — в анкете, раздел «Подборки».</i>');
+  lines.push('', '<i>Как часто присылать, можно выбрать в анкете, раздел «Подборки».</i>');
 
   return shownEvents.length
     ? { html: lines.join('\n'), button: 'Смотреть сходки', path: '?tab=events' }
@@ -201,12 +201,12 @@ export async function handleDigestCommand(message: any): Promise<boolean> {
   if (!isAdmin(message.from?.id)) return false;
   const user = await User.findOne({ telegramId: message.from.id });
   if (!user) {
-    sendTelegramMessage(message.chat.id, 'Сначала открой приложение — создастся анкета.');
+    sendTelegramMessage(message.chat.id, 'Сначала открой приложение, создастся анкета.');
     return true;
   }
   const freq = ((m[1] || '').toLowerCase() as DigestFrequency) || (user.digest && user.digest !== 'off' ? user.digest : 'weekend');
   const digest = await buildDigest(user, freq);
-  if (!digest) sendTelegramMessage(message.chat.id, `Подборка «${freq}» сейчас была бы пустой — бот её не прислал бы.`);
+  if (!digest) sendTelegramMessage(message.chat.id, `Подборка «${freq}» сейчас была бы пустой, бот её не прислал бы.`);
   else sendTelegramMessage(message.chat.id, `<i>Так выглядит подборка «${freq}»:</i>\n\n${digest.html}`, digest.button, digest.path);
   return true;
 }

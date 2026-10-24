@@ -212,7 +212,7 @@ export function setupModerationRoutes(app: Express) {
 
         notifyAdmins(
           `⚠️ <b>Жалоба на анкету</b> (${openCount} открыт${openCount === 1 ? 'ая' : 'ых'})\n\n` +
-            `👤 <b>${escapeHtml(target?.firstName || '—')}</b>${target?.age ? `, ${target.age}` : ''}` +
+            `👤 <b>${escapeHtml(target?.firstName || '-')}</b>${target?.age ? `, ${target.age}` : ''}` +
             `${target?.username ? ` · @${escapeHtml(target.username)}` : ''} · ID ${targetIdNum}\n` +
             `📝 ${escapeHtml(target?.bio || 'без описания')}\n\n` +
             `Причина: ${REASONS[reason as ReportReason]}${commentLine}\n${reporterLine}` +

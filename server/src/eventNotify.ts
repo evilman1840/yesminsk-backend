@@ -71,7 +71,7 @@ export async function sendDueReminders() {
     ev.reminderDaySentAt = new Date();
     await ev.save();
     if (ev.dateTime.getTime() - ev.createdAt.getTime() < 24 * HOUR) continue;
-    notifyParticipants(ev, `⏰ <b>Напоминаем о сходке</b>\n\n${eventSummaryHtml(ev)}\n\nПередумал? Отмени участие в приложении — так организатор будет знать.`);
+    notifyParticipants(ev, `⏰ <b>Напоминаем о сходке</b>\n\n${eventSummaryHtml(ev)}\n\nПланы поменялись? Отмени участие в приложении, так организатор будет знать.`);
   }
 
   const hourEvents = await Event.find({
@@ -82,7 +82,7 @@ export async function sendDueReminders() {
   for (const ev of hourEvents) {
     ev.reminderHourSentAt = new Date();
     await ev.save();
-    notifyParticipants(ev, `🔔 <b>Скоро сходка — меньше чем через час!</b>\n\n${eventSummaryHtml(ev)}\n\nХорошей встречи 💛`);
+    notifyParticipants(ev, `🔔 <b>Скоро сходка: меньше чем через час!</b>\n\n${eventSummaryHtml(ev)}\n\nХорошей встречи 💛`);
   }
 }
 

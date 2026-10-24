@@ -31,7 +31,7 @@ export async function handleInviteStart(chatId: number, inviteeId: number, invit
   const who = inviter ? `<b>${escapeHtml(inviter.firstName)}</b> зовёт тебя в ДА! МИНСК` : 'Тебя зовут в ДА! МИНСК';
   sendTelegramMessage(
     chatId,
-    `👋 Привет${firstName ? `, ${escapeHtml(firstName)}` : ''}! ${who} — компанию для прогулок, кофе и общения в Минске.\n\n` +
+    `👋 Привет${firstName ? `, ${escapeHtml(firstName)}` : ''}! ${who}: компанию для прогулок, кофе и общения в Минске.\n\n` +
       `Без дейтинга, только дружеское общение. Жми кнопку ниже 👇`,
     'Открыть ДА! МИНСК'
   );

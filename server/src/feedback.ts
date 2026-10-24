@@ -63,11 +63,11 @@ async function askParticipants(event: IEvent) {
 async function sendSummary(event: IEvent) {
   const feedback = event.feedback || [];
   if (!feedback.length) return;
-  const counts = [3, 2, 1].map((s) => `${SCORES[s].emoji} ${SCORES[s].label} — ${feedback.filter((f) => f.score === s).length}`);
+  const counts = [3, 2, 1].map((s) => `${SCORES[s].emoji} ${SCORES[s].label}: ${feedback.filter((f) => f.score === s).length}`);
   const comments = feedback.filter((f) => f.comment).slice(0, 10);
   const wantContact = feedback.filter((f) => f.wantsContact).length;
   const lines = [`📊 <b>Как прошла твоя сходка «${escapeHtml(event.title)}»</b>`, '', counts.join(' · ')];
-  if (comments.length) lines.push('', '<b>Что пишут:</b>', ...comments.map((f) => `«${escapeHtml(f.comment!)}» — ${escapeHtml(f.name || 'участник')}`));
+  if (comments.length) lines.push('', '<b>Что пишут:</b>', ...comments.map((f) => `«${escapeHtml(f.comment!)}», ${escapeHtml(f.name || 'участник')}`));
   if (wantContact) lines.push('', `🤝 Хотят общаться дальше: ${wantContact}`);
   lines.push('', 'Спасибо, что собираешь людей! Соберёшь ещё одну? 🙌');
   await sendTelegramMessage(event.creator.telegramId, lines.join('\n'), 'Создать сходку', '?tab=events');
@@ -133,13 +133,13 @@ export async function handleFeedbackCallback(query: any): Promise<boolean> {
     callBot('editMessageText', {
       chat_id: chatId,
       message_id: query.message.message_id,
-      text: `Как прошла сходка «${event.title}»? — ${SCORES[score].emoji} ${SCORES[score].label}`
+      text: `Как прошла сходка «${event.title}»? ${SCORES[score].emoji} ${SCORES[score].label}`
     });
 
     pendingComments.set(chatId, { eventId, until: Date.now() + 30 * 60 * 1000 });
     const others = event.participants.filter((p) => p.telegramId !== fromId).length;
-    const lines = ['Спасибо! ✍️ Если хочешь, напиши пару слов о сходке — передам организатору.'];
-    if (others > 0) lines.push('', `🤝 Хочешь общаться с участниками дальше? Бот передаст им 👋 от тебя — кто ответит тем же, окажется у тебя «На связи».`);
+    const lines = ['Спасибо! ✍️ Если хочешь, напиши пару слов о сходке, передам организатору.'];
+    if (others > 0) lines.push('', `🤝 Хочешь общаться с участниками дальше? Бот передаст им 👋 от тебя. Кто ответит тем же, окажется у тебя «На связи».`);
     await say(
       chatId,
       lines.join('\n'),
@@ -182,8 +182,8 @@ export async function handleFeedbackCallback(query: any): Promise<boolean> {
   await sendTelegramMessage(
     chatId,
     sent
-      ? `👋 Привет передан участникам: ${sent}.${matches ? ` С ${matches} вы уже на связи — можно писать!` : ''} Кто ответит 👋 — тоже окажется «На связи».`
-      : 'Не получилось передать привет — возможно, вы скрыли друг друга.',
+      ? `👋 Привет передан участникам: ${sent}.${matches ? ` С ${matches} вы уже на связи, можно писать!` : ''} Кто ответит 👋, тоже окажется «На связи».`
+      : 'Не получилось передать привет. Возможно, вы скрыли друг друга.',
     'Открыть «На связи»',
     '?tab=feed'
   );

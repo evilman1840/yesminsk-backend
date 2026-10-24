@@ -59,14 +59,14 @@ export async function buildIdeas(): Promise<string> {
   users.forEach((u) => add(u.customGoal, 'profiles'));
 
   if (ideas.size === 0) {
-    return '✨ <b>Свои идеи</b>\n\nПока никто ничего не вписал — ни в сходках, ни в анкетах.';
+    return '✨ <b>Свои идеи</b>\n\nПока никто ничего не вписал: ни в сходках, ни в анкетах.';
   }
 
   const sorted = [...ideas.values()].sort((a, b) => b.events + b.profiles - (a.events + a.profiles));
   const lines = sorted.slice(0, TOP).map((idea, i) => {
     const label = [...idea.spellings.entries()].sort((a, b) => b[1] - a[1])[0][0];
     const where = [idea.events ? `сходок ${idea.events}` : '', idea.profiles ? `анкет ${idea.profiles}` : ''].filter(Boolean).join(' · ');
-    return `${i + 1}. <b>${escapeHtml(label)}</b> — ${idea.events + idea.profiles} (${where})`;
+    return `${i + 1}. <b>${escapeHtml(label)}</b>: ${idea.events + idea.profiles} (${where})`;
   });
 
   return (

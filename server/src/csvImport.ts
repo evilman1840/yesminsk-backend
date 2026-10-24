@@ -18,13 +18,13 @@ const MAX_PHOTOS = 10;
 
 export const PLACES_TEMPLATE = [
   'Название,Тип,Описание,Адрес,Яндекс Карты,Настроения,Цена,Пометки,С детьми,Про детей,Рейтинг,Оценок,Часы,Телефон,Сайт,Удобства,Совет,Блог,Фото',
-  '"ПРИМЕР — удали эту строку",Парк,"Знаковый парк: каток, летний театр, аттракционы","ул. Фрунзе, 2",https://yandex.by/maps/org/210583171094/,"Поймать восторг, Оторваться компанией",Бесплатно,"в дождь, вечером",топ,"Главный детский парк центра: аттракционы, колесо обозрения, белки","4,8",3442,24/7,+375 17 294-42-52,http://parki.by,"Собаки; Карты, NFC; Доступная среда","Приходи к колесу на закате","",""'
+  '"ПРИМЕР: удали эту строку",Парк,"Знаковый парк: каток, летний театр, аттракционы","ул. Фрунзе, 2",https://yandex.by/maps/org/210583171094/,"Поймать восторг, Оторваться компанией",Бесплатно,"в дождь, вечером",топ,"Главный детский парк центра: аттракционы, колесо обозрения, белки","4,8",3442,24/7,+375 17 294-42-52,http://parki.by,"Собаки; Карты, NFC; Доступная среда","Приходи к колесу на закате","",""'
 ].join('\n');
 
 export const REVIEWS_TEMPLATE = [
   'Место,Оценка,Текст,Источник',
-  '"ПРИМЕР — удали эту строку",5,"Огромный, чистый и уютный парк, гулять приятно хоть днём, хоть ночью.",Яндекс Карты',
-  '"ПРИМЕР — удали эту строку",2,"Очереди на аттракционы в солнечные выходные.",Яндекс Карты'
+  '"ПРИМЕР: удали эту строку",5,"Огромный, чистый и уютный парк, гулять приятно хоть днём, хоть ночью.",Яндекс Карты',
+  '"ПРИМЕР: удали эту строку",2,"Очереди на аттракционы в солнечные выходные.",Яндекс Карты'
 ].join('\n');
 
 /* ---------- CSV ---------- */
@@ -159,7 +159,7 @@ async function planPlaces(rows: string[][]): Promise<Plan> {
     const name = get('name');
     if (!name || isExample(name)) continue;
     if (seen.has(norm(name))) {
-      plan.warnings.push(`Строка ${line}: «${name}» уже было выше — пропускаю`);
+      plan.warnings.push(`Строка ${line}: «${name}» уже было выше, пропускаю`);
       continue;
     }
     seen.add(norm(name));
@@ -170,7 +170,7 @@ async function planPlaces(rows: string[][]): Promise<Plan> {
     if (get('type')) {
       const type = matchPlaceType(get('type'));
       if (type) set.category = type;
-      else plan.warnings.push(`«${name}»: тип «${get('type')}» не из списка — не меняю`);
+      else plan.warnings.push(`«${name}»: тип «${get('type')}» не из списка, не меняю`);
     }
     if (get('description')) set.description = get('description').slice(0, 300);
     if (get('moods')) {
@@ -181,7 +181,7 @@ async function planPlaces(rows: string[][]): Promise<Plan> {
     if (get('price')) {
       const price = parsePrice(get('price'));
       if (price) set.price = price;
-      else plan.warnings.push(`«${name}»: цена «${get('price')}» — нужно «Бесплатно», «Недорого» или «Средне»`);
+      else plan.warnings.push(`«${name}»: цена «${get('price')}», нужно «Бесплатно», «Недорого» или «Средне»`);
     }
     if (get('marks')) {
       const t = norm(get('marks'));
@@ -193,7 +193,7 @@ async function planPlaces(rows: string[][]): Promise<Plan> {
       const kids = parseKids(get('kids'));
       if (kids === 'none') set.kidsLevel = undefined;
       else if (kids) set.kidsLevel = kids;
-      else plan.warnings.push(`«${name}»: «С детьми» = «${get('kids')}» — нужно «топ», «постарше», «рядом» или «нет»`);
+      else plan.warnings.push(`«${name}»: «С детьми» = «${get('kids')}», нужно «топ», «постарше», «рядом» или «нет»`);
     }
     if (get('kidsNote')) set.kidsNote = get('kidsNote').slice(0, 600);
     if (get('rating')) {
@@ -228,7 +228,7 @@ async function planPlaces(rows: string[][]): Promise<Plan> {
       else if (!row.existingId) {
         plan.errors.push(`«${name}»: не нашёл, где это. Добавь ссылку на Яндекс Карты или точный адрес`);
         continue;
-      } else if (mapUrl || get('address')) plan.warnings.push(`«${name}»: не нашёл точку по новой ссылке/адресу — оставляю старую`);
+      } else if (mapUrl || get('address')) plan.warnings.push(`«${name}»: не нашёл точку по новой ссылке/адресу, оставляю старую`);
     }
     plan.places.push(row);
   }
@@ -265,7 +265,7 @@ async function planReviews(rows: string[][]): Promise<Plan> {
     });
     plan.reviews.set(place.id, entry);
   });
-  if (missing.size) plan.errors.push(`Нет таких мест: ${[...missing].map((m) => `«${m}»`).join(', ')} — сначала загрузи их таблицей мест`);
+  if (missing.size) plan.errors.push(`Нет таких мест: ${[...missing].map((m) => `«${m}»`).join(', ')}. Сначала загрузи их таблицей мест`);
   return plan;
 }
 
@@ -276,13 +276,13 @@ const summary = (plan: Plan) => {
     const updated = plan.places.filter((p) => p.existingId);
     const photos = plan.places.reduce((n, p) => n + p.photoUrls.length, 0);
     lines.push('📍 <b>Таблица мест</b>');
-    if (created.length) lines.push(`➕ Добавлю: ${created.length} — ${created.map((p) => escapeHtml(p.name)).join(', ')}`);
-    if (updated.length) lines.push(`✏️ Обновлю: ${updated.length} — ${updated.map((p) => escapeHtml(p.name)).join(', ')}`);
+    if (created.length) lines.push(`➕ Добавлю: ${created.length}: ${created.map((p) => escapeHtml(p.name)).join(', ')}`);
+    if (updated.length) lines.push(`✏️ Обновлю: ${updated.length}: ${updated.map((p) => escapeHtml(p.name)).join(', ')}`);
     if (photos) lines.push(`🖼 Фото по ссылкам: ${photos} (заменят фото этих мест)`);
   } else {
     const total = [...plan.reviews.values()].reduce((n, r) => n + r.items.length, 0);
     lines.push('💬 <b>Таблица отзывов</b>');
-    if (total) lines.push(`Загружу ${total} отзывов к ${plan.reviews.size} местам — у этих мест отзывы заменятся`);
+    if (total) lines.push(`Загружу ${total} отзывов к ${plan.reviews.size} местам, у этих мест отзывы заменятся`);
   }
   if (plan.errors.length) lines.push('', '❌ <b>Не получится:</b>', ...plan.errors.map((e) => `• ${escapeHtml(e)}`));
   if (plan.warnings.length) lines.push('', '⚠️ <b>Обрати внимание:</b>', ...plan.warnings.slice(0, 15).map((w) => `• ${escapeHtml(w)}`));
@@ -370,7 +370,7 @@ async function applyPlan(chatId: number, plan: Plan) {
   }
   const lines = [`✅ Готово: добавлено ${created}, обновлено ${updated}.`];
   if (badPhotos.length) {
-    lines.push('', `🖼 Не открылись фото (${badPhotos.length}) — нужна прямая ссылка на картинку, или пришли фото боту с подписью-названием:`);
+    lines.push('', `🖼 Не открылись фото (${badPhotos.length}): нужна прямая ссылка на картинку, или пришли фото боту с подписью-названием:`);
     lines.push(...badPhotos.slice(0, 10).map((b) => `• ${escapeHtml(b)}`));
   }
   return say(chatId, lines.join('\n'));
@@ -391,19 +391,19 @@ export async function handleCsvMessage(message: any): Promise<boolean> {
   if (isTemplate) {
     await sendCsv(
       chatId,
-      'Шаблон — места.csv',
+      'Шаблон, места.csv',
       PLACES_TEMPLATE,
-      '📍 <b>Места.</b> Обязательно: «Название» и «Яндекс Карты» или «Адрес». Остальное — по желанию: пустая ячейка ничего не меняет.\n\nТип — из списка. Настроения — через запятую, как в приложении. С детьми: топ / постарше / рядом / нет. Удобства — через «;». Фото — прямые ссылки на картинки через пробел.'
+      '📍 <b>Места.</b> Обязательно: «Название» и «Яндекс Карты» или «Адрес». Остальное по желанию: пустая ячейка ничего не меняет.\n\nТип: из списка. Настроения: через запятую, как в приложении. С детьми: топ / постарше / рядом / нет. Удобства: через «;». Фото: прямые ссылки на картинки через пробел.'
     );
-    await sendCsv(chatId, 'Шаблон — отзывы.csv', REVIEWS_TEMPLATE, '💬 <b>Отзывы.</b> Место — как в таблице мест, оценка 1–5, текст. Отзывы места заменяются целиком.');
+    await sendCsv(chatId, 'Шаблон, отзывы.csv', REVIEWS_TEMPLATE, '💬 <b>Отзывы.</b> Место как в таблице мест, оценка 1-5, текст. Отзывы места заменяются целиком.');
     return true;
   }
 
   if (doc.file_size > 2_000_000) {
-    say(chatId, 'Файл слишком большой — до 2 МБ.');
+    say(chatId, 'Файл слишком большой, можно до 2 МБ.');
     return true;
   }
-  say(chatId, '⏳ Читаю таблицу — для новых мест ищу точки на карте, это может занять минуту…');
+  say(chatId, '⏳ Читаю таблицу. Для новых мест ищу точки на карте, это может занять минуту…');
   try {
     const info: any = await callBot('getFile', { file_id: doc.file_id });
     const file = await fetch(`https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${info.result.file_path}`);
@@ -452,7 +452,7 @@ export async function handleCsvCallback(query: any): Promise<boolean> {
     return true;
   }
   if (!plan) {
-    say(chatId, 'Таблица устарела — пришли файл ещё раз.');
+    say(chatId, 'Таблица устарела, пришли файл ещё раз.');
     return true;
   }
   if (plan.places.some((p) => p.photoUrls.length)) say(chatId, '⏳ Загружаю фото…');

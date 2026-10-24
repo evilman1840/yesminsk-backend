@@ -38,7 +38,7 @@ export async function sendLike(me: IUser, target: IUser, context = ''): Promise<
     } else {
       sendTelegramMessage(
         target.telegramId,
-        `👋 <b>${escapeHtml(me.firstName)}</b> передаёт вам привет и хочет пообщаться${context ? ` ${escapeHtml(context)}` : ''}!\n\nЗагляните в раздел «Хотят пообщаться». Если тоже захотите — нажмите 👋, и сможете написать друг другу.`,
+        `👋 <b>${escapeHtml(me.firstName)}</b> передаёт вам привет и хочет пообщаться${context ? ` ${escapeHtml(context)}` : ''}!\n\nЗагляните в раздел «Хотят пообщаться». Если тоже захотите, нажмите 👋, и сможете написать друг другу.`,
         'Посмотреть анкету'
       );
     }

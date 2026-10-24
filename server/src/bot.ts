@@ -30,13 +30,13 @@ const getWebhookSecret = (botToken: string) =>
   crypto.createHash('sha256').update(`yesminsk-webhook:${botToken}`).digest('hex').slice(0, 64);
 
 const GREETING = (firstName?: string) =>
-  `👋 Привет${firstName ? `, ${escapeHtml(firstName)}` : ''}! Это <b>ДА! МИНСК</b> — выходи гулять!\n\n` +
-  `📍 Места по настроению — куда сходить соло, компанией или с детьми\n` +
-  `🗓 Сходки — присоединяйся к прогулкам, кофе и настолкам или собери свою\n` +
-  `👋 Люди рядом — без флирта, только дружба\n\n` +
+  `👋 Привет${firstName ? `, ${escapeHtml(firstName)}` : ''}! Это <b>ДА! МИНСК</b>, выходи гулять!\n\n` +
+  `📍 Места по настроению: куда сходить соло, компанией или с детьми\n` +
+  `🗓 Сходки: присоединяйся к прогулкам, кофе и настолкам или собери свою\n` +
+  `👋 Люди рядом: без флирта, только дружба\n\n` +
   `Жми кнопку ниже, чтобы открыть приложение 👇`;
 
-const HINT = `Я пока не умею отвечать на сообщения 🙂\nВсё — в приложении ДА! МИНСК. Жми кнопку ниже 👇`;
+const HINT = `Я пока не умею отвечать на сообщения 🙂\nВсё есть в приложении ДА! МИНСК. Жми кнопку ниже 👇`;
 
 export function setupTelegramBot(app: Express) {
   app.post(WEBHOOK_PATH, (req: Request, res: Response) => {
@@ -151,7 +151,7 @@ async function sendEventInvite(chatId: number, eventId: string, firstName?: stri
   try {
     const event = mongoose.Types.ObjectId.isValid(eventId) ? await Event.findById(eventId) : null;
     if (!event || !event.isActive || event.dateTime.getTime() < Date.now() - 2 * 60 * 60 * 1000) {
-      sendTelegramMessage(chatId, `Эта сходка уже прошла или отменена 😔\nНо в приложении есть другие встречи — загляни!`, 'Открыть ДА! МИНСК', '?tab=events');
+      sendTelegramMessage(chatId, `Эта сходка уже прошла или отменена 😔\nНо в приложении есть другие встречи, загляни!`, 'Открыть ДА! МИНСК', '?tab=events');
       return;
     }
     sendTelegramMessage(
