@@ -55,3 +55,12 @@ export const METRICS_TEXTS = {
   sources: (list: string) => `Откуда открывают: ${list}`,
   sourceNames: { feed: 'лента', empty: 'пустая лента', place: 'карточка места', link: 'ссылка' } as Record<string, string>
 };
+
+// Загрузка фото сходок и анкет
+export const PHOTO_TEXTS = {
+  notConfigured: 'Фото пока нельзя загрузить, попробуй чуть позже',
+  tooMany: 'Слишком много фото за час, попробуй позже',
+  badFile: 'Это не похоже на фото: подойдут JPG, PNG или WebP',
+  tooBig: 'Фото слишком большое, выбери другое',
+  failed: 'Не получилось сохранить фото, попробуй ещё раз'
+};

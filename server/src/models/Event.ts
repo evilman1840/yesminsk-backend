@@ -27,6 +27,7 @@ export interface IEvent extends Document {
   durationMinutes?: number; // примерно сколько длится
   extras?: Record<string, string>; // доп. поля шаблона: фильм, вид спорта, уровень, что взять, стоимость
   badges?: string[];        // метки из доп. полей: «🏓 Настольный теннис · любой уровень»
+  photos?: string[];        // до 5 фото (file_id в Telegram)
   location: {
     type: 'Point';
     coordinates: [number, number]; // [lng, lat]
@@ -69,6 +70,7 @@ const EventSchema = new Schema<IEvent>(
     durationMinutes: { type: Number, default: 0 },
     extras: { type: Schema.Types.Mixed },
     badges: { type: [String], default: [] },
+    photos: { type: [String], default: [] },
     location: {
       type: { type: String, enum: ['Point'], default: 'Point' },
       coordinates: { type: [Number], required: true } // [lng, lat]

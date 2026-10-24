@@ -19,6 +19,7 @@ import { markInviteJoined } from './invites';
 import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
+import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { runPlaceImports } from './placesImport';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
 
@@ -586,6 +587,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     durationMinutes: ev.durationMinutes || 0,
     extras: ev.extras || {},
     badges: ev.badges || [],
+    photos: (ev.photos || []).map(photoUrl),
     // «⭐ От ДА! МИНСК» — сходки автора проекта
     isOfficial: isAdmin(ev.creator.telegramId)
   };
@@ -678,7 +680,8 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       maxParticipants,
       templateId,
       durationMinutes,
-      extras
+      extras,
+      photos
     } = req.body;
 
     if (!title || !description || !locationName || !coordinates || !dateTime) {
@@ -701,6 +704,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       durationMinutes: cleanDuration(durationMinutes),
       extras: tpl.extras,
       badges: tpl.badges,
+      photos: cleanPhotoIds(photos) || [],
       locationName,
       location: {
         type: 'Point',
@@ -889,9 +893,11 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       dateTime,
       maxParticipants,
       durationMinutes,
-      extras
+      extras,
+      photos
     } = req.body;
 
+    if (cleanPhotoIds(photos)) event.photos = cleanPhotoIds(photos);
     // Доп. поля шаблона (вид спорта, уровень…) — пересобираем метки
     if (extras !== undefined && event.templateId) {
       const tpl = await templateFields(event.templateId, extras);
@@ -1184,6 +1190,9 @@ setupPlacesRoutes(app);
 // Шаблоны сходок и воронка формы
 setupEventTemplateRoutes(app);
 setupMeetupMetricsRoutes(app);
+
+// Фото сходок и анкет (хранятся в Telegram)
+setupPhotoRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);

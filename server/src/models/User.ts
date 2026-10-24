@@ -16,6 +16,7 @@ export interface IUser extends Document {
   firstName: string;
   lastName?: string;
   avatarUrl: string;
+  photos?: string[]; // ещё до 5 фото в анкете (file_id в Telegram)
   bio: string;
   age: number;
   gender: Gender;
@@ -64,6 +65,7 @@ const UserSchema = new Schema<IUser>(
     firstName: { type: String, required: true, trim: true },
     lastName: { type: String, trim: true },
     avatarUrl: { type: String, required: true },
+    photos: { type: [String], default: undefined },
     bio: { type: String, maxlength: 200, default: '' },
     age: { type: Number, default: 25, min: 16, max: 99 }, // в приложении — только 18+ (проверка при сохранении анкеты)
     gender: {
