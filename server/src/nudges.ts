@@ -8,7 +8,7 @@ import { formatWhen } from './eventNotify';
 import { meetupCreatePath } from './eventTemplates';
 import { sendWithButtons, Btn } from './wishes';
 import { isAdmin } from './news';
-import { NUDGE_TEXTS as T, peopleCount } from './texts';
+import { NUDGE_TEXTS as T, PROFILE_NUDGE_TEXTS as P, peopleCount } from './texts';
 
 /**
  * Приветственный толчок: новичку без активности бот пишет через сутки и (последний раз) через 4 дня.
@@ -31,7 +31,7 @@ const NudgeLog = model(
   new Schema({
     telegramId: { type: Number, required: true, index: true },
     n: { type: Number, required: true }, // 1 или 2
-    variant: { type: String, enum: ['A', 'B', 'C', 'second'], required: true },
+    variant: { type: String, enum: ['A', 'B', 'C', 'second', 'profile'], required: true },
     sentAt: { type: Date, default: Date.now, index: true }
   })
 );
@@ -140,8 +140,50 @@ export async function runNudges(force = false) {
       await NudgeLog.create({ telegramId: user.telegramId, n, variant: msg.variant });
       await new Promise((r) => setTimeout(r, 60));
     }
+    await runProfileNudges(now);
   } finally {
     running = false;
+  }
+}
+
+/* ---------- Разовое напоминание «заполни анкету подробнее» ---------- */
+
+// Что не заполнено: своё фото, о себе, интересы, «обычно хожу»
+export const missingProfileParts = (u: IUser) => {
+  const parts: string[] = [];
+  if (!u.avatarUrl || u.avatarUrl.includes('images.unsplash.com')) parts.push(P.photo);
+  if (!u.bio || u.bio.trim().length < 10) parts.push(P.bio);
+  if (!u.goals?.length) parts.push(P.goals);
+  if (!u.goesWith) parts.push(P.goesWith);
+  return parts;
+};
+const PROFILE_PARTS = 5; // имя + 4 пункта выше
+
+const profileMessage = (u: IUser) => {
+  const missing = missingProfileParts(u);
+  const percent = Math.round(((PROFILE_PARTS - missing.length) / PROFILE_PARTS) * 100);
+  return { html: [P.intro(percent, missing.length), '', ...missing.map((m) => `• ${m}`), '', P.outro].join('\n'), rows: [[{ text: P.button, path: '?tab=profile' }]] as Btn[][] };
+};
+
+// Один раз: не раньше чем через 3 дня после регистрации и не в день приветственного сообщения.
+// Пишем, если нет своего фото или «о себе»; в сообщении — всё, чего не хватает
+async function runProfileNudges(now: number) {
+  const users = await User.find({
+    hasAgreedToRules: true,
+    isBanned: { $ne: true },
+    profileNudgeSentAt: { $exists: false },
+    createdAt: { $lte: new Date(now - 3 * DAY) },
+    $or: [{ avatarUrl: { $regex: 'images\\.unsplash\\.com' } }, { avatarUrl: { $in: ['', null] } }, { bio: { $in: ['', null] } }, { bio: { $regex: '^.{0,9}$', $options: 's' } }]
+  });
+  for (const user of users) {
+    const lastNudge = Math.max(user.nudge1SentAt?.getTime() || 0, user.nudge2SentAt?.getTime() || 0);
+    if (now - lastNudge < DAY) continue; // в один день с приветственным не пишем
+    if (!missingProfileParts(user).length) continue;
+    await User.updateOne({ _id: user._id }, { $set: { profileNudgeSentAt: new Date() } });
+    const msg = profileMessage(user);
+    await sendWithButtons(user.telegramId, msg.html, msg.rows);
+    await NudgeLog.create({ telegramId: user.telegramId, n: 3, variant: 'profile' });
+    await new Promise((r) => setTimeout(r, 60));
   }
 }
 
@@ -170,17 +212,27 @@ export async function handleNudgeCommand(message: any): Promise<boolean> {
   if (!me) return false;
   const first = await firstMessage(me);
   const second = secondMessage();
+  const profile = profileMessage(me);
   await sendWithButtons(message.chat.id, T.previewNote, []);
   await sendWithButtons(message.chat.id, first.html, first.rows.map((r) => r.map((b) => (b.data ? { ...b, data: 'ndg:preview' } : b))));
   await sendWithButtons(message.chat.id, second.html, second.rows.map((r) => r.map((b) => (b.data ? { ...b, data: 'ndg:preview' } : b))));
+  await sendWithButtons(message.chat.id, profile.html, profile.rows);
   return true;
 }
 
 /* ---------- /stats ---------- */
 
 export async function nudgeStatsLines(since: Date): Promise<string[]> {
-  const logs = await NudgeLog.find({ sentAt: { $gte: since } }).lean();
-  if (!logs.length) return [T.statsTitle, T.statsSent(0, 0)];
+  const all = await NudgeLog.find({ sentAt: { $gte: since } }).lean();
+  const logs = all.filter((l) => l.variant !== 'profile');
+  const profileLogs = all.filter((l) => l.variant === 'profile');
+  const profileLines: string[] = [];
+  if (profileLogs.length) {
+    const ids = profileLogs.map((l) => l.telegramId);
+    const filled = (await User.find({ telegramId: { $in: ids } })).filter((u) => !missingProfileParts(u).length).length;
+    profileLines.push('', P.statsTitle, P.statsLine(profileLogs.length, filled, `${Math.round((filled / profileLogs.length) * 100)}%`));
+  }
+  if (!logs.length) return [T.statsTitle, T.statsSent(0, 0), ...profileLines];
   const now = Date.now();
   const lines = [T.statsTitle, T.statsSent(logs.filter((l) => l.n === 1).length, logs.filter((l) => l.n === 2).length)];
   for (const v of ['A', 'B', 'C', 'second']) {
@@ -203,5 +255,5 @@ export async function nudgeStatsLines(since: Date): Promise<string[]> {
   const nudged = new Set(logs.map((l) => l.telegramId));
   const off = await User.countDocuments({ telegramId: { $in: [...nudged] }, nudgeOptedOut: true });
   lines.push(T.statsOff(off, `${Math.round((off / nudged.size) * 100)}%`));
-  return lines;
+  return [...lines, ...profileLines];
 }
