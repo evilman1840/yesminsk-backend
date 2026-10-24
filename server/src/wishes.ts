@@ -215,9 +215,9 @@ export async function onMeetupFromWish(groupId: unknown, event: IEvent, creatorI
 
 /* ---------- Сообщения бота ---------- */
 
-type Btn = { text: string; path?: string; data?: string };
+export type Btn = { text: string; path?: string; data?: string };
 
-async function sendWithButtons(chatId: number, html: string, rows: Btn[][]) {
+export async function sendWithButtons(chatId: number, html: string, rows: Btn[][]) {
   const appUrl = (process.env.MINI_APP_URL || '').replace(/\/+$/, '');
   const keyboard = rows
     .map((row) => row.filter((b) => b.data || appUrl).map((b) => (b.data ? { text: b.text, callback_data: b.data } : { text: b.text, web_app: { url: `${appUrl}/${b.path || ''}` } })))

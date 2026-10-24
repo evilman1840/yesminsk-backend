@@ -21,6 +21,7 @@ import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish } from './wishes';
+import { startNudgeLoop } from './nudges';
 import { runPlaceImports } from './placesImport';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
 
@@ -1237,4 +1238,5 @@ app.listen(PORT, () => {
   startDigestLoop();
   startFeedbackLoop();
   startWishLoop();
+  startNudgeLoop();
 });

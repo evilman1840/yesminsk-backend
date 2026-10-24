@@ -52,6 +52,9 @@ export interface IUser extends Document {
   isBanned?: boolean;        // забанен модератором
   invitedBy?: number;        // кто позвал в приложение
   savedPlaces?: string[];    // 🔖 места, которые человек хочет посетить
+  nudge1SentAt?: Date;       // приветственный толчок: первое сообщение (через сутки)
+  nudge2SentAt?: Date;       // второе, последнее (через 4 дня)
+  nudgeOptedOut?: boolean;   // нажал «Не сейчас» — больше не пишем
   hiddenPlaces?: string[];   // места, смахнутые «Неинтересно»
   hiddenEvents?: string[];   // сходки, смахнутые «Неинтересно»
   hiddenByReports?: boolean; // скрыт после 3 жалоб до решения модератора
@@ -115,6 +118,9 @@ const UserSchema = new Schema<IUser>(
     isBanned: { type: Boolean, default: false },
     invitedBy: { type: Number },
     savedPlaces: { type: [String], default: [] },
+    nudge1SentAt: { type: Date },
+    nudge2SentAt: { type: Date },
+    nudgeOptedOut: { type: Boolean },
     hiddenPlaces: { type: [String], default: [] },
     hiddenEvents: { type: [String], default: [] },
     hiddenByReports: { type: Boolean, default: false },
