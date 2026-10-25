@@ -44,6 +44,7 @@ mongoose
     removeTestProfiles();
     runPlaceImports();
     markCompletedProfiles();
+    restoreSwipeHides();
     seedEventTemplates();
   })
   .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));
@@ -55,6 +56,30 @@ async function markCompletedProfiles() {
     if (res.modifiedCount) console.log(`✅ Отмечены заполненные анкеты: ${res.modifiedCount}`);
   } catch (err: any) {
     console.warn('⚠️ Пометка заполненных анкет:', err?.message || err);
+  }
+}
+
+// Раньше свайп влево скрывал человека навсегда. Один раз возвращаем всех скрытых так,
+// кроме пар, где была жалоба: там скрытие остаётся
+async function restoreSwipeHides() {
+  const KEY = 'restore-swipe-hides-2026-10-25';
+  try {
+    const migrations = mongoose.connection.db!.collection('migrations');
+    if (await migrations.findOne({ key: KEY })) return;
+    const Report = mongoose.models.Report;
+    const hides = await Reaction.find({ type: 'dislike' }).lean();
+    let restored = 0;
+    for (const h of hides) {
+      const reported = Report ? await Report.exists({ fromTelegramId: h.fromTelegramId, targetType: 'user', targetId: String(h.toTelegramId) }) : null;
+      if (reported) continue;
+      await User.updateOne({ telegramId: h.fromTelegramId }, { $pull: { blockedUsers: h.toTelegramId } });
+      await Reaction.deleteOne({ _id: h._id });
+      restored++;
+    }
+    await migrations.insertOne({ key: KEY, restored, at: new Date() });
+    console.log(`↩️ Возвращены скрытые свайпом: ${restored} из ${hides.length}`);
+  } catch (err: any) {
+    console.warn('⚠️ Возврат скрытых:', err?.message || err);
   }
 }
 
@@ -367,8 +392,11 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
       telegramId: { $ne: tgUser.id }
     };
 
-    if (currentUser?.blockedUsers && currentUser.blockedUsers.length > 0) {
-      query.telegramId.$nin = currentUser.blockedUsers;
+    // Скрытые навсегда и пропущенные свайпом (пока не прошёл срок)
+    const skippedNow = (currentUser?.skipped || []).filter((s) => new Date(s.until).getTime() > Date.now()).map((s) => s.telegramId);
+    const hiddenIds = [...(currentUser?.blockedUsers || []), ...skippedNow];
+    if (hiddenIds.length > 0) {
+      query.telegramId.$nin = hiddenIds;
     }
 
     // Исключаем тех, кто заблокировал меня, забаненных и скрытых после жалоб
@@ -588,6 +616,25 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
     });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Ошибка сохранения реакции' });
+  }
+});
+
+// «Пропустить» (свайп влево): человек вернётся в ленту через 3 дня. { undo: true } — вернуть сразу
+const SKIP_DAYS = 3;
+app.post('/api/users/:telegramId/skip', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const targetId = Number(req.params.telegramId);
+    if (!Number.isFinite(targetId)) return res.sendStatus(400);
+    const myId = req.telegramUser!.id;
+    await User.updateOne({ telegramId: myId }, { $pull: { skipped: { telegramId: targetId } } });
+    if (!req.body?.undo) {
+      const until = new Date(Date.now() + SKIP_DAYS * 24 * 60 * 60 * 1000);
+      // Храним последние 500 пропусков
+      await User.updateOne({ telegramId: myId }, { $push: { skipped: { $each: [{ telegramId: targetId, until }], $slice: -500 } } });
+    }
+    res.sendStatus(204);
+  } catch {
+    res.sendStatus(500);
   }
 });
 

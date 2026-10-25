@@ -74,6 +74,9 @@ export async function buildStats(): Promise<string> {
   const matches = likes.filter((l) => likeKeys.has(`${l.toTelegramId}:${l.fromTelegramId}`)).length / 2;
   const likes7 = likes.filter((l) => l.createdAt && l.createdAt >= ago(7)).length;
   const hides = await Reaction.countDocuments({ type: 'dislike' });
+  // «Пропустить» свайпом: сколько пропусков сейчас действует
+  const skipsAgg = await User.aggregate([{ $match: { 'skipped.0': { $exists: true } } }, { $project: { n: { $size: { $filter: { input: '$skipped', cond: { $gt: ['$$this.until', new Date()] } } } } } }, { $group: { _id: null, n: { $sum: '$n' } } }]);
+  const skipsNow = skipsAgg[0]?.n || 0;
 
   // Сходки
   const [eventsUpcoming, eventsCreated7, eventsTotal] = await Promise.all([
@@ -115,7 +118,7 @@ export async function buildStats(): Promise<string> {
     `👋 <b>Знакомства</b>`,
     `«Пообщаться» всего ${likes.length} (за 7 дней ${plus(likes7)})`,
     `🤝 На связи (взаимно): ${matches}`,
-    `🙈 Скрыли кого-то: ${hides}`,
+    `🙈 Скрыли навсегда (кнопкой): ${hides} · ⏭ пропусков сейчас: ${skipsNow}`,
     ``,
     `🗓 <b>Сходки</b>`,
     `Предстоящих ${eventsUpcoming.length}, на них идут ${goingUpcoming} чел.`,
