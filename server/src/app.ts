@@ -484,40 +484,57 @@ app.post('/api/users/block', telegramAuthMiddleware as any, async (req: Authenti
 // ==========================================
 // 4. ПОЛЬЗОВАТЕЛИ РЯДОМ (ДЛЯ КАРТЫ И ЛЕНТЫ)
 // ==========================================
+// Кого показывать человеку на карте и в «Людях»: общий фильтр для списка и для счётчика
+function nearbyQuery(tgUser: { id: number }, currentUser: any, goal: any) {
+  const query: any = {
+    isProfileActive: true,
+    hasAgreedToRules: true,
+    profileCompleted: true, // пока человек не указал возраст и интересы, анкету не показываем
+    telegramId: { $ne: tgUser.id }
+  };
+
+  // Скрытые навсегда и пропущенные свайпом (пока не прошёл срок)
+  const skippedNow = (currentUser?.skipped || []).filter((s: any) => new Date(s.until).getTime() > Date.now()).map((s: any) => s.telegramId);
+  const hiddenIds = [...(currentUser?.blockedUsers || []), ...skippedNow];
+  if (hiddenIds.length > 0) {
+    query.telegramId.$nin = hiddenIds;
+  }
+
+  // Исключаем тех, кто заблокировал меня, забаненных и скрытых после жалоб
+  query.blockedUsers = { $ne: tgUser.id };
+  query.isBanned = { $ne: true };
+  query.hiddenByReports = { $ne: true };
+
+  if (goal && goal !== 'all') {
+    query.$or = [{ goal }, { goals: goal }];
+  }
+
+  // Уважаем предпочтения других: не показываем меня тем, кто не хочет встречаться с моим полом или возрастом
+  query.$and = theirPreferencesAllow(currentUser);
+
+  return query;
+}
+
+// Сколько анкет видно человеку всего (на карту приходят только самые активные)
+app.get('/api/users/nearby-count', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const currentUser = await User.findOne({ telegramId: tgUser.id }, { blockedUsers: 1, skipped: 1, gender: 1, age: 1 }).lean();
+    res.json({ total: await User.countDocuments(nearbyQuery(tgUser, currentUser, req.query.goal)) });
+  } catch (err: any) {
+    console.warn('⚠️ /api/users/nearby-count:', err?.message || err);
+    res.status(500).json({ error: 'Ошибка подсчёта' });
+  }
+});
+
 app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
     const currentUser = await User.findOne({ telegramId: tgUser.id });
+    const query = nearbyQuery(tgUser, currentUser, req.query.goal);
 
-    const { goal } = req.query;
-
-    const query: any = {
-      isProfileActive: true,
-      hasAgreedToRules: true,
-      profileCompleted: true, // пока человек не указал возраст и интересы, анкету не показываем
-      telegramId: { $ne: tgUser.id }
-    };
-
-    // Скрытые навсегда и пропущенные свайпом (пока не прошёл срок)
-    const skippedNow = (currentUser?.skipped || []).filter((s) => new Date(s.until).getTime() > Date.now()).map((s) => s.telegramId);
-    const hiddenIds = [...(currentUser?.blockedUsers || []), ...skippedNow];
-    if (hiddenIds.length > 0) {
-      query.telegramId.$nin = hiddenIds;
-    }
-
-    // Исключаем тех, кто заблокировал меня, забаненных и скрытых после жалоб
-    query.blockedUsers = { $ne: tgUser.id };
-    query.isBanned = { $ne: true };
-    query.hiddenByReports = { $ne: true };
-
-    if (goal && goal !== 'all') {
-      query.$or = [{ goal }, { goals: goal }];
-    }
-
-    // Уважаем предпочтения других: не показываем меня тем, кто не хочет встречаться с моим полом или возрастом
-    query.$and = theirPreferencesAllow(currentUser);
-
-    const users = await User.find(query).limit(100).sort({ lastActiveAt: -1 });
+    // Самые активные 300: анкеты лёгкие (фото — ссылкой), карта не перегружается
+    const users = await User.find(query).limit(300).sort({ lastActiveAt: -1 });
     // «⚡ Свободен сейчас» — первыми в списке
     users.sort((a, b) => Number(isAvailableNow(b)) - Number(isAvailableNow(a)));
     const flags = await getReactionFlags(tgUser.id, users.map((u) => u.telegramId));
