@@ -39,6 +39,15 @@ const app = express();
 app.use(cors());
 // Сжатие ответов: списки людей и сходок становятся в разы легче
 app.use(compression());
+// Медленные запросы — в лог Render, чтобы было видно, что тормозит
+app.use((req, res, next) => {
+  const started = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - started;
+    if (ms > 1500 || res.statusCode >= 500) console.log(`🐢 ${req.method} ${req.path} ${res.statusCode} ${ms} мс`);
+  });
+  next();
+});
 app.use(express.json({ limit: '5mb' })); // фото приходят уже сжатыми (~100 КБ), запас — для старых тяжёлых
 // Забаненные не могут ничего менять
 app.use('/api', banGuard);
@@ -171,14 +180,15 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
         blockedUsers: []
       });
     } else {
+      // Без save(): старая анкета с полем, которое не проходит проверку схемы, не должна ронять вход
       user.lastActiveAt = new Date();
-      await user.save();
+      await User.updateOne({ _id: user._id }, { $set: { lastActiveAt: user.lastActiveAt } });
     }
     // Telegram сообщает, разрешил ли человек боту писать
     if (tgUser.allows_write_to_pm && user.canMessage !== true) {
       user.canMessage = true;
       user.botBlockedAt = undefined;
-      await user.save();
+      await User.updateOne({ _id: user._id }, { $set: { canMessage: true }, $unset: { botBlockedAt: 1 } });
     }
 
     const userObj: any = user.toObject ? user.toObject() : { ...user };
@@ -197,7 +207,8 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     userObj.photos = (user.photos || []).map(photoUrl); // ещё фото в анкете — адресами
 
     res.json(userObj);
-  } catch (err) {
+  } catch (err: any) {
+    console.warn('⚠️ /api/users/me:', err?.message || err);
     res.status(500).json({ error: 'Ошибка получения профиля' });
   }
 });
@@ -500,7 +511,8 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
     const flags = await getReactionFlags(tgUser.id, users.map((u) => u.telegramId));
 
     res.json(users.map((u) => formatPublicUser(u, currentUser, flags.get(u.telegramId))));
-  } catch (err) {
+  } catch (err: any) {
+    console.warn('⚠️ /api/users/nearby:', err?.message || err);
     res.status(500).json({ error: 'Ошибка загрузки пользователей' });
   }
 });
@@ -886,7 +898,8 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
     // Официальные сходки — первыми
     formatted.sort((a, b) => Number(b.isOfficial) - Number(a.isOfficial));
     res.json(formatted);
-  } catch (err) {
+  } catch (err: any) {
+    console.warn('⚠️ /api/events:', err?.message || err);
     res.status(500).json({ error: 'Ошибка загрузки событий' });
   }
 });
