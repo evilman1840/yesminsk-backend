@@ -1,19 +1,75 @@
 import crypto from 'crypto';
+import mongoose, { Schema, model } from 'mongoose';
 import { Express, Request, Response } from 'express';
 import { User } from './models/User';
+import { Event } from './models/Event';
 
 /**
- * Фото профиля хранятся в базе строкой data:image/… (~20-100 КБ). Чтобы не вкладывать их в каждый ответ
- * (список людей, сходки с участниками), отдаём ссылку /api/users/:id/avatar, а браузер кеширует картинку
+ * Фото профиля (data:image/…, ~20-100 КБ) живут в отдельной коллекции avatars.
+ * В анкете и сходках — короткая метка «avatar:<версия>», в ответах — ссылка /api/users/:id/avatar?v=…
+ * Так анкеты весят сотни байт, а не десятки килобайт, и база не перебирает мегабайты на каждый запрос
  */
+const Avatar = model(
+  'Avatar',
+  new Schema({
+    telegramId: { type: Number, required: true, unique: true },
+    data: { type: String, required: true },
+    v: { type: String, required: true }
+  })
+);
+
+const NO_AVATAR = 'https://yesminsk-app.vercel.app/favicon.svg';
+
 const baseUrl = () => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 4000}`).replace(/\/+$/, '');
 
 // Версия в ссылке — новое фото получит новую ссылку, старое можно кешировать надолго
 const version = (data: string) => crypto.createHash('md5').update(data).digest('hex').slice(0, 10);
 
 export function avatarFor(telegramId: number, avatarUrl?: string): string {
-  if (!avatarUrl || !avatarUrl.startsWith('data:')) return avatarUrl || '';
-  return `${baseUrl()}/api/users/${telegramId}/avatar?v=${version(avatarUrl)}`;
+  if (!avatarUrl) return '';
+  if (avatarUrl.startsWith('avatar:')) return `${baseUrl()}/api/users/${telegramId}/avatar?v=${avatarUrl.slice(7)}`;
+  if (avatarUrl.startsWith('data:')) return `${baseUrl()}/api/users/${telegramId}/avatar?v=${version(avatarUrl)}`;
+  return avatarUrl;
+}
+
+// Ссылка на наше же фото (приложение прислало анкету обратно) — фото не меняли
+export const isOwnAvatarLink = (url: string) => url.startsWith('avatar:') || /\/api\/users\/\d+\/avatar\b/.test(url);
+
+// Новое фото из приложения: кладём в коллекцию, в анкету — метку
+export async function storeAvatar(telegramId: number, data: string): Promise<string> {
+  const v = version(data);
+  await Avatar.updateOne({ telegramId }, { $set: { data, v } }, { upsert: true });
+  return `avatar:${v}`;
+}
+
+// Один раз: фото из анкет и копии в сходках → коллекция avatars и метки
+export async function moveAvatarsOut() {
+  const KEY = 'avatars-collection-2026-10-25';
+  try {
+    const migrations = mongoose.connection.db!.collection('migrations');
+    if (await migrations.findOne({ key: KEY })) return;
+    const marks = new Map<number, string>();
+    const cursor = User.find({ avatarUrl: /^data:/ }, { telegramId: 1, avatarUrl: 1 }).lean().cursor();
+    for await (const u of cursor) {
+      const mark = await storeAvatar(u.telegramId, u.avatarUrl);
+      await User.updateOne({ _id: u._id }, { $set: { avatarUrl: mark } });
+      marks.set(u.telegramId, mark);
+    }
+    // В сходках у организатора и участников лежали копии фото
+    const markOf = async (id: number) => marks.get(id) || ((await User.findOne({ telegramId: id }, { avatarUrl: 1 }).lean())?.avatarUrl ?? '');
+    const evCursor = Event.find({ $or: [{ 'creator.avatarUrl': /^data:/ }, { 'participants.avatarUrl': /^data:/ }] }).cursor();
+    let events = 0;
+    for await (const ev of evCursor) {
+      if (ev.creator.avatarUrl?.startsWith('data:')) ev.creator.avatarUrl = (await markOf(ev.creator.telegramId)) || NO_AVATAR;
+      for (const p of ev.participants) if (p.avatarUrl?.startsWith('data:')) p.avatarUrl = (await markOf(p.telegramId)) || NO_AVATAR;
+      await Event.updateOne({ _id: ev._id }, { $set: { creator: ev.creator, participants: ev.participants } });
+      events++;
+    }
+    await migrations.insertOne({ key: KEY, at: new Date() });
+    console.log(`✅ Фото профиля вынесены: анкет ${marks.size}, сходок ${events}`);
+  } catch (err: any) {
+    console.warn('⚠️ Перенос фото профиля:', err?.message || err);
+  }
 }
 
 export function setupAvatarRoutes(app: Express) {
@@ -21,8 +77,10 @@ export function setupAvatarRoutes(app: Express) {
     try {
       const id = Number(req.params.telegramId);
       if (!Number.isFinite(id)) return res.sendStatus(404);
-      const u = await User.findOne({ telegramId: id, isBanned: { $ne: true } }, { avatarUrl: 1 }).lean();
-      const m = u?.avatarUrl?.match(/^data:(image\/[\w.+-]+);base64,(.+)$/s);
+      const stored = await Avatar.findOne({ telegramId: id }, { data: 1 }).lean();
+      // До переноса фото ещё могло лежать в анкете
+      const data = stored?.data || (await User.findOne({ telegramId: id, avatarUrl: /^data:/ }, { avatarUrl: 1 }).lean())?.avatarUrl;
+      const m = data?.match(/^data:(image\/[\w.+-]+);base64,(.+)$/s);
       if (!m) return res.sendStatus(404);
       res.set('Content-Type', m[1]);
       res.set('Cache-Control', 'public, max-age=2592000, immutable');

@@ -120,5 +120,7 @@ const EventSchema = new Schema<IEvent>(
 
 // Индекс для быстрого поиска событий на карте Минска
 EventSchema.index({ location: '2dsphere' });
+EventSchema.index({ photos: 1 });
+EventSchema.index({ isActive: 1, dateTime: 1 });
 
 export const Event = model<IEvent>('Event', EventSchema);

@@ -33,7 +33,7 @@ import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, 
 dotenv.config();
 
 import compression from 'compression';
-import { avatarFor, setupAvatarRoutes } from './avatars';
+import { avatarFor, setupAvatarRoutes, storeAvatar, isOwnAvatarLink, moveAvatarsOut } from './avatars';
 
 const app = express();
 app.use(cors());
@@ -63,6 +63,7 @@ mongoose
     markCompletedProfiles();
     restoreSwipeHides();
     widenFuzzyLocations();
+    moveAvatarsOut();
     seedEventTemplates();
   })
   .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));
@@ -205,6 +206,7 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     if (fuzzy && fuzzy.length === 2) userObj.shownCoordinates = [fuzzy[1], fuzzy[0]];
     userObj.locationManual = Boolean(user.locationManual);
     userObj.photos = (user.photos || []).map(photoUrl); // ещё фото в анкете — адресами
+    userObj.avatarUrl = avatarFor(user.telegramId, user.avatarUrl);
 
     res.json(userObj);
   } catch (err: any) {
@@ -279,12 +281,13 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     // Ещё до 5 фото в анкете (id из /api/photos)
     if (cleanPhotoIds(photos)) updateData.photos = cleanPhotoIds(photos);
     if (firstName || name) updateData.firstName = firstName || name;
-    if (avatarUrl) {
+    if (avatarUrl && !isOwnAvatarLink(String(avatarUrl))) {
       // Защита базы от огромных фото (приложение сжимает их до ~100 КБ)
       if (String(avatarUrl).length > MAX_AVATAR_CHARS) {
         return res.status(413).json({ error: 'Фото слишком большое. Загрузи его ещё раз, приложение сожмёт автоматически' });
       }
-      updateData.avatarUrl = avatarUrl;
+      // Новое фото — в коллекцию avatars, в анкету метку
+      updateData.avatarUrl = String(avatarUrl).startsWith('data:') ? await storeAvatar(tgUser.id, String(avatarUrl)) : avatarUrl;
     }
     if (bio !== undefined) updateData.bio = bio.slice(0, 200);
     if (goal) updateData.goal = goal as ActivityGoal;

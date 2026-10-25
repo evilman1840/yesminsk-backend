@@ -145,5 +145,9 @@ const UserSchema = new Schema<IUser>(
 // Пространственный 2dsphere-индекс для гео-запросов
 UserSchema.index({ locationFuzzy: '2dsphere' });
 UserSchema.index({ blockedUsers: 1 });
+// Проверка «это фото из анкеты?» и лента людей без перебора всей коллекции
+UserSchema.index({ photos: 1 });
+UserSchema.index({ lastActiveAt: -1 });
+UserSchema.index({ savedPlaces: 1 });
 
 export const User = model<IUser>('User', UserSchema);

@@ -99,6 +99,9 @@ const PlaceSchema = new Schema<IPlace>(
   { timestamps: true }
 );
 
+// Проверка «это фото места?» по индексу
+PlaceSchema.index({ photos: 1 });
+
 export const Place = model<IPlace>('Place', PlaceSchema);
 
 // Какие таблицы с местами уже загружены (чтобы не применять повторно при каждом запуске)

@@ -1,6 +1,6 @@
 import { Express, Request, Response } from 'express';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
-import { sendTelegramPhoto } from './utils/telegramFile';
+import { sendTelegramPhoto, isCachedPhoto } from './utils/telegramFile';
 import { Event } from './models/Event';
 import { User } from './models/User';
 import { PHOTO_TEXTS as T } from './texts';
@@ -75,7 +75,7 @@ export function setupPhotoRoutes(app: Express) {
         res.setHeader('Content-Type', 'image/jpeg');
         return res.send(devPhotos.get(id));
       }
-      if (!(await Event.exists({ photos: id })) && !(await User.exists({ photos: id }))) return res.sendStatus(404);
+      if (!isCachedPhoto(id) && !(await Event.exists({ photos: id })) && !(await User.exists({ photos: id }))) return res.sendStatus(404);
       await sendTelegramPhoto(res, id);
     } catch {
       res.sendStatus(500);

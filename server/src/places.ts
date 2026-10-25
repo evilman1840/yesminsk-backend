@@ -1,10 +1,11 @@
+import { avatarFor } from './avatars';
 import { Express, Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import { Place, PlaceTip, PLACE_MOODS, PLACE_PRICES, PLACE_TYPES, matchPlaceType, PlaceMood, PlacePrice, IPlace } from './models/Place';
 import { User } from './models/User';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
-import { sendTelegramPhoto } from './utils/telegramFile';
+import { sendTelegramPhoto, isCachedPhoto } from './utils/telegramFile';
 import { isAdmin } from './news';
 
 /* ======================================================================
@@ -42,6 +43,19 @@ const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false, savedByOthers = 
   tipsCount
 });
 
+let savedCache: { at: number; data: any[] } | null = null;
+async function savedCountsCached() {
+  if (savedCache && Date.now() - savedCache.at < 5 * 60 * 1000) return savedCache.data;
+  const data = await User.aggregate([
+    { $match: { 'savedPlaces.0': { $exists: true }, isBanned: { $ne: true } } },
+    { $project: { savedPlaces: 1 } },
+    { $unwind: '$savedPlaces' },
+    { $group: { _id: '$savedPlaces', n: { $sum: 1 } } }
+  ]);
+  savedCache = { at: Date.now(), data };
+  return data;
+}
+
 export function setupPlacesRoutes(app: Express) {
   app.get('/api/places', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -49,8 +63,8 @@ export function setupPlacesRoutes(app: Express) {
         Place.find({}).sort({ createdAt: -1 }).limit(300),
         PlaceTip.aggregate([{ $group: { _id: '$placeId', n: { $sum: 1 } } }]),
         User.findOne({ telegramId: req.telegramUser!.id }, { savedPlaces: 1, hiddenPlaces: 1 }).lean(),
-        // Сколько людей сохранили каждое место
-        User.aggregate([{ $match: { isBanned: { $ne: true } } }, { $unwind: '$savedPlaces' }, { $group: { _id: '$savedPlaces', n: { $sum: 1 } } }])
+        // Сколько людей сохранили каждое место (считаем раз в 5 минут, а не на каждый запрос)
+        savedCountsCached()
       ]);
       const countById = new Map(counts.map((c) => [String(c._id), c.n]));
       const savedById = new Map(savedCounts.map((c: any) => [String(c._id), c.n as number]));
@@ -116,7 +130,7 @@ export function setupPlacesRoutes(app: Express) {
   app.get('/api/places/photo/:fileId', async (req: Request, res: Response) => {
     try {
       const fileId = String(req.params.fileId);
-      if (!(await Place.exists({ photos: fileId }))) return res.sendStatus(404);
+      if (!isCachedPhoto(fileId) && !(await Place.exists({ photos: fileId }))) return res.sendStatus(404);
       await sendTelegramPhoto(res, fileId);
     } catch {
       res.sendStatus(500);
@@ -163,7 +177,7 @@ export function setupPlacesRoutes(app: Express) {
         placeId: place._id,
         telegramId: tgUser.id,
         name: me?.firstName || tgUser.first_name,
-        avatarUrl: me?.avatarUrl?.startsWith('http') ? me.avatarUrl : '',
+        avatarUrl: me ? avatarFor(me.telegramId, me.avatarUrl) : '',
         text
       });
 
