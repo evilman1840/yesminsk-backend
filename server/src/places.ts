@@ -346,7 +346,7 @@ export async function geocode(address: string): Promise<{ coords: [number, numbe
 
 /* ---------- Ссылки Яндекс Карт ---------- */
 
-const isYandexMapsLink = (url: string) => /^https?:\/\/([\w-]+\.)*(yandex\.(by|ru|com|kz)|ya\.ru)\/(maps|-\/)/i.test(url.trim());
+export const isYandexMapsLink = (url: string) => /^https?:\/\/([\w-]+\.)*(yandex\.(by|ru|com|kz)|ya\.ru)\/(maps|-\/)/i.test(url.trim());
 
 // Точка из ссылки Яндекс Карт: из параметров адреса или со страницы места
 export async function placeFromYandexLink(url: string): Promise<{ coords: [number, number]; label: string } | null> {

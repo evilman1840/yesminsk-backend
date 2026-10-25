@@ -10,7 +10,8 @@ import { buildExtras } from './eventTemplates';
 import { sendWithButtons, Btn, phraseFor, proposalSlots, endsToday, groupSize, buildPath, setAfterMatch } from './wishes';
 import { isAdmin, adminIds } from './news';
 import { PROPOSAL_FALLBACK_PLACES } from './data/wishProposals';
-import { PROPOSAL_TEXTS as T, WISH_TEXTS as W } from './texts';
+import { PROPOSAL_TEXTS as T, WISH_TEXTS as W, SUGGEST_TEXTS as SG } from './texts';
+import { parsePlaceText, suggestPlace } from './placeSuggestions';
 
 /**
  * «Хочу сходить» без организатора: когда в группе набирается PROPOSE_AT человек, бот сам предлагает
@@ -53,18 +54,24 @@ async function placeFor(group: IWishGroup) {
 }
 
 // Создать предложение для группы (force — по кнопке автора, даже если людей меньше порога)
-export async function proposeForGroup(group: IWishGroup, force = false): Promise<boolean> {
+type ProposalPlace = { placeId?: string; placeName: string; coords: [number, number]; note?: string };
+
+export async function proposeForGroup(group: IWishGroup, force = false, override?: ProposalPlace): Promise<boolean> {
   if (group.status !== 'open' || group.proposal) return false;
   if (!force && (await groupSize(group._id)) < PROPOSE_AT()) return false;
   const times = proposalSlots(group, leadHoursFor(group), 3);
   if (!times.length) return false;
-  const place = await placeFor(group);
+  const place = override || (await placeFor(group));
   if (!place) {
-    // Нет подходящего места: один раз пишем автору, сами ничего не предлагаем
+    // Нет подходящего места: спрашиваем группу — первая присланная ссылка станет местом сходки
+    if (!group.askPlaceAt) {
+      await WishGroup.updateOne({ _id: group._id }, { $set: { askPlaceAt: new Date() } });
+      await Wish.updateMany({ groupId: group._id, status: 'matched' }, { $set: { pending: 'askplace' } });
+    }
     if (!group.noPlaceNotifiedAt) {
       await WishGroup.updateOne({ _id: group._id }, { $set: { noPlaceNotifiedAt: new Date() } });
       const what = await phraseFor(group.kind, group.sport);
-      for (const id of adminIds()) sendTelegramMessage(id, T.adminNoPlace(escapeHtml(what), await groupSize(group._id)), 'Открыть ДА! МИНСК', '?tab=places');
+      for (const id of adminIds()) sendTelegramMessage(id, SG.adminAsked(escapeHtml(what), await groupSize(group._id)), 'Открыть ДА! МИНСК', '?tab=places');
     }
     return false;
   }
@@ -164,11 +171,25 @@ export async function runProposals() {
     // Присоединились к группе уже после предложения — им тоже предложение, а не «соберите сами»
     const withProposal = await WishGroup.find({ status: 'open', proposal: { $exists: true } }, { _id: 1 }).lean();
     if (withProposal.length) {
-      await Wish.updateMany({ groupId: { $in: withProposal.map((g) => g._id) }, status: 'matched', pending: 'match' }, { $set: { pending: 'proposal' } });
+      await Wish.updateMany({ groupId: { $in: withProposal.map((g) => g._id) }, status: 'matched', pending: { $in: ['match', 'askplace'] } }, { $set: { pending: 'proposal' } });
+    }
+    const asking = await WishGroup.find({ status: 'open', proposal: { $exists: false }, askPlaceAt: { $exists: true } }, { _id: 1 }).lean();
+    if (asking.length) {
+      await Wish.updateMany({ groupId: { $in: asking.map((g) => g._id) }, status: 'matched', pending: 'match' }, { $set: { pending: 'askplace' } });
     }
 
     // 2. Отправляем днём
     if (!process.env.TELEGRAM_BOT_TOKEN || !isDaytime()) return;
+    // Места нет — просим группу прислать ссылку
+    for (const w of await Wish.find({ pending: 'askplace', status: 'matched' })) {
+      const g = await WishGroup.findById(w.groupId);
+      w.pending = null;
+      await w.save();
+      if (!g || g.status !== 'open' || g.proposal) continue;
+      await sendWithButtons(w.telegramId, SG.groupAsk(await groupSize(g._id), escapeHtml(await phraseFor(g.kind, g.sport))), [[{ text: T.whoBtn, path: `?wishGroup=${g._id}` }]]);
+      await new Promise((r) => setTimeout(r, 60));
+    }
+
     for (const w of await Wish.find({ pending: 'proposal', status: 'matched' })) {
       const g = await WishGroup.findById(w.groupId);
       w.pending = null;
@@ -287,5 +308,40 @@ export async function handleWishesCommand(message: any): Promise<boolean> {
     rows.push([{ text: T.buildBtn(what), path: buildPath(g) }]);
   }
   await sendWithButtons(message.chat.id, lines.join('\n'), rows);
+  return true;
+}
+
+/* ---------- Ответ группы: ссылка на место ---------- */
+
+// Человек из группы, которую бот спросил про место, прислал ссылку или название — это и будет место сходки
+export async function handleGroupPlaceReply(message: any): Promise<boolean> {
+  const text: string = (message.text || '').trim();
+  const fromId: number = message.from?.id;
+  if (!text || text.startsWith('/') || !fromId) return false;
+  const wishes = await Wish.find({ telegramId: fromId, status: 'matched', groupId: { $exists: true } }).lean();
+  if (!wishes.length) return false;
+  const groups = await WishGroup.find({ _id: { $in: wishes.map((w) => w.groupId) }, status: 'open', askPlaceAt: { $gte: new Date(Date.now() - 3 * 24 * HOUR) } });
+  const group = groups[0];
+  if (!group) return false;
+  const chatId = message.chat.id;
+  if (group.proposal) {
+    await sendWithButtons(chatId, SG.groupAlready(escapeHtml(group.proposal.placeName)), []);
+    return true;
+  }
+  const parsed = await parsePlaceText(text);
+  if (!parsed) {
+    await sendWithButtons(chatId, SG.needLink, []);
+    return true;
+  }
+  const ok = await proposeForGroup(group, true, { placeName: parsed.name, coords: parsed.coords });
+  const tpl = await EventTemplate.findOne({ key: group.kind }, { placeTypes: 1 }).lean();
+  const what = await phraseFor(group.kind, group.sport);
+  suggestPlace(fromId, parsed, tpl?.placeTypes?.[0] || '', SG.fromGroup(what)).catch(() => {});
+  if (ok) {
+    await sendWithButtons(chatId, SG.groupThanks(escapeHtml(parsed.name)), []);
+    runProposals().catch(() => {});
+  } else {
+    await sendWithButtons(chatId, SG.thanks, []);
+  }
   return true;
 }

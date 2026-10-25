@@ -296,10 +296,11 @@ export async function sendPending() {
       const items = [];
       for (const w of wishes) {
         const g = await WishGroup.findById(w.groupId);
-        if (g?.status === 'open' && g.proposal) {
-          // У группы уже есть предложение бота — пришлём его, а не «соберите сами»
-          await Wish.updateOne({ _id: w._id }, { $set: { pending: 'proposal' } });
-          w.pending = 'proposal';
+        if (g?.status === 'open' && (g.proposal || g.askPlaceAt)) {
+          // У группы уже есть предложение бота (или бот спрашивает место) — пришлём его, а не «соберите сами»
+          const next = g.proposal ? 'proposal' : 'askplace';
+          await Wish.updateOne({ _id: w._id }, { $set: { pending: next } });
+          w.pending = next;
           continue;
         }
         if (!g || g.status !== 'open') continue;
@@ -337,7 +338,7 @@ export async function sendPending() {
     }
 
     // 3. Через сутки никто не собрал, а время ещё есть — одно напоминание
-    const stale = await WishGroup.find({ status: 'open', proposal: { $exists: false }, reminderSentAt: { $exists: false }, createdAt: { $lte: new Date(now.getTime() - REMIND_AFTER) }, windowEnd: { $gt: now } });
+    const stale = await WishGroup.find({ status: 'open', proposal: { $exists: false }, askPlaceAt: { $exists: false }, reminderSentAt: { $exists: false }, createdAt: { $lte: new Date(now.getTime() - REMIND_AFTER) }, windowEnd: { $gt: now } });
     for (const g of stale) {
       g.reminderSentAt = now;
       await g.save();

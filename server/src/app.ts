@@ -25,6 +25,7 @@ import { Wish, WishGroup } from './models/Wish';
 import { startNudgeLoop } from './nudges';
 import { startProposalLoop } from './proposals';
 import { setupAccountRoutes } from './account';
+import { setupPlaceSuggestionRoutes } from './placeSuggestions';
 import { runPlaceImports } from './placesImport';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
 
@@ -1343,6 +1344,9 @@ setupWishRoutes(app);
 
 // Удаление аккаунта
 setupAccountRoutes(app);
+
+// Люди предлагают места
+setupPlaceSuggestionRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);
