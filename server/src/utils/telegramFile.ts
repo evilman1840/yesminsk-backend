@@ -1,5 +1,29 @@
 import { Response } from 'express';
 import sharp from 'sharp';
+import { Schema, model } from 'mongoose';
+
+// Один поток на уменьшение: у сервера 0.5 CPU, остальным запросам должно оставаться
+sharp.concurrency(1);
+
+// Уменьшенные фото храним и в базе: после перезапуска не пересчитываем заново
+const SmallPhoto = model(
+  'SmallPhoto',
+  new Schema({ fileId: { type: String, required: true, unique: true }, type: String, data: Buffer, createdAt: { type: Date, default: Date.now } })
+);
+
+// Не больше 2 фото обрабатываем одновременно, остальные ждут в очереди
+let running = 0;
+const queue: (() => void)[] = [];
+export async function limited<T>(job: () => Promise<T>): Promise<T> {
+  if (running >= 2) await new Promise<void>((r) => queue.push(r));
+  running++;
+  try {
+    return await job();
+  } finally {
+    running--;
+    queue.shift()?.();
+  }
+}
 
 /**
  * Отдаёт фото, хранящееся в Telegram (по file_id), через наш сервер — чтобы не раскрывать токен бота.
@@ -20,6 +44,15 @@ export async function shrinkImage(input: Buffer, maxSide: number): Promise<{ typ
   } catch {
     return null;
   }
+}
+
+// Из базы (уже уменьшенное) или из Telegram с уменьшением и сохранением в базу
+async function loadPhoto(fileId: string) {
+  const saved = await SmallPhoto.findOne({ fileId }).lean().catch(() => null);
+  if (saved?.data) return { type: saved.type || 'image/webp', body: Buffer.from(saved.data as any) };
+  const got = await limited(() => download(fileId));
+  if (got) SmallPhoto.updateOne({ fileId }, { $set: { type: got.type, data: got.body } }, { upsert: true }).catch(() => {});
+  return got;
 }
 
 // Запрос к Telegram: не дольше 8 секунд, при обрыве — ещё одна попытка
@@ -55,7 +88,7 @@ export async function sendTelegramPhoto(res: Response, fileId: string) {
   } else {
     let p = inflight.get(fileId);
     if (!p) {
-      p = download(fileId).finally(() => inflight.delete(fileId));
+      p = loadPhoto(fileId).finally(() => inflight.delete(fileId));
       inflight.set(fileId, p);
     }
     const got = await p;

@@ -3,7 +3,7 @@ import mongoose, { Schema, model } from 'mongoose';
 import { Express, Request, Response } from 'express';
 import { User } from './models/User';
 import { Event } from './models/Event';
-import { shrinkImage } from './utils/telegramFile';
+import { shrinkImage, limited } from './utils/telegramFile';
 
 /**
  * Фото профиля (data:image/…, ~20-100 КБ) живут в отдельной коллекции avatars.
@@ -98,7 +98,7 @@ export function setupAvatarRoutes(app: Express) {
       if (!m) return res.sendStatus(404);
       const original = Buffer.from(m[2], 'base64');
       // Аватарка бывает на весь экран анкеты: 900 px хватает и для ретины
-      const item = (await shrinkImage(original, 900)) || { type: m[1], body: original };
+      const item = (await limited(() => shrinkImage(original, 900))) || { type: m[1], body: original };
       if (small.size > 3000) small.delete(small.keys().next().value!);
       small.set(key, item);
       res.set('Content-Type', item.type);
