@@ -45,22 +45,34 @@ const PlaceSuggestion = model<IPlaceSuggestion>(
 
 const MAX_PER_DAY = 10;
 
-// Ссылка или «название, адрес» → место в Минске
+// Ссылка или «название, адрес» → место в Минске.
+// Яндекс копирует «Название\nАдрес\nссылка» — название и адрес берём из текста, точку из ссылки;
+// не открылась ссылка — ищем по адресу из того же текста
 export async function parsePlaceText(text: string): Promise<{ name: string; address: string; mapUrl: string; coords: [number, number] } | null> {
   const url = text.match(/https?:\/\/\S+/)?.[0];
+  const lines = text
+    .replace(/https?:\/\/\S+/g, '')
+    .split(/\n/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const userName = lines[0]?.split(',')[0].trim().slice(0, 80) || '';
+  const userAddress = lines.slice(1).join(', ').trim();
+
   if (url && isYandexMapsLink(url)) {
     const found = await placeFromYandexLink(url);
-    if (!found) return null;
-    const name = found.label || text.replace(url, '').trim() || 'Место';
-    return { name: name.slice(0, 80), address: '', mapUrl: url, coords: found.coords };
+    if (found) {
+      // «Художественный дом Угринович, магазин подарков…, Минск» → «Художественный дом Угринович»
+      const fromPage = found.label.split(',')[0].trim();
+      return { name: (userName || fromPage || 'Место').slice(0, 80), address: userAddress, mapUrl: url, coords: found.coords };
+    }
   }
-  const plain = text.replace(/https?:\/\/\S+/g, '').trim();
-  if (plain.length < 3) return null;
-  // «Кофейня Зерно, Киселёва 12»: адрес может быть в любой части — пробуем целиком, потом части с конца
-  const parts = plain.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
-  for (const q of [plain, ...parts.slice().reverse()]) {
+  if (!lines.length) return null;
+  // Адрес может быть в любой части — пробуем целиком, потом части с конца
+  const plain = lines.join(', ');
+  const parts = plain.split(',').map((x) => x.trim()).filter(Boolean);
+  for (const q of [userAddress, plain, ...parts.slice().reverse()].filter(Boolean)) {
     const found = await geocode(q);
-    if (found) return { name: parts[0].slice(0, 80), address: found.label, mapUrl: '', coords: found.coords };
+    if (found) return { name: (userName || parts[0]).slice(0, 80), address: found.label, mapUrl: url && isYandexMapsLink(url) ? url : '', coords: found.coords };
   }
   return null;
 }

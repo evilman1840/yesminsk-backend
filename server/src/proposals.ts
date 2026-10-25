@@ -1,3 +1,5 @@
+import { Express, Response } from 'express';
+import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import mongoose from 'mongoose';
 import { Wish, WishGroup, IWishGroup } from './models/Wish';
 import { EventTemplate } from './models/EventTemplate';
@@ -186,7 +188,10 @@ export async function runProposals() {
       w.pending = null;
       await w.save();
       if (!g || g.status !== 'open' || g.proposal) continue;
-      await sendWithButtons(w.telegramId, SG.groupAsk(await groupSize(g._id), escapeHtml(await phraseFor(g.kind, g.sport))), [[{ text: T.whoBtn, path: `?wishGroup=${g._id}` }]]);
+      await sendWithButtons(w.telegramId, SG.groupAsk(await groupSize(g._id), escapeHtml(await phraseFor(g.kind, g.sport))), [
+        [{ text: SG.groupAskBtn, path: `?wishGroup=${g._id}&suggest=1` }],
+        [{ text: T.whoBtn, path: `?wishGroup=${g._id}` }]
+      ]);
       await new Promise((r) => setTimeout(r, 60));
     }
 
@@ -313,6 +318,19 @@ export async function handleWishesCommand(message: any): Promise<boolean> {
 
 /* ---------- Ответ группы: ссылка на место ---------- */
 
+// Предложить место группе (ответом боту или из приложения). Возвращает текст ответа человеку
+export async function suggestGroupPlace(group: IWishGroup, fromId: number, text: string): Promise<{ ok: boolean; message: string }> {
+  if (group.proposal) return { ok: false, message: SG.groupAlready(group.proposal.placeName) };
+  const parsed = await parsePlaceText(text);
+  if (!parsed) return { ok: false, message: SG.notFound };
+  const ok = await proposeForGroup(group, true, { placeName: parsed.name, coords: parsed.coords });
+  const tpl = await EventTemplate.findOne({ key: group.kind }, { placeTypes: 1 }).lean();
+  const what = await phraseFor(group.kind, group.sport);
+  suggestPlace(fromId, parsed, tpl?.placeTypes?.[0] || '', SG.fromGroup(what)).catch(() => {});
+  if (ok) runProposals().catch(() => {});
+  return { ok, message: ok ? SG.groupThanks(parsed.name) : SG.thanks };
+}
+
 // Человек из группы, которую бот спросил про место, прислал ссылку или название — это и будет место сходки
 export async function handleGroupPlaceReply(message: any): Promise<boolean> {
   const text: string = (message.text || '').trim();
@@ -323,25 +341,26 @@ export async function handleGroupPlaceReply(message: any): Promise<boolean> {
   const groups = await WishGroup.find({ _id: { $in: wishes.map((w) => w.groupId) }, status: 'open', askPlaceAt: { $gte: new Date(Date.now() - 3 * 24 * HOUR) } });
   const group = groups[0];
   if (!group) return false;
-  const chatId = message.chat.id;
-  if (group.proposal) {
-    await sendWithButtons(chatId, SG.groupAlready(escapeHtml(group.proposal.placeName)), []);
-    return true;
-  }
-  const parsed = await parsePlaceText(text);
-  if (!parsed) {
-    await sendWithButtons(chatId, SG.needLink, []);
-    return true;
-  }
-  const ok = await proposeForGroup(group, true, { placeName: parsed.name, coords: parsed.coords });
-  const tpl = await EventTemplate.findOne({ key: group.kind }, { placeTypes: 1 }).lean();
-  const what = await phraseFor(group.kind, group.sport);
-  suggestPlace(fromId, parsed, tpl?.placeTypes?.[0] || '', SG.fromGroup(what)).catch(() => {});
-  if (ok) {
-    await sendWithButtons(chatId, SG.groupThanks(escapeHtml(parsed.name)), []);
-    runProposals().catch(() => {});
-  } else {
-    await sendWithButtons(chatId, SG.thanks, []);
-  }
+  const res = await suggestGroupPlace(group, fromId, text);
+  await sendWithButtons(message.chat.id, escapeHtml(res.message), []);
   return true;
+}
+
+// Из приложения: POST /api/wishes/groups/:id/place { text }
+export function setupProposalRoutes(app: Express) {
+  app.post('/api/wishes/groups/:id/place', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const myId = req.telegramUser!.id;
+      const group = mongoose.Types.ObjectId.isValid(id) ? await WishGroup.findById(id) : null;
+      if (!group || group.status !== 'open' || !(await Wish.exists({ groupId: group._id, telegramId: myId }))) return res.status(404).json({ error: SG.notFound });
+      const text = String(req.body?.text || '').slice(0, 500);
+      if (!text.trim()) return res.status(400).json({ error: SG.needLink });
+      const result = await suggestGroupPlace(group, myId, text);
+      if (!result.ok && !group.proposal) return res.status(400).json({ error: result.message });
+      res.json(result);
+    } catch {
+      res.status(500).json({ error: SG.notFound });
+    }
+  });
 }

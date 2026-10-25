@@ -24,7 +24,7 @@ import { setupWishRoutes, startWishLoop, onMeetupFromWish, sendWithButtons, Btn 
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
 import { Wish, WishGroup } from './models/Wish';
 import { startNudgeLoop } from './nudges';
-import { startProposalLoop } from './proposals';
+import { startProposalLoop, setupProposalRoutes } from './proposals';
 import { setupAccountRoutes } from './account';
 import { setupPlaceSuggestionRoutes } from './placeSuggestions';
 import { runPlaceImports } from './placesImport';
@@ -487,6 +487,9 @@ app.get('/api/wishes/groups/:id/members', telegramAuthMiddleware as any, async (
       kind: group.kind,
       sport: group.sport || null,
       eventId: group.meetupId || null,
+      // Бот спросил место и его ещё не выбрали — в приложении покажем поле «Предложить место»
+      askingPlace: Boolean(group.askPlaceAt && !group.proposal && group.status === 'open'),
+      placeName: group.proposal?.placeName || null,
       members: others.map((u) => formatPublicUser(u, me, flags.get(u.telegramId)))
     });
   } catch {
@@ -1411,6 +1414,7 @@ setupAccountRoutes(app);
 
 // Люди предлагают места
 setupPlaceSuggestionRoutes(app);
+setupProposalRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);
