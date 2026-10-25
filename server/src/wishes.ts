@@ -58,7 +58,27 @@ const QUICK_SLOTS: { id: 'today' | 'tomorrow' | 'saturday' | 'sunday'; at: (now:
 ];
 const whenForGroup = (g: { windowStart: Date; windowEnd: Date }, now = new Date()) => slotForGroup(g, 1, now)?.id;
 
-// Первое быстрое время в общем окне группы, не раньше чем через leadHours: для предложения бота
+// Варианты времени для предложения бота: вечера ближайших дней и выходные днём,
+// не раньше чем через leadHours и внутри общего окна группы. Не больше max вариантов
+export const proposalSlots = (g: { windowStart: Date; windowEnd: Date }, leadHours: number, max = 3, now = new Date()) => {
+  const dow = minskDow(now);
+  const candidates = [
+    ...[0, 1, 2, 3].map((d) => minskMidnight(now, d) + 19 * HOUR),
+    minskMidnight(now, (6 - dow + 7) % 7) + 14 * HOUR,
+    minskMidnight(now, (7 - dow) % 7) + 14 * HOUR,
+    minskMidnight(now, ((6 - dow + 7) % 7) + 7) + 14 * HOUR
+  ];
+  return [...new Set(candidates)]
+    .filter((t) => t > now.getTime() + leadHours * HOUR && t >= g.windowStart.getTime() && t <= g.windowEnd.getTime())
+    .sort((a, b) => a - b)
+    .slice(0, max)
+    .map((t) => new Date(t));
+};
+
+// Окно группы заканчивается сегодня (кто-то хотел «сегодня») — тогда можно предлагать и сегодняшний вечер
+export const endsToday = (g: { windowEnd: Date }, now = new Date()) => g.windowEnd.getTime() < minskMidnight(now, 1);
+
+// Первое быстрое время в общем окне группы, не раньше чем через leadHours
 export const slotForGroup = (g: { windowStart: Date; windowEnd: Date }, leadHours = 1, now = new Date()) => {
   const slot = QUICK_SLOTS.find((s) => {
     const t = s.at(now);
@@ -167,6 +187,13 @@ export const groupSize = (groupId: unknown) => Wish.countDocuments({ groupId, st
 
 /* ---------- Создание и отмена ---------- */
 
+// После совпадения: модуль предложений проверяет, не пора ли сразу предложить время и место
+// (подключается из proposals.ts, чтобы не было круговых импортов)
+let afterMatch: ((groupId: unknown) => Promise<void>) | null = null;
+export const setAfterMatch = (fn: (groupId: unknown) => Promise<void>) => {
+  afterMatch = fn;
+};
+
 export async function createWish(
   telegramId: number,
   input: { kind?: unknown; sport?: unknown; timeWindow?: unknown; placeId?: unknown },
@@ -203,7 +230,11 @@ export async function createWish(
   }).lean();
   const sameCount = new Set(others.filter((o) => placeOk(o.placeId, placeId)).map((o) => o.telegramId)).size;
 
-  if (await tryMatch(wish)) sendPending().catch(() => {});
+  if (await tryMatch(wish)) {
+    const matched = await Wish.findById(wish._id);
+    if (matched?.groupId && afterMatch) await afterMatch(matched.groupId).catch(() => {});
+    sendPending().catch(() => {});
+  }
   return { wish: (await Wish.findById(wish._id)) || wish, sameCount };
 }
 

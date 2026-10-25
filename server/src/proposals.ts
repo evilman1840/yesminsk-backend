@@ -7,7 +7,7 @@ import { User } from './models/User';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { formatWhen } from './eventNotify';
 import { buildExtras } from './eventTemplates';
-import { sendWithButtons, Btn, phraseFor, slotForGroup, groupSize, buildPath } from './wishes';
+import { sendWithButtons, Btn, phraseFor, proposalSlots, endsToday, groupSize, buildPath, setAfterMatch } from './wishes';
 import { isAdmin, adminIds } from './news';
 import { PROPOSAL_FALLBACK_PLACES } from './data/wishProposals';
 import { PROPOSAL_TEXTS as T, WISH_TEXTS as W } from './texts';
@@ -21,7 +21,16 @@ const HOUR = 60 * 60 * 1000;
 const MINSK = 3 * HOUR;
 const PROPOSE_AT = () => Math.max(2, Number(process.env.PROPOSE_AT) || 3);
 const CONFIRM_MIN = () => Math.max(2, Number(process.env.CONFIRM_MIN) || 3);
-const LEAD_HOURS = 4; // предлагаем время не раньше чем через 4 часа
+// Не раньше чем через 20 часов (почти сутки), если только люди не хотели «сегодня» — тогда через 4 часа
+const leadHoursFor = (g: IWishGroup) => (endsToday(g) ? 4 : 20);
+
+// «Сб 31.10, 14:00» — коротко для кнопок
+const shortWhen = (d: Date) => {
+  const m = new Date(d.getTime() + MINSK);
+  const days = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${days[m.getUTCDay()]} ${pad(m.getUTCDate())}.${pad(m.getUTCMonth() + 1)}, ${pad(m.getUTCHours())}:${pad(m.getUTCMinutes())}`;
+};
 
 const isDaytime = (now = new Date()) => {
   const h = new Date(now.getTime() + MINSK).getUTCHours();
@@ -47,39 +56,44 @@ async function placeFor(group: IWishGroup) {
 export async function proposeForGroup(group: IWishGroup, force = false): Promise<boolean> {
   if (group.status !== 'open' || group.proposal) return false;
   if (!force && (await groupSize(group._id)) < PROPOSE_AT()) return false;
-  const slot = slotForGroup(group, LEAD_HOURS);
-  const place = slot ? await placeFor(group) : null;
-  if (!slot || !place) {
-    if (!force && slot && !place) {
+  const times = proposalSlots(group, leadHoursFor(group), 3);
+  if (!times.length) return false;
+  const place = await placeFor(group);
+  if (!place) {
+    // Нет подходящего места: один раз пишем автору, сами ничего не предлагаем
+    if (!group.noPlaceNotifiedAt) {
+      await WishGroup.updateOne({ _id: group._id }, { $set: { noPlaceNotifiedAt: new Date() } });
       const what = await phraseFor(group.kind, group.sport);
       for (const id of adminIds()) sendTelegramMessage(id, T.adminNoPlace(escapeHtml(what), await groupSize(group._id)), 'Открыть ДА! МИНСК', '?tab=places');
     }
     return false;
   }
-  await WishGroup.updateOne({ _id: group._id, proposal: { $exists: false } }, { $set: { proposal: { at: slot.date, ...place, yes: [], no: [], createdAt: new Date() } } });
+  await WishGroup.updateOne(
+    { _id: group._id, proposal: { $exists: false } },
+    { $set: { proposal: { options: times.map((at) => ({ at, yes: [] })), ...place, no: [], createdAt: new Date() } } }
+  );
   await Wish.updateMany({ groupId: group._id, status: 'matched' }, { $set: { pending: 'proposal' } });
   return true;
 }
 
-// Текст предложения
+// Текст предложения: место и варианты времени кнопками
 async function offerMessage(group: IWishGroup) {
   const p = group.proposal!;
   const what = await phraseFor(group.kind, group.sport);
   return {
-    html: T.offer(await groupSize(group._id), escapeHtml(what), formatWhen(p.at), escapeHtml(p.placeName), p.note),
+    html: T.offer(await groupSize(group._id), escapeHtml(what), escapeHtml(p.placeName), p.note, p.options.map((o) => formatWhen(o.at)), CONFIRM_MIN()),
     rows: [
-      [
-        { text: T.yesBtn, data: `prp:yes:${group._id}` },
-        { text: T.noBtn, data: `prp:no:${group._id}` }
-      ],
+      ...p.options.map((o, i) => [{ text: T.optionBtn(shortWhen(o.at)), data: `prp:yes:${group._id}:${i}` }]),
+      [{ text: T.noBtn, data: `prp:no:${group._id}` }],
       [{ text: T.whoBtn, path: `?wishGroup=${group._id}` }]
     ] as Btn[][]
   };
 }
 
 // Набралось «Пойду» — создаём официальную сходку от ДА! МИНСК
-async function createEventFromProposal(group: IWishGroup) {
+async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
   const p = group.proposal!;
+  const option = p.options[optionIndex];
   const tpl = await EventTemplate.findOne({ key: group.kind }).lean();
   const admin = (await User.findOne({ telegramId: { $in: adminIds() } }).lean()) as any;
   const subField = (tpl?.fields || []).find((f: any) => f.type === 'select' && f.required);
@@ -96,7 +110,7 @@ async function createEventFromProposal(group: IWishGroup) {
   const title = (hasAllTokens ? fill(tpl?.title || '') : tpl?.fallbackTitle) || (await phraseFor(group.kind, group.sport));
   const description = [fill(tpl?.description || ''), p.note].filter(Boolean).join('\n\n') || 'Сходка из «Хочу сходить»';
 
-  const yesUsers = await User.find({ telegramId: { $in: p.yes } }).lean();
+  const yesUsers = await User.find({ telegramId: { $in: option.yes } }).lean();
   const event = await Event.create({
     title: title.slice(0, 100),
     description: description.slice(0, 600),
@@ -111,7 +125,7 @@ async function createEventFromProposal(group: IWishGroup) {
     isPaid: Boolean(tpl?.paid),
     locationName: p.placeName,
     location: { type: 'Point', coordinates: [p.coords[1], p.coords[0]] },
-    dateTime: p.at,
+    dateTime: option.at,
     // Организатор — ДА! МИНСК (аккаунт автора), сам автор в участники не записывается
     creator: {
       telegramId: admin?.telegramId || adminIds()[0] || 0,
@@ -126,15 +140,15 @@ async function createEventFromProposal(group: IWishGroup) {
 
   const eventId = String(event._id);
   await WishGroup.updateOne({ _id: group._id }, { $set: { status: 'fulfilled', meetupId: eventId } });
-  await Wish.updateMany({ groupId: group._id, telegramId: { $in: p.yes } }, { $set: { status: 'fulfilled', meetupId: eventId, pending: null } });
-  // Кто не ответил — «Сходку собрали» (обычное сообщение из «Хочу сходить»)
-  await Wish.updateMany({ groupId: group._id, telegramId: { $nin: [...p.yes, ...p.no] }, status: 'matched' }, { $set: { meetupId: eventId, pending: 'built' } });
+  await Wish.updateMany({ groupId: group._id, telegramId: { $in: option.yes } }, { $set: { status: 'fulfilled', meetupId: eventId, pending: null } });
+  // Остальным (не ответили или выбрали другое время) — «Сходку собрали», кроме «Не смогу ни в один»
+  await Wish.updateMany({ groupId: group._id, telegramId: { $nin: [...option.yes, ...p.no] }, status: 'matched' }, { $set: { meetupId: eventId, pending: 'built' } });
 
   const when = formatWhen(event.dateTime);
-  for (const id of p.yes) {
+  for (const id of option.yes) {
     await sendWithButtons(id, T.createdForYes(escapeHtml(event.title), when, escapeHtml(event.locationName)), [[{ text: T.openEvent, path: `?event=${eventId}` }]]);
   }
-  for (const id of adminIds()) sendTelegramMessage(id, T.adminCreated(escapeHtml(event.title), when, p.yes.length), T.openEvent, `?event=${eventId}`);
+  for (const id of adminIds()) sendTelegramMessage(id, T.adminCreated(escapeHtml(event.title), when, option.yes.length), T.openEvent, `?event=${eventId}`);
 }
 
 /* ---------- Цикл: предложить, отправить днём ---------- */
@@ -159,7 +173,7 @@ export async function runProposals() {
       const g = await WishGroup.findById(w.groupId);
       w.pending = null;
       await w.save();
-      if (!g || g.status !== 'open' || !g.proposal || g.proposal.at.getTime() < Date.now()) continue;
+      if (!g || g.status !== 'open' || !g.proposal || !g.proposal.options.some((o) => o.at.getTime() > Date.now())) continue;
       const msg = await offerMessage(g);
       await sendWithButtons(w.telegramId, msg.html, msg.rows);
       await new Promise((r) => setTimeout(r, 60));
@@ -170,6 +184,11 @@ export async function runProposals() {
 }
 
 export function startProposalLoop() {
+  // Группа доросла до порога — сразу предложение, без промежуточного «соберите сами»
+  setAfterMatch(async (groupId) => {
+    const g = await WishGroup.findById(groupId);
+    if (g && (await proposeForGroup(g))) runProposals().catch(() => {});
+  });
   const run = () => runProposals().catch((err) => console.warn('⚠️ Предложения «Хочу сходить»:', err?.message || err));
   setTimeout(run, 4 * 60 * 1000);
   setInterval(run, 10 * 60 * 1000);
@@ -198,15 +217,20 @@ export async function handleProposalCallback(query: any): Promise<boolean> {
     return true;
   }
 
-  const [, action, id] = data.split(':');
+  const [, action, id, idxRaw] = data.split(':');
   const g = mongoose.Types.ObjectId.isValid(id) ? await WishGroup.findById(id) : null;
   const inGroup = g ? await Wish.exists({ groupId: g._id, telegramId: fromId }) : null;
   if (!g || !g.proposal || !inGroup) return answer(T.gone), true;
+  const idx = Number(idxRaw);
+  const option = action === 'yes' ? g.proposal.options[idx] : null;
+  if (action === 'yes' && !option) return answer(T.gone), true;
 
-  // Сходку уже собрали — «Пойду» записывает в неё
-  if (g.status === 'fulfilled' && g.meetupId && action === 'yes') {
+  // Сходку уже собрали: «Пойду» на то же время — записываем, на другое — подсказываем
+  if (g.status === 'fulfilled' && g.meetupId && option) {
     const ev = mongoose.Types.ObjectId.isValid(g.meetupId) ? await Event.findById(g.meetupId) : null;
-    if (ev && ev.isActive && !ev.participants.some((p) => p.telegramId === fromId)) {
+    if (!ev || !ev.isActive) return answer(T.gone), true;
+    if (ev.dateTime.getTime() !== new Date(option.at).getTime()) return answer(T.otherTime(formatWhen(ev.dateTime))), true;
+    if (!ev.participants.some((p) => p.telegramId === fromId)) {
       const u = await User.findOne({ telegramId: fromId }).lean();
       ev.participants.push({ telegramId: fromId, name: u?.firstName || query.from?.first_name || '', username: u?.username, avatarUrl: u?.avatarUrl || '', joinedAt: new Date() } as any);
       await ev.save();
@@ -217,20 +241,26 @@ export async function handleProposalCallback(query: any): Promise<boolean> {
   }
   if (g.status !== 'open') return answer(T.gone), true;
 
-  const field = action === 'yes' ? 'yes' : 'no';
-  const other = field === 'yes' ? 'no' : 'yes';
+  if (action === 'no') {
+    // «Не смогу ни в один»: снимаем все мои «Пойду»
+    const pulls = Object.fromEntries(g.proposal.options.map((_, i) => [`proposal.options.${i}.yes`, fromId]));
+    await WishGroup.updateOne({ _id: g._id, status: 'open' }, { $addToSet: { 'proposal.no': fromId }, $pull: pulls });
+    answer(T.noOk);
+    return true;
+  }
+
   const updated = await WishGroup.findOneAndUpdate(
     { _id: g._id, status: 'open' },
-    { $addToSet: { [`proposal.${field}`]: fromId }, $pull: { [`proposal.${other}`]: fromId } },
+    { $addToSet: { [`proposal.options.${idx}.yes`]: fromId }, $pull: { 'proposal.no': fromId } },
     { new: true }
   );
   if (!updated?.proposal) return answer(T.gone), true;
-  const yes = updated.proposal.yes.length;
-  answer(field === 'yes' ? T.yesOk(yes, CONFIRM_MIN()) : T.noOk);
-  if (field === 'yes' && yes >= CONFIRM_MIN()) {
+  const yes = updated.proposal.options[idx].yes.length;
+  answer(T.yesOk(yes, CONFIRM_MIN(), shortWhen(new Date(updated.proposal.options[idx].at))));
+  if (yes >= CONFIRM_MIN()) {
     // Защита от двойного создания: забираем группу атомарно
     const claimed = await WishGroup.findOneAndUpdate({ _id: g._id, status: 'open' }, { $set: { status: 'fulfilled' } }, { new: true });
-    if (claimed) await createEventFromProposal(claimed);
+    if (claimed) await createEventFromProposal(claimed, idx);
   }
   return true;
 }
@@ -249,7 +279,9 @@ export async function handleWishesCommand(message: any): Promise<boolean> {
   for (const g of groups) {
     const what = await phraseFor(g.kind, g.sport);
     const sample = await Wish.findOne({ groupId: g._id }).lean();
-    const state = g.proposal ? T.stateProposed(g.proposal.yes.length, g.proposal.no.length, formatWhen(g.proposal.at)) : T.stateNone;
+    const state = g.proposal
+      ? T.stateProposed(g.proposal.options.map((o) => `${shortWhen(new Date(o.at))} ✅ ${o.yes.length}`).join(', '), g.proposal.no.length)
+      : T.stateNone;
     lines.push(T.listLine(escapeHtml(what), W.when[sample?.timeWindow || 'week'], await groupSize(g._id), state));
     if (!g.proposal) rows.push([{ text: T.proposeBtn(what), data: `prpa:${g._id}` }]);
     rows.push([{ text: T.buildBtn(what), path: buildPath(g) }]);

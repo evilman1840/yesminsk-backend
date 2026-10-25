@@ -63,17 +63,17 @@ export interface IWishGroup extends Document {
   status: 'open' | 'fulfilled' | 'expired';
   meetupId?: string;
   reminderSentAt?: Date;
-  // Предложение бота: конкретное время и место, «Пойду» от трёх — сходка создаётся сама
+  // Предложение бота: место и 2–3 варианта времени; на какое время первым наберётся 3 «Пойду» — та сходка и создаётся
   proposal?: {
-    at: Date;
+    options: { at: Date; yes: number[] }[];
     placeId?: string;
     placeName: string;
     coords: [number, number]; // [lat, lng]
     note?: string;
-    yes: number[];
-    no: number[];
+    no: number[]; // «Не смогу» ни в один вариант
     createdAt: Date;
   };
+  noPlaceNotifiedAt?: Date; // автору уже написали, что нет подходящего места
   createdAt: Date;
 }
 
@@ -87,7 +87,8 @@ const WishGroupSchema = new Schema<IWishGroup>(
     status: { type: String, enum: ['open', 'fulfilled', 'expired'], default: 'open', index: true },
     meetupId: { type: String },
     reminderSentAt: { type: Date },
-    proposal: { type: Schema.Types.Mixed }
+    proposal: { type: Schema.Types.Mixed },
+    noPlaceNotifiedAt: { type: Date }
   },
   { timestamps: true }
 );

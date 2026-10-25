@@ -183,13 +183,14 @@ export const ACCOUNT_TEXTS = {
 
 // «Хочу сходить»: бот сам предлагает время и место, сходка собирается без организатора
 export const PROPOSAL_TEXTS = {
-  offer: (n: number, what: string, when: string, place: string, note?: string) =>
-    `🙋 Вас уже ${n}, кто хочет ${what}!\n\nПредлагаем: <b>${when}</b>, ${place}.${note ? `\n${note}` : ''}\n\nОрганизовывать ничего не нужно: как только наберётся 3 «Пойду», бот соберёт сходку от ДА! МИНСК и напишет всем. Пойдёшь?`,
-  yesBtn: '✅ Пойду',
-  noBtn: 'Не смогу',
+  offer: (n: number, what: string, place: string, note: string | undefined, times: string[], need: number) =>
+    `🙋 Вас уже ${n}, кто хочет ${what}!\n\nМесто: <b>${place}</b>.${note ? `\n${note}` : ''}\n\nКогда удобно?\n${times.map((t) => `• ${t}`).join('\n')}\n\nНажми все варианты, которые подходят. Организовывать ничего не нужно: как только на одно время наберётся ${need} «Пойду», бот соберёт сходку от ДА! МИНСК и напишет всем.`,
+  optionBtn: (when: string) => `✅ ${when}`,
+  noBtn: 'Не смогу ни в один',
   whoBtn: '👀 Кто ещё хочет',
-  yesOk: (count: number, need: number) => (count >= need ? '🎉 Сходка собрана!' : `Записали! Уже ${count} из ${need}, ждём ещё немного 🙌`),
-  noOk: 'Хорошо! Если будет другой вариант, бот напишет 🙂',
+  yesOk: (count: number, need: number, when: string) => (count >= need ? '🎉 Сходка собрана!' : `Записали на ${when}! Уже ${count} из ${need} 🙌`),
+  otherTime: (when: string) => `Сходку уже собрали на ${when}. Если подходит, запишись в приложении 🙂`,
+  noOk: 'Хорошо, понятно 🙂 Новое желание можно отметить в «Сходках».',
   lateJoin: '🎉 Ты в списке! Сходка уже собрана, ждём тебя.',
   gone: 'Это предложение уже неактуально 🙂',
   // Сходка собрана
@@ -205,7 +206,7 @@ export const PROPOSAL_TEXTS = {
   listEmpty: 'Открытых групп сейчас нет.',
   listLine: (what: string, when: string, n: number, state: string) => `• ${what} ${when}: ${n} чел. ${state}`,
   stateNone: '· предложения ещё не было',
-  stateProposed: (yes: number, no: number, at: string) => `· предложено ${at}: ✅ ${yes} · ❌ ${no}`,
+  stateProposed: (votes: string, no: number) => `· предложено: ${votes} · ❌ ${no}`,
   proposeBtn: (what: string) => `📣 Предложить время: ${what}`,
   buildBtn: (what: string) => `🛠 Собрать самому: ${what}`,
   proposedNow: 'Предложение отправлено группе 📣',
