@@ -84,7 +84,7 @@ export function setupNewsRoutes(app: Express) {
         items.map((n) => ({
           id: n._id.toString(),
           text: n.text,
-          photos: n.photos.map((fileId) => `/api/news/photo/${encodeURIComponent(fileId)}`),
+          photos: n.photos.map((fileId) => `/api/news/photo/${encodeURIComponent(fileId)}?v=2`),
           createdAt: n.createdAt
         }))
       );

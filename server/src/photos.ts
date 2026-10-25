@@ -46,9 +46,13 @@ async function storePhoto(buffer: Buffer, mime: string): Promise<string> {
 
 // Чистим список file_id из формы: строки, без повторов, не больше 5
 export const cleanPhotoIds = (v: unknown): string[] | undefined =>
-  Array.isArray(v) ? [...new Set(v.filter((id) => typeof id === 'string' && /^[\w-]{6,200}$/.test(id)))].slice(0, MAX_PHOTOS) : undefined;
+  Array.isArray(v)
+    ? [...new Set(v.filter((id) => typeof id === 'string').map((id) => id.split('?')[0]).filter((id) => /^[\w-]{6,200}$/.test(id)))].slice(0, MAX_PHOTOS)
+    : undefined;
 
-export const photoUrl = (id: string) => `/api/photos/${encodeURIComponent(id)}`;
+// ?v=2 — телефоны закешировали пустые ответы (баг 25.10), новая версия адреса заставит скачать заново
+export const PHOTO_URL_VERSION = 'v=2';
+export const photoUrl = (id: string) => `/api/photos/${encodeURIComponent(id)}?${PHOTO_URL_VERSION}`;
 
 export function setupPhotoRoutes(app: Express) {
   // Загрузить фото: { dataUrl } → { id }

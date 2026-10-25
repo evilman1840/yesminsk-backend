@@ -49,7 +49,10 @@ export async function shrinkImage(input: Buffer, maxSide: number): Promise<{ typ
 // Из базы (уже уменьшенное) или из Telegram с уменьшением и сохранением в базу
 async function loadPhoto(fileId: string) {
   const saved = await SmallPhoto.findOne({ fileId }).lean().catch(() => null);
-  if (saved?.data) return { type: saved.type || 'image/webp', body: Buffer.from(saved.data as any) };
+  // lean() отдаёт BSON Binary, а не Buffer: байты лежат в .buffer
+  const raw: any = saved?.data;
+  const bytes: Buffer | null = raw ? (Buffer.isBuffer(raw) ? raw : raw.buffer ? Buffer.from(raw.buffer) : null) : null;
+  if (bytes && bytes.length > 100) return { type: saved!.type || 'image/webp', body: bytes };
   const got = await limited(() => download(fileId));
   if (got) SmallPhoto.updateOne({ fileId }, { $set: { type: got.type, data: got.body } }, { upsert: true }).catch(() => {});
   return got;

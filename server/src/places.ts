@@ -1,4 +1,5 @@
 import { avatarFor } from './avatars';
+import { PHOTO_URL_VERSION } from './photos';
 import { Express, Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
@@ -20,7 +21,7 @@ const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false, savedByOthers = 
   category: p.category || '',
   description: p.description,
   moods: p.moods,
-  photos: p.photos.map((f) => `/api/places/photo/${encodeURIComponent(f)}`),
+  photos: p.photos.map((f) => `/api/places/photo/${encodeURIComponent(f)}?${PHOTO_URL_VERSION}`),
   address: p.address,
   coordinates: [p.location.coordinates[1], p.location.coordinates[0]], // [lat, lng]
   mishaTip: p.mishaTip,
