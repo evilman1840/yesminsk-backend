@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import sharp from 'sharp';
 
 /**
  * Отдаёт фото, хранящееся в Telegram (по file_id), через наш сервер — чтобы не раскрывать токен бота.
@@ -9,6 +10,17 @@ const cache = new Map<string, { type: string; body: Buffer }>();
 let cacheBytes = 0;
 // Одно фото, которое прямо сейчас качаем из Telegram, — не качаем второй раз параллельно
 const inflight = new Map<string, Promise<{ type: string; body: Buffer } | null>>();
+
+// Уменьшить фото: не больше maxSide по длинной стороне, WebP. Трафик и загрузка — в 3-5 раз меньше.
+// Не получилось — null, отдадим как есть
+export async function shrinkImage(input: Buffer, maxSide: number): Promise<{ type: string; body: Buffer } | null> {
+  try {
+    const body = await sharp(input).rotate().resize({ width: maxSide, height: maxSide, fit: 'inside', withoutEnlargement: true }).webp({ quality: 72 }).toBuffer();
+    return body.length < input.length ? { type: 'image/webp', body } : null;
+  } catch {
+    return null;
+  }
+}
 
 // Запрос к Telegram: не дольше 8 секунд, при обрыве — ещё одна попытка
 async function tgFetch(url: string): Promise<globalThis.Response> {
@@ -31,7 +43,7 @@ async function download(fileId: string) {
   const t2 = Date.now();
   // Медленно — пишем, какой шаг тормозит
   if (t2 - t0 > 1500) console.log(`🐢 фото из Telegram: getFile ${t1 - t0} мс, скачивание ${t2 - t1} мс, ${Math.round(body.length / 1024)} КБ`);
-  return { type: file.headers.get('content-type') || 'image/jpeg', body };
+  return (await shrinkImage(body, 1000)) || { type: file.headers.get('content-type') || 'image/jpeg', body };
 }
 
 export async function sendTelegramPhoto(res: Response, fileId: string) {

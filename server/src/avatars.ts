@@ -3,6 +3,7 @@ import mongoose, { Schema, model } from 'mongoose';
 import { Express, Request, Response } from 'express';
 import { User } from './models/User';
 import { Event } from './models/Event';
+import { shrinkImage } from './utils/telegramFile';
 
 /**
  * Фото профиля (data:image/…, ~20-100 КБ) живут в отдельной коллекции avatars.
@@ -75,19 +76,34 @@ export async function moveAvatarsOut() {
   }
 }
 
+// Уменьшенные фото профиля в памяти (по версии): одну аватарку видят многие
+const small = new Map<string, { type: string; body: Buffer }>();
+
 export function setupAvatarRoutes(app: Express) {
   app.get('/api/users/:telegramId/avatar', async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.telegramId);
       if (!Number.isFinite(id)) return res.sendStatus(404);
+      const key = `${id}:${req.query.v || ''}`;
+      const hit = small.get(key);
+      if (hit) {
+        res.set('Content-Type', hit.type);
+        res.set('Cache-Control', 'public, max-age=2592000, immutable');
+        return res.send(hit.body);
+      }
       const stored = await Avatar.findOne({ telegramId: id }, { data: 1 }).lean();
       // До переноса фото ещё могло лежать в анкете
       const data = stored?.data || (await User.findOne({ telegramId: id, avatarUrl: /^data:/ }, { avatarUrl: 1 }).lean())?.avatarUrl;
       const m = data?.match(/^data:(image\/[\w.+-]+);base64,(.+)$/s);
       if (!m) return res.sendStatus(404);
-      res.set('Content-Type', m[1]);
+      const original = Buffer.from(m[2], 'base64');
+      // Аватарка бывает на весь экран анкеты: 900 px хватает и для ретины
+      const item = (await shrinkImage(original, 900)) || { type: m[1], body: original };
+      if (small.size > 3000) small.delete(small.keys().next().value!);
+      small.set(key, item);
+      res.set('Content-Type', item.type);
       res.set('Cache-Control', 'public, max-age=2592000, immutable');
-      res.send(Buffer.from(m[2], 'base64'));
+      res.send(item.body);
     } catch {
       res.sendStatus(500);
     }
