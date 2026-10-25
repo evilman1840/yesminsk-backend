@@ -11,6 +11,8 @@ import { NudgeLog } from './nudges';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
 import { formatWhen } from './eventNotify';
 import { ACCOUNT_TEXTS as T } from './texts';
+import { deleteAvatar } from './avatars';
+import { PlaceSuggestion } from './placeSuggestions';
 
 /**
  * Удалить себя из приложения: анкета, фото, желания, реакции, советы и жалобы удаляются;
@@ -46,7 +48,9 @@ export function setupAccountRoutes(app: Express) {
         PlaceTip.deleteMany({ telegramId: myId }),
         Report.deleteMany({ $or: [{ fromTelegramId: myId }, { targetType: 'user', targetId: String(myId) }] }),
         MeetupFormEvent.deleteMany({ telegramId: myId }),
-        NudgeLog.deleteMany({ telegramId: myId })
+        NudgeLog.deleteMany({ telegramId: myId }),
+        deleteAvatar(myId),
+        PlaceSuggestion.deleteMany({ telegramId: myId, status: 'pending' })
       ]);
       await User.deleteOne({ telegramId: myId });
       console.log(`🗑 Аккаунт удалён по просьбе пользователя: ${myId}`);

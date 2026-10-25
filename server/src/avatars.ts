@@ -42,6 +42,9 @@ export async function storeAvatar(telegramId: number, data: string): Promise<str
   return `avatar:${v}`;
 }
 
+// Удаление аккаунта: фото профиля тоже стираем
+export const deleteAvatar = (telegramId: number) => Avatar.deleteOne({ telegramId });
+
 // Один раз: фото из анкет и копии в сходках → коллекция avatars и метки
 export async function moveAvatarsOut() {
   const KEY = 'avatars-collection-2026-10-25';

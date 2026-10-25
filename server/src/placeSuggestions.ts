@@ -28,7 +28,7 @@ interface IPlaceSuggestion {
   createdAt: Date;
 }
 
-const PlaceSuggestion = model<IPlaceSuggestion>(
+export const PlaceSuggestion = model<IPlaceSuggestion>(
   'PlaceSuggestion',
   new Schema<IPlaceSuggestion>({
     telegramId: { type: Number, required: true },

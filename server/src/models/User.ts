@@ -50,6 +50,8 @@ export interface IUser extends Document {
   areaName?: string;
   isTourist: boolean;
   hasAgreedToRules: boolean;
+  legalVersion?: string;    // принятая редакция Пользовательского соглашения и Политики
+  legalAcceptedAt?: Date;   // когда принял(а) — доказательство согласия на обработку данных
   isProfileActive: boolean;
   blockedUsers: number[]; // Список telegramId заблокированных пользователей
   availableUntil?: Date;  // «⚡ Есть время» — до этого времени
@@ -122,6 +124,8 @@ const UserSchema = new Schema<IUser>(
     areaName: { type: String, default: 'Минск' },
     isTourist: { type: Boolean, default: false },
     hasAgreedToRules: { type: Boolean, default: false },
+    legalVersion: { type: String },
+    legalAcceptedAt: { type: Date },
     isProfileActive: { type: Boolean, default: true },
     blockedUsers: { type: [Number], default: [] },
     availableUntil: { type: Date },

@@ -238,13 +238,27 @@ app.post('/api/users/bot-access', telegramAuthMiddleware as any, async (req: Aut
   }
 });
 
+// Принять новую редакцию Соглашения и Политики (зарегистрированные раньше)
+app.post('/api/users/accept-legal', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const version = String(req.body?.version || '').slice(0, 20);
+    if (!version) return res.status(400).json({ error: 'Нет версии' });
+    await User.updateOne({ telegramId: req.telegramUser!.id }, { $set: { legalVersion: version, legalAcceptedAt: new Date() } });
+    res.sendStatus(204);
+  } catch (err: any) {
+    console.warn('⚠️ /api/users/accept-legal:', err?.message || err);
+    res.status(500).json({ error: 'Не получилось сохранить' });
+  }
+});
+
 // Онбординг: согласие с правилами
 app.post('/api/users/agree-rules', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
+    const legalVersion = String(req.body?.legalVersion || '').slice(0, 20);
     const user = await User.findOneAndUpdate(
       { telegramId: tgUser.id },
-      { hasAgreedToRules: true },
+      { hasAgreedToRules: true, ...(legalVersion ? { legalVersion, legalAcceptedAt: new Date() } : {}) },
       { new: true }
     );
     // Пришёл по приглашению друга — благодарим того, кто позвал
