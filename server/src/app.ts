@@ -1,4 +1,8 @@
+import dns from 'dns';
 import express, { Request, Response } from 'express';
+
+// Сначала IPv4: у Render нет IPv6, и запросы к Telegram иногда ждут несколько секунд, пока IPv6 не отвалится
+dns.setDefaultResultOrder('ipv4first');
 import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';

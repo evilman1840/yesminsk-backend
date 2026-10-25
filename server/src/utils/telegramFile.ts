@@ -10,13 +10,28 @@ let cacheBytes = 0;
 // Одно фото, которое прямо сейчас качаем из Telegram, — не качаем второй раз параллельно
 const inflight = new Map<string, Promise<{ type: string; body: Buffer } | null>>();
 
+// Запрос к Telegram: не дольше 8 секунд, при обрыве — ещё одна попытка
+async function tgFetch(url: string): Promise<globalThis.Response> {
+  try {
+    return await fetch(url, { signal: AbortSignal.timeout(8000) });
+  } catch {
+    return fetch(url, { signal: AbortSignal.timeout(8000) });
+  }
+}
+
 async function download(fileId: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const info: any = await (await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`)).json();
+  const t0 = Date.now();
+  const info: any = await (await tgFetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`)).json();
   if (!info.ok) return null;
-  const file = await fetch(`https://api.telegram.org/file/bot${token}/${info.result.file_path}`);
+  const t1 = Date.now();
+  const file = await tgFetch(`https://api.telegram.org/file/bot${token}/${info.result.file_path}`);
   if (!file.ok) return null;
-  return { type: file.headers.get('content-type') || 'image/jpeg', body: Buffer.from(await file.arrayBuffer()) };
+  const body = Buffer.from(await file.arrayBuffer());
+  const t2 = Date.now();
+  // Медленно — пишем, какой шаг тормозит
+  if (t2 - t0 > 1500) console.log(`🐢 фото из Telegram: getFile ${t1 - t0} мс, скачивание ${t2 - t1} мс, ${Math.round(body.length / 1024)} КБ`);
+  return { type: file.headers.get('content-type') || 'image/jpeg', body };
 }
 
 export async function sendTelegramPhoto(res: Response, fileId: string) {
