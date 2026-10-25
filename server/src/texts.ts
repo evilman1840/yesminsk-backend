@@ -230,12 +230,27 @@ export const SUGGEST_TEXTS = {
   notFound: 'Не получилось найти это место в Минске. Пришли ссылку из Яндекс Карт или напиши адрес точнее.',
   thanks: 'Спасибо! Место на проверке, скоро добавим его в «Места» 💛',
   // Автору проекта
-  adminCard: (name: string, address: string, link: string, who: string, context: string) =>
-    `📍 <b>Предлагают место</b>\n\n<b>${name}</b>${address ? `\n${address}` : ''}${link ? `\n${link}` : ''}\n\nОт: ${who}${context ? `\n${context}` : ''}`,
+  adminCard: (name: string, type: string, address: string, desc: string, link: string, who: string, context: string) =>
+    `📍 <b>Предлагают место</b>\n\n<b>${name}</b>\n🏷 ${type || '<i>тип не выбран</i>'}${address ? `\n📍 ${address}` : ''}${desc ? `\n📝 ${desc}` : ''}${link ? `\n${link}` : ''}\n\nОт: ${who}${context ? `\n${context}` : ''}\n\nМожно поправить кнопками ниже, потом «Добавить».`,
+  placeCard: (name: string, type: string, address: string, desc: string, link: string) =>
+    `✏️ <b>${name}</b>\n🏷 ${type || '<i>тип не выбран</i>'}${address ? `\n📍 ${address}` : ''}${desc ? `\n📝 ${desc}` : ''}${link ? `\n${link}` : ''}\n\nЧто поправить?`,
+  editName: '✏️ Название',
+  editCat: '🏷 Тип',
+  editAddr: '📍 Адрес',
+  editDesc: '📝 Описание',
+  editAskName: (name: string) => `Сейчас: «${name}». Пришли новое название (или /cancel)`,
+  editAskAddr: 'Пришли адрес или ссылку из Яндекс Карт (или /cancel)',
+  editAskDesc: 'Пришли описание одной фразой. Убрать описание: «-» (или /cancel)',
+  editAskCat: (name: string) => `Какой тип у «${name}»?`,
+  editAddrNotFound: 'Не нашёл такой адрес в Минске. Пришли улицу и дом или ссылку из Яндекс Карт (или /cancel)',
+  editCancelled: 'Ок, ничего не меняем.',
+  editDone: 'Это предложение уже разобрано. Поправить место: /placeedit номер',
+  editUsage: 'Так: <code>/placeedit номер</code> (из /places) или <code>/placeedit Зерно</code>',
+  editNoPlace: 'Нет такого места. Список: /places',
   fromGroup: (what: string) => `Для группы «Хочу сходить»: ${what}`,
   approveBtn: '✅ Добавить в Места',
   rejectBtn: '❌ Нет',
-  approved: (name: string, type: string) => `✅ «${name}» добавлено в «Места»${type ? ` с типом «${type}»` : ''}. Поправить: /places`,
+  approved: (name: string, type: string) => `✅ «${name}» добавлено в «Места»${type ? ` с типом «${type}»` : ''}. Поправить можно кнопками ниже или потом: /placeedit`,
   rejected: 'Не добавляем, ок.',
   authorApproved: (name: string) => `💛 Твоё место «${name}» добавили в «Места». Спасибо, что делаешь ДА! МИНСК лучше!`,
   // Группа «Хочу сходить» без места

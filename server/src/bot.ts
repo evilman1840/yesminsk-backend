@@ -3,7 +3,7 @@ import { handleTemplatesCommand, handleTemplatesCallback } from './eventTemplate
 import { handleWishCallback, handleWishStart } from './wishes';
 import { handleNudgeCallback, handleNudgeCommand } from './nudges';
 import { handleProposalCallback, handleWishesCommand, handleGroupPlaceReply } from './proposals';
-import { handleSuggestionCallback } from './placeSuggestions';
+import { handleSuggestionCallback, handleSuggestionEditMessage } from './placeSuggestions';
 import { Express, Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
@@ -93,6 +93,7 @@ async function handleMessage(message: any, chatId: number) {
   // Таблицы (CSV-файл) и шаблоны (/template) — раньше мест, чтобы файл не попал в черновик места
   if (await handleCsvMessage(message)) return;
   // Добавление мест (/place …) — раньше новостей, чтобы фото места не попали в новости
+  if (await handleSuggestionEditMessage(message)) return;
   if (await handlePlaceMessage(message)) return;
   // Новости проекта (/news, /delnews, /myid) — в том числе фото и альбомы
   if (await handleNewsMessage(message)) return;

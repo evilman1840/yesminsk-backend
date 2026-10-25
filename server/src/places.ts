@@ -565,7 +565,7 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
     say(
       chatId,
       places.length
-        ? `📍 <b>Места (${places.length})</b>\n\n${places.map((p, i) => `${i + 1}. ${escapeHtml(p.name)}${p.category ? ` · ${escapeHtml(p.category)}` : ''} · 🖼 ${p.photos.length}`).join('\n')}\n\nФото: <code>/placephoto номер</code> · удалить место: <code>/delplace номер</code>`
+        ? `📍 <b>Места (${places.length})</b>\n\n${places.map((p, i) => `${i + 1}. ${escapeHtml(p.name)}${p.category ? ` · ${escapeHtml(p.category)}` : ''} · 🖼 ${p.photos.length}`).join('\n')}\n\nПоправить: <code>/placeedit номер</code> · фото: <code>/placephoto номер</code> · удалить: <code>/delplace номер</code>`
         : 'Мест пока нет. Добавь первое: /place'
     );
     return true;
