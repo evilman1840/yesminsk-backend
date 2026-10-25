@@ -180,3 +180,34 @@ export const ACCOUNT_TEXTS = {
     `😔 <b>Сходка отменена</b>\n\n«${title}», ${when}. Организатор удалил аккаунт.\n\nЗагляни в приложение, там есть другие встречи.`,
   findOther: 'Найти другую сходку'
 };
+
+// «Хочу сходить»: бот сам предлагает время и место, сходка собирается без организатора
+export const PROPOSAL_TEXTS = {
+  offer: (n: number, what: string, when: string, place: string, note?: string) =>
+    `🙋 Вас уже ${n}, кто хочет ${what}!\n\nПредлагаем: <b>${when}</b>, ${place}.${note ? `\n${note}` : ''}\n\nОрганизовывать ничего не нужно: как только наберётся 3 «Пойду», бот соберёт сходку от ДА! МИНСК и напишет всем. Пойдёшь?`,
+  yesBtn: '✅ Пойду',
+  noBtn: 'Не смогу',
+  whoBtn: '👀 Кто ещё хочет',
+  yesOk: (count: number, need: number) => (count >= need ? '🎉 Сходка собрана!' : `Записали! Уже ${count} из ${need}, ждём ещё немного 🙌`),
+  noOk: 'Хорошо! Если будет другой вариант, бот напишет 🙂',
+  lateJoin: '🎉 Ты в списке! Сходка уже собрана, ждём тебя.',
+  gone: 'Это предложение уже неактуально 🙂',
+  // Сходка собрана
+  createdForYes: (title: string, when: string, where: string) =>
+    `🎉 <b>Сходка собрана!</b>\n\n${title}\n🕒 ${when}\n📍 ${where}\n\nТы в списке участников. Если планы поменяются, отмени участие в приложении.`,
+  openEvent: 'Открыть сходку',
+  adminCreated: (title: string, when: string, n: number) =>
+    `⭐ Бот собрал официальную сходку из «Хочу сходить»: <b>${title}</b>, ${when}. Записались: ${n}.\n\nОна от ДА! МИНСК: загляни, если сможешь 🙂`,
+  adminNoPlace: (what: string, n: number) =>
+    `🙋 ${n} человек хотят ${what}, но в «Местах» нет подходящего места, и предложить время с местом бот не может. Добавь место нужного типа или собери сходку сам: /wishes`,
+  // /wishes — для автора
+  listTitle: '🙋 <b>Группы «Хочу сходить»</b>',
+  listEmpty: 'Открытых групп сейчас нет.',
+  listLine: (what: string, when: string, n: number, state: string) => `• ${what} ${when}: ${n} чел. ${state}`,
+  stateNone: '· предложения ещё не было',
+  stateProposed: (yes: number, no: number, at: string) => `· предложено ${at}: ✅ ${yes} · ❌ ${no}`,
+  proposeBtn: (what: string) => `📣 Предложить время: ${what}`,
+  buildBtn: (what: string) => `🛠 Собрать самому: ${what}`,
+  proposedNow: 'Предложение отправлено группе 📣',
+  cantPropose: 'Не получилось предложить: нет подходящего времени в окне группы или места для этого вида.'
+};

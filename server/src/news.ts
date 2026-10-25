@@ -14,7 +14,7 @@ import { sendTelegramPhoto } from './utils/telegramFile';
  * Любой человек может узнать свой ID командой /myid
  */
 
-const adminIds = () =>
+export const adminIds = () =>
   (process.env.ADMIN_TELEGRAM_IDS || '')
     .split(',')
     .map((s) => Number(s.trim()))

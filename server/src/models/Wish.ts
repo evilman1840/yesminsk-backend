@@ -11,7 +11,7 @@ export const WISH_STATUSES = ['active', 'matched', 'fulfilled', 'expired', 'canc
 export type WishStatus = (typeof WISH_STATUSES)[number];
 
 // Что ждёт отправки ботом (днём, с учётом «не больше одного сообщения о совпадении в день»)
-export type WishPending = 'match' | 'built' | null;
+export type WishPending = 'match' | 'built' | 'proposal' | null;
 
 export interface IWish extends Document {
   telegramId: number;
@@ -45,7 +45,7 @@ const WishSchema = new Schema<IWish>(
     groupId: { type: Schema.Types.ObjectId, index: true },
     matchedAt: { type: Date },
     meetupId: { type: String },
-    pending: { type: String, enum: ['match', 'built', null], default: null },
+    pending: { type: String, enum: ['match', 'built', 'proposal', null], default: null },
     notifiedAt: { type: Date }
   },
   { timestamps: true }
@@ -63,6 +63,17 @@ export interface IWishGroup extends Document {
   status: 'open' | 'fulfilled' | 'expired';
   meetupId?: string;
   reminderSentAt?: Date;
+  // Предложение бота: конкретное время и место, «Пойду» от трёх — сходка создаётся сама
+  proposal?: {
+    at: Date;
+    placeId?: string;
+    placeName: string;
+    coords: [number, number]; // [lat, lng]
+    note?: string;
+    yes: number[];
+    no: number[];
+    createdAt: Date;
+  };
   createdAt: Date;
 }
 
@@ -75,7 +86,8 @@ const WishGroupSchema = new Schema<IWishGroup>(
     windowEnd: { type: Date, required: true },
     status: { type: String, enum: ['open', 'fulfilled', 'expired'], default: 'open', index: true },
     meetupId: { type: String },
-    reminderSentAt: { type: Date }
+    reminderSentAt: { type: Date },
+    proposal: { type: Schema.Types.Mixed }
   },
   { timestamps: true }
 );

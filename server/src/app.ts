@@ -23,6 +23,7 @@ import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish } from './wishes';
 import { Wish, WishGroup } from './models/Wish';
 import { startNudgeLoop } from './nudges';
+import { startProposalLoop } from './proposals';
 import { setupAccountRoutes } from './account';
 import { runPlaceImports } from './placesImport';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
@@ -1355,4 +1356,5 @@ app.listen(PORT, () => {
   startFeedbackLoop();
   startWishLoop();
   startNudgeLoop();
+  startProposalLoop();
 });

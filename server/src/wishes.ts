@@ -56,11 +56,16 @@ const QUICK_SLOTS: { id: 'today' | 'tomorrow' | 'saturday' | 'sunday'; at: (now:
   { id: 'saturday', at: (now) => minskMidnight(now, (6 - minskDow(now) + 7) % 7) + 14 * HOUR },
   { id: 'sunday', at: (now) => minskMidnight(now, (7 - minskDow(now)) % 7) + 14 * HOUR }
 ];
-const whenForGroup = (g: { windowStart: Date; windowEnd: Date }, now = new Date()) =>
-  QUICK_SLOTS.find((s) => {
+const whenForGroup = (g: { windowStart: Date; windowEnd: Date }, now = new Date()) => slotForGroup(g, 1, now)?.id;
+
+// Первое быстрое время в общем окне группы, не раньше чем через leadHours: для предложения бота
+export const slotForGroup = (g: { windowStart: Date; windowEnd: Date }, leadHours = 1, now = new Date()) => {
+  const slot = QUICK_SLOTS.find((s) => {
     const t = s.at(now);
-    return t > now.getTime() + HOUR && t >= g.windowStart.getTime() && t <= g.windowEnd.getTime();
-  })?.id;
+    return t > now.getTime() + leadHours * HOUR && t >= g.windowStart.getTime() && t <= g.windowEnd.getTime();
+  });
+  return slot ? { id: slot.id, date: new Date(slot.at(now)) } : null;
+};
 
 /* ---------- Виды желаний = шаблоны с фразой ---------- */
 
@@ -85,7 +90,7 @@ const phraseOf = (k: WishKind, sport?: string) => {
   return phrase;
 };
 
-async function phraseFor(kind: string, sport?: string) {
+export async function phraseFor(kind: string, sport?: string) {
   const k = await loadKind(kind);
   return k ? phraseOf(k, sport) : kind;
 }
@@ -158,7 +163,7 @@ async function joinGroup(g: IWishGroup, members: IWish[]) {
   );
 }
 
-const groupSize = (groupId: unknown) => Wish.countDocuments({ groupId, status: { $in: ['matched', 'fulfilled'] } });
+export const groupSize = (groupId: unknown) => Wish.countDocuments({ groupId, status: { $in: ['matched', 'fulfilled'] } });
 
 /* ---------- Создание и отмена ---------- */
 
@@ -231,7 +236,7 @@ export async function sendWithButtons(chatId: number, html: string, rows: Btn[][
 }
 
 // «Соберу я»: форма с шаблоном, временем, местом и видом спорта; wish — чтобы после публикации написать остальным
-const buildPath = (g: IWishGroup) => {
+export const buildPath = (g: IWishGroup) => {
   const base = meetupCreatePath({ template: g.kind, when: whenForGroup(g), placeId: g.placeId });
   return `${base}&wish=${g._id}${g.sport ? `&opt=${encodeURIComponent(g.sport)}` : ''}`;
 };
@@ -260,11 +265,17 @@ export async function sendPending() {
       const items = [];
       for (const w of wishes) {
         const g = await WishGroup.findById(w.groupId);
+        if (g?.status === 'open' && g.proposal) {
+          // У группы уже есть предложение бота — пришлём его, а не «соберите сами»
+          await Wish.updateOne({ _id: w._id }, { $set: { pending: 'proposal' } });
+          w.pending = 'proposal';
+          continue;
+        }
         if (!g || g.status !== 'open') continue;
         items.push({ w, g, n: await groupSize(g._id), what: await phraseFor(w.kind, w.sport), when: T.when[w.timeWindow] });
       }
       if (!items.length) {
-        await Wish.updateMany({ _id: { $in: wishes.map((w) => w._id) } }, { $set: { pending: null } });
+        await Wish.updateMany({ _id: { $in: wishes.filter((w) => w.pending === 'match').map((w) => w._id) } }, { $set: { pending: null } });
         continue;
       }
       const html =
@@ -279,7 +290,7 @@ export async function sendPending() {
         [{ text: T.cancelBtn, data: `wsh:cancel:${i.w._id}` }]
       ]);
       await sendWithButtons(telegramId, html, rows);
-      await Wish.updateMany({ _id: { $in: wishes.map((w) => w._id) } }, { $set: { pending: null, notifiedAt: now } });
+      await Wish.updateMany({ _id: { $in: wishes.filter((w) => w.pending === 'match').map((w) => w._id) } }, { $set: { pending: null, notifiedAt: now } });
     }
 
     // 2. «Сходку собрали»
@@ -295,7 +306,7 @@ export async function sendPending() {
     }
 
     // 3. Через сутки никто не собрал, а время ещё есть — одно напоминание
-    const stale = await WishGroup.find({ status: 'open', reminderSentAt: { $exists: false }, createdAt: { $lte: new Date(now.getTime() - REMIND_AFTER) }, windowEnd: { $gt: now } });
+    const stale = await WishGroup.find({ status: 'open', proposal: { $exists: false }, reminderSentAt: { $exists: false }, createdAt: { $lte: new Date(now.getTime() - REMIND_AFTER) }, windowEnd: { $gt: now } });
     for (const g of stale) {
       g.reminderSentAt = now;
       await g.save();
