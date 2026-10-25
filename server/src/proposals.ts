@@ -1,3 +1,4 @@
+import { calculateDistanceMeters } from './utils/geoUtils';
 import { Express, Response } from 'express';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import mongoose from 'mongoose';
@@ -40,6 +41,20 @@ const isDaytime = (now = new Date()) => {
   return h >= 10 && h < 22;
 };
 
+// Место, до которого всем участникам группы в сумме ближе всего (точки людей — точные, наружу не уходят).
+// Одного человека с окраины это не перетянет. Нет точек — место с лучшим рейтингом
+async function closestToGroup<T extends { location: { coordinates: number[] }; rating?: number | null }>(group: IWishGroup, places: T[]): Promise<T | null> {
+  if (!places.length) return null;
+  const ids = (await Wish.find({ groupId: group._id, status: { $in: ['matched', 'fulfilled'] } }, { telegramId: 1 }).lean()).map((w) => w.telegramId);
+  const users = await User.find({ telegramId: { $in: ids } }, { locationExact: 1, locationFuzzy: 1 }).lean();
+  const points = users
+    .map((u) => u.locationExact?.coordinates || u.locationFuzzy?.coordinates)
+    .filter((c): c is [number, number] => Array.isArray(c) && c.length === 2);
+  if (!points.length) return [...places].sort((x, y) => (y.rating || 0) - (x.rating || 0))[0];
+  const total = (pl: T) => points.reduce((sum, [lng, lat]) => sum + calculateDistanceMeters(lat, lng, pl.location.coordinates[1], pl.location.coordinates[0]), 0);
+  return places.reduce((best, pl) => (total(pl) < total(best) ? pl : best));
+}
+
 // Где встречаться: место группы → место из «Мест» подходящего типа → точка встречи для этого вида
 async function placeFor(group: IWishGroup) {
   if (group.placeId && mongoose.Types.ObjectId.isValid(group.placeId)) {
@@ -48,7 +63,8 @@ async function placeFor(group: IWishGroup) {
   }
   const tpl = await EventTemplate.findOne({ key: group.kind }).lean();
   if (tpl?.placeTypes?.length) {
-    const p = await Place.findOne({ category: { $in: tpl.placeTypes } }).sort({ rating: -1 }).lean();
+    const places = await Place.find({ category: { $in: tpl.placeTypes } }).lean();
+    const p = await closestToGroup(group, places);
     if (p) return { placeId: String(p._id), placeName: p.name, coords: [p.location.coordinates[1], p.location.coordinates[0]] as [number, number] };
   }
   const fb = PROPOSAL_FALLBACK_PLACES[group.kind];
