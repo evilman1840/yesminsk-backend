@@ -34,6 +34,7 @@ dotenv.config();
 
 import compression from 'compression';
 import { avatarFor, setupAvatarRoutes, storeAvatar, isOwnAvatarLink, moveAvatarsOut } from './avatars';
+import { legalVisibleQuery, removeNonConsented } from './legal';
 
 const app = express();
 app.use(cors());
@@ -73,6 +74,7 @@ connectDb()
     widenFuzzyLocations();
     moveAvatarsOut();
     backfillPlaceAuthors();
+    removeNonConsented();
     seedEventTemplates();
   })
   .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));
@@ -161,41 +163,48 @@ const getParamId = (id: unknown): string => {
 // ==========================================
 // 1. ПРОФИЛЬ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ («Я»)
 // ==========================================
+// Новая анкета из данных Telegram (по умолчанию — центр Минска, метка со смещением)
+function newUserFields(tgUser: any) {
+  const defaultLng = 27.5615;
+  const defaultLat = 53.9045;
+  return {
+    telegramId: tgUser.id,
+    firstName: tgUser.first_name,
+    lastName: tgUser.last_name,
+    username: tgUser.username,
+    avatarUrl: tgUser.photo_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400',
+    goal: 'walk',
+    age: 25,
+    gender: 'not_specified',
+    preferredGender: 'all',
+    preferredAgeRange: { min: 18, max: 99 },
+    hasAgreedToRules: false,
+    locationExact: { type: 'Point', coordinates: [defaultLng, defaultLat] },
+    locationFuzzy: { type: 'Point', coordinates: obfuscateCoordinates(defaultLng, defaultLat) },
+    areaName: 'Немига / Центр',
+    isTourist: false,
+    blockedUsers: [],
+    ...(tgUser.allows_write_to_pm ? { canMessage: true } : {})
+  };
+}
+
 app.get('/api/users/me', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
     let user = await User.findOne({ telegramId: tgUser.id });
 
+    // До согласия с Соглашением и Политикой ничего не сохраняем: отдаём черновик в памяти,
+    // запись в базе появится после «Выходим гулять!» (agree-rules)
+    const isDraft = !user;
     if (!user) {
-      const defaultLng = 27.5615;
-      const defaultLat = 53.9045;
-      const fuzzyCoords = obfuscateCoordinates(defaultLng, defaultLat);
-
-      user = await User.create({
-        telegramId: tgUser.id,
-        firstName: tgUser.first_name,
-        lastName: tgUser.last_name,
-        username: tgUser.username,
-        avatarUrl: tgUser.photo_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400',
-        goal: 'walk',
-        age: 25,
-        gender: 'not_specified',
-        preferredGender: 'all',
-        preferredAgeRange: { min: 18, max: 99 },
-        hasAgreedToRules: false,
-        locationExact: { type: 'Point', coordinates: [defaultLng, defaultLat] },
-        locationFuzzy: { type: 'Point', coordinates: fuzzyCoords },
-        areaName: 'Немига / Центр',
-        isTourist: false,
-        blockedUsers: []
-      });
+      user = new User(newUserFields(tgUser));
     } else {
       // Без save(): старая анкета с полем, которое не проходит проверку схемы, не должна ронять вход
       user.lastActiveAt = new Date();
       await User.updateOne({ _id: user._id }, { $set: { lastActiveAt: user.lastActiveAt } });
     }
     // Telegram сообщает, разрешил ли человек боту писать
-    if (tgUser.allows_write_to_pm && user.canMessage !== true) {
+    if (!isDraft && tgUser.allows_write_to_pm && user.canMessage !== true) {
       user.canMessage = true;
       user.botBlockedAt = undefined;
       await User.updateOne({ _id: user._id }, { $set: { canMessage: true }, $unset: { botBlockedAt: 1 } });
@@ -256,6 +265,8 @@ app.post('/api/users/agree-rules', telegramAuthMiddleware as any, async (req: Au
   try {
     const tgUser = req.telegramUser!;
     const legalVersion = String(req.body?.legalVersion || '').slice(0, 20);
+    // Запись создаём только сейчас, после согласия
+    if (!(await User.exists({ telegramId: tgUser.id }))) await User.create(newUserFields(tgUser));
     const user = await User.findOneAndUpdate(
       { telegramId: tgUser.id },
       { hasAgreedToRules: true, ...(legalVersion ? { legalVersion, legalAcceptedAt: new Date() } : {}) },
@@ -363,11 +374,9 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       }
     }
 
-    const updatedUser = await User.findOneAndUpdate(
-      { telegramId: tgUser.id },
-      { $set: updateData },
-      { new: true, upsert: true }
-    );
+    // Без upsert: запись появляется только после согласия с Соглашением (agree-rules)
+    const updatedUser = await User.findOneAndUpdate({ telegramId: tgUser.id }, { $set: updateData }, { new: true });
+    if (!updatedUser) return res.status(400).json({ error: 'Сначала прими правила на первом экране' });
 
     const f = updatedUser?.locationFuzzy?.coordinates;
     res.json({ success: true, user: updatedUser, shownCoordinates: f?.length === 2 ? [f[1], f[0]] : null, locationManual: Boolean(updatedUser?.locationManual) });
@@ -525,6 +534,8 @@ function nearbyQuery(tgUser: { id: number }, currentUser: any, goal: any) {
 
   // Уважаем предпочтения других: не показываем меня тем, кто не хочет встречаться с моим полом или возрастом
   query.$and = theirPreferencesAllow(currentUser);
+  // Не принял новую редакцию Соглашения за 2 недели — анкету не показываем
+  Object.assign(query, legalVisibleQuery());
 
   return query;
 }
@@ -568,6 +579,7 @@ const visibleUserQuery = (me: any, targetId: number) => ({
   isBanned: { $ne: true },
   hiddenByReports: { $ne: true },
   blockedUsers: { $ne: me?.telegramId },
+  ...legalVisibleQuery(),
   ...(me?.blockedUsers?.includes(targetId) ? { _id: null } : {})
 });
 
