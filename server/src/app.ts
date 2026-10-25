@@ -76,6 +76,7 @@ connectDb()
     markCompletedProfiles();
     restoreSwipeHides();
     widenFuzzyLocations();
+    fixOneSeatEvents();
     moveAvatarsOut();
     backfillPlaceAuthors();
     removeNonConsented();
@@ -90,6 +91,16 @@ async function markCompletedProfiles() {
     if (res.modifiedCount) console.log(`✅ Отмечены заполненные анкеты: ${res.modifiedCount}`);
   } catch (err: any) {
     console.warn('⚠️ Пометка заполненных анкет:', err?.message || err);
+  }
+}
+
+// Сходки «на 1 место» сразу полные (организатор занимает место сам) — делаем 2
+async function fixOneSeatEvents() {
+  try {
+    const r = await Event.updateMany({ maxParticipants: 1 }, { $set: { maxParticipants: 2 } });
+    if (r.modifiedCount) console.log(`✅ Сходки на 1 место → 2: ${r.modifiedCount}`);
+  } catch (err: any) {
+    console.warn('⚠️ Сходки на 1 место:', err?.message || err);
   }
 }
 
@@ -855,6 +866,12 @@ app.get('/api/reactions/inbox', telegramAuthMiddleware as any, async (req: Authe
 // ==========================================
 
 // Сходка для приложения. participantsCount — занятые места (с гостями), groupsCount — сколько записей
+// Мест: 0 — без ограничений; организатор сам занимает место, поэтому меньше 2 не бывает
+const seatsLimit = (v: any) => {
+  const n = Math.max(0, Math.floor(Number(v) || 0));
+  return n === 1 ? 2 : Math.min(n, 1000);
+};
+
 const isEventCreator = (ev: IEvent, viewerId: number) => Number(ev.creator.telegramId) === Number(viewerId);
 
 const formatEvent = (ev: IEvent, viewerId: number) => {
@@ -1050,7 +1067,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
           joinedAt: new Date()
         }
       ],
-      maxParticipants: Number(maxParticipants) || 0,
+      maxParticipants: seatsLimit(maxParticipants),
       isActive: true
     });
 
@@ -1284,7 +1301,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
     if (cleanTags(tags)) event.tags = cleanTags(tags);
     if (locationName) event.locationName = locationName;
     if (dateTime) event.dateTime = new Date(dateTime);
-    if (maxParticipants !== undefined) event.maxParticipants = Number(maxParticipants) || 0;
+    if (maxParticipants !== undefined) event.maxParticipants = seatsLimit(maxParticipants);
     if (coordinates && Array.isArray(coordinates)) {
       const [lat, lng] = coordinates;
       event.location = {
