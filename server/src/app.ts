@@ -48,6 +48,7 @@ mongoose
     runPlaceImports();
     markCompletedProfiles();
     restoreSwipeHides();
+    widenFuzzyLocations();
     seedEventTemplates();
   })
   .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));
@@ -59,6 +60,24 @@ async function markCompletedProfiles() {
     if (res.modifiedCount) console.log(`✅ Отмечены заполненные анкеты: ${res.modifiedCount}`);
   } catch (err: any) {
     console.warn('⚠️ Пометка заполненных анкет:', err?.message || err);
+  }
+}
+
+// Метки раньше смещались на 300-500 м. Тем, у кого смещение меньше 500 м и метку не ставили сами, смещаем заново на 500-800 м
+async function widenFuzzyLocations() {
+  try {
+    const users = await User.find({ locationManual: { $ne: true }, 'locationExact.coordinates.1': { $exists: true } }, { locationExact: 1, locationFuzzy: 1 }).lean();
+    let moved = 0;
+    for (const u of users) {
+      const [lng, lat] = u.locationExact!.coordinates;
+      const f = u.locationFuzzy?.coordinates;
+      if (f && f.length === 2 && calculateDistanceMeters(lat, lng, f[1], f[0]) >= 490) continue;
+      await User.updateOne({ _id: u._id }, { $set: { 'locationFuzzy.coordinates': obfuscateCoordinates(lng, lat) } });
+      moved++;
+    }
+    if (moved) console.log(`✅ Метки смещены на 500-800 м: ${moved}`);
+  } catch (err: any) {
+    console.warn('⚠️ Смещение меток:', err?.message || err);
   }
 }
 
@@ -167,6 +186,9 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     } else {
       userObj.coordinates = [53.9045, 27.5615];
     }
+    // Где тебя видят другие: смещённая метка или та, что поставил сам
+    if (fuzzy && fuzzy.length === 2) userObj.shownCoordinates = [fuzzy[1], fuzzy[0]];
+    userObj.locationManual = Boolean(user.locationManual);
     userObj.photos = (user.photos || []).map(photoUrl); // ещё фото в анкете — адресами
 
     res.json(userObj);
@@ -284,12 +306,19 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     if (guideAbout !== undefined) updateData.guideAbout = String(guideAbout).slice(0, 140);
 
     if (coordinates && Array.isArray(coordinates) && coordinates.length === 2) {
-      const [lat, lng] = coordinates;
+      const [lat, lng] = coordinates.map(Number);
+      const prev = await User.findOne({ telegramId: tgUser.id }, { locationExact: 1, locationManual: 1, locationFuzzy: 1 }).lean();
+      const old = prev?.locationExact?.coordinates;
+      // Человек сам поставил метку и точка почти не изменилась (сохранил анкету) — метку не трогаем
+      const keepManual = prev?.locationManual && old?.length === 2 && calculateDistanceMeters(lat, lng, old[1], old[0]) < 300;
+      const oldFuzzy = prev?.locationFuzzy?.coordinates;
+      // Та же точка — то же смещение, чтобы метка не прыгала при каждом сохранении анкеты
+      const sameSpot = old?.length === 2 && calculateDistanceMeters(lat, lng, old[1], old[0]) < 50 && oldFuzzy?.length === 2;
       updateData.locationExact = { type: 'Point', coordinates: [lng, lat] };
-      updateData.locationFuzzy = {
-        type: 'Point',
-        coordinates: obfuscateCoordinates(lng, lat, 300, 500)
-      };
+      if (!keepManual && !sameSpot) {
+        updateData.locationFuzzy = { type: 'Point', coordinates: obfuscateCoordinates(lng, lat) };
+        updateData.locationManual = false;
+      }
     }
 
     const updatedUser = await User.findOneAndUpdate(
@@ -298,7 +327,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       { new: true, upsert: true }
     );
 
-    res.json({ success: true, user: updatedUser });
+    const f = updatedUser?.locationFuzzy?.coordinates;
+    res.json({ success: true, user: updatedUser, shownCoordinates: f?.length === 2 ? [f[1], f[0]] : null, locationManual: Boolean(updatedUser?.locationManual) });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Ошибка сохранения профиля' });
   }
@@ -345,6 +375,31 @@ app.post('/api/donate/invoice', telegramAuthMiddleware as any, async (req: Authe
 
 // «⚡ Есть время»: hours = 1…6 включает статус, 0 — выключает
 // «🫂 Хочется поныть» на несколько часов (0 — выключить). Видят только эмпаты
+// Человек сам ставит свою метку на карте ({ coordinates: [lat, lng] }) или возвращает случайное смещение ({ reset: true })
+app.post('/api/users/shown-location', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = await User.findOne({ telegramId: req.telegramUser!.id });
+    if (!user) return res.status(404).json({ error: 'Анкета не найдена' });
+    if (req.body?.reset) {
+      const exact = user.locationExact?.coordinates;
+      const [lng, lat] = exact?.length === 2 ? exact : [27.5615, 53.9045];
+      user.locationFuzzy = { type: 'Point', coordinates: obfuscateCoordinates(lng, lat) };
+      user.locationManual = false;
+    } else {
+      const [lat, lng] = (Array.isArray(req.body?.coordinates) ? req.body.coordinates : []).map(Number);
+      // Только Минск и пригороды
+      if (!(lat >= 53.7 && lat <= 54.1 && lng >= 27.2 && lng <= 27.95)) return res.status(400).json({ error: 'Поставь метку в Минске или рядом с ним' });
+      user.locationFuzzy = { type: 'Point', coordinates: [Number(lng.toFixed(6)), Number(lat.toFixed(6))] };
+      user.locationManual = true;
+    }
+    await user.save();
+    const [lng, lat] = user.locationFuzzy.coordinates;
+    res.json({ shownCoordinates: [lat, lng], locationManual: user.locationManual });
+  } catch {
+    res.status(500).json({ error: 'Не получилось сохранить метку' });
+  }
+});
+
 app.post('/api/users/vent', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
@@ -1344,7 +1399,7 @@ app.get('/api/users/seed', async (_req: Request, res: Response) => {
 
     for (const item of seedProfiles) {
       const [lng, lat] = item.exactCoords;
-      const fuzzyCoords = obfuscateCoordinates(lng, lat, 300, 500);
+      const fuzzyCoords = obfuscateCoordinates(lng, lat);
 
       await User.findOneAndUpdate(
         { telegramId: item.telegramId },

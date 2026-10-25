@@ -1,12 +1,12 @@
 /**
- * Смещение координат [lng, lat] на случайный радиус от 300 до 500 метров
+ * Смещение координат [lng, lat] на случайный радиус от 500 до 800 метров
  * с равномерным распределением по окружности.
  */
 export function obfuscateCoordinates(
   lng: number,
   lat: number,
-  minRadiusMeters: number = 300,
-  maxRadiusMeters: number = 500
+  minRadiusMeters: number = 500,
+  maxRadiusMeters: number = 800
 ): [number, number] {
   const EARTH_RADIUS = 6378137; // Радиус Земли в метрах
   const randomDistance = minRadiusMeters + Math.random() * (maxRadiusMeters - minRadiusMeters);

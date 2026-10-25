@@ -46,6 +46,7 @@ export interface IUser extends Document {
     type: 'Point';
     coordinates: [number, number]; // [lng, lat]
   };
+  locationManual?: boolean; // метку на карте человек поставил сам
   areaName?: string;
   isTourist: boolean;
   hasAgreedToRules: boolean;
@@ -117,6 +118,7 @@ const UserSchema = new Schema<IUser>(
       type: { type: String, enum: ['Point'], default: 'Point' },
       coordinates: { type: [Number], required: true }
     },
+    locationManual: { type: Boolean, default: false },
     areaName: { type: String, default: 'Минск' },
     isTourist: { type: Boolean, default: false },
     hasAgreedToRules: { type: Boolean, default: false },
