@@ -54,7 +54,18 @@ export const METRICS_TEXTS = {
     `Форма: открыли ${opened} → выбрали идею ${picked} → опубликовали ${published} (${rate})`,
   quit: (atPick: number, atForm: number) => `Бросили: на выборе идеи ${atPick} · в заполненной форме ${atForm}`,
   sources: (list: string) => `Откуда открывают: ${list}`,
-  sourceNames: { feed: 'лента', empty: 'пустая лента', place: 'карточка места', link: 'ссылка' } as Record<string, string>
+  sourceNames: { feed: 'лента', empty: 'пустая лента', place: 'карточка места', link: 'ссылка' } as Record<string, string>,
+  quitFields: (list: string, filled: number) => `Бросили форму, не заполнив: ${list || 'всё было заполнено'}${list && filled ? ` · всё заполнено, но ушли: ${filled}` : ''}`,
+  errors: (list: string) => `Ошибки в форме: ${list}`,
+  fieldNames: { title: 'название', description: 'описание', place: 'место', time: 'время', templateField: 'поле шаблона' } as Record<string, string>,
+  errorNames: {
+    required: 'не всё заполнено',
+    geocode: 'адрес не нашёлся',
+    templateField: 'поле шаблона',
+    photoWait: 'ждали фото',
+    customCategory: 'своя идея без названия',
+    server: 'ошибка сервера'
+  } as Record<string, string>
 };
 
 // Загрузка фото сходок и анкет
