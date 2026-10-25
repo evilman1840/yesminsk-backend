@@ -205,7 +205,13 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     } else {
       // Без save(): старая анкета с полем, которое не проходит проверку схемы, не должна ронять вход
       user.lastActiveAt = new Date();
-      await User.updateOne({ _id: user._id }, { $set: { lastActiveAt: user.lastActiveAt } });
+      const set: Record<string, any> = { lastActiveAt: user.lastActiveAt };
+      // Фото из Telegram (не своё загруженное): ссылка меняется, когда человек меняет фото в Telegram — обновляем
+      if (tgUser.photo_url && user.avatarUrl !== tgUser.photo_url && /^https:\/\/t\.me\/i\/userpic\//.test(user.avatarUrl || '')) {
+        user.avatarUrl = tgUser.photo_url;
+        set.avatarUrl = tgUser.photo_url;
+      }
+      await User.updateOne({ _id: user._id }, { $set: set });
     }
     // Telegram сообщает, разрешил ли человек боту писать
     if (!isDraft && tgUser.allows_write_to_pm && user.canMessage !== true) {
