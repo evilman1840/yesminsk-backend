@@ -251,12 +251,16 @@ export async function onMeetupFromWish(groupId: unknown, event: IEvent, creatorI
 
 /* ---------- Сообщения бота ---------- */
 
-export type Btn = { text: string; path?: string; data?: string };
+export type Btn = { text: string; path?: string; data?: string; url?: string };
 
 export async function sendWithButtons(chatId: number, html: string, rows: Btn[][]) {
   const appUrl = (process.env.MINI_APP_URL || '').replace(/\/+$/, '');
   const keyboard = rows
-    .map((row) => row.filter((b) => b.data || appUrl).map((b) => (b.data ? { text: b.text, callback_data: b.data } : { text: b.text, web_app: { url: `${appUrl}/${b.path || ''}` } })))
+    .map((row) =>
+      row
+        .filter((b) => b.data || b.url || appUrl)
+        .map((b) => (b.data ? { text: b.text, callback_data: b.data } : b.url ? { text: b.text, url: b.url } : { text: b.text, web_app: { url: `${appUrl}/${b.path || ''}` } }))
+    )
     .filter((row) => row.length);
   const res = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: 'POST',

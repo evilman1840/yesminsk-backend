@@ -20,7 +20,8 @@ import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
-import { setupWishRoutes, startWishLoop, onMeetupFromWish } from './wishes';
+import { setupWishRoutes, startWishLoop, onMeetupFromWish, sendWithButtons, Btn } from './wishes';
+import { EVENT_MESSAGE_TEXTS } from './texts';
 import { Wish, WishGroup } from './models/Wish';
 import { startNudgeLoop } from './nudges';
 import { startProposalLoop } from './proposals';
@@ -683,6 +684,8 @@ app.get('/api/reactions/inbox', telegramAuthMiddleware as any, async (req: Authe
 // ==========================================
 
 // Сходка для приложения. participantsCount — занятые места (с гостями), groupsCount — сколько записей
+const isEventCreator = (ev: IEvent, viewerId: number) => Number(ev.creator.telegramId) === Number(viewerId);
+
 const formatEvent = (ev: IEvent, viewerId: number) => {
   const mine = ev.participants.find((p) => p.telegramId === viewerId);
   return {
@@ -704,7 +707,15 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     isJoined: Boolean(mine),
     myGuests: mine?.guests || 0,
     myWithKids: Boolean(mine?.withKids),
-    participants: ev.participants.slice(0, 5),
+    // Кто идёт: организатор видит всех и их Telegram (чтобы написать детали), остальные — первых пятерых без контактов
+    participants: (isEventCreator(ev, viewerId) ? ev.participants : ev.participants.slice(0, 5)).map((p) => ({
+      telegramId: p.telegramId,
+      name: p.name,
+      avatarUrl: p.avatarUrl,
+      guests: p.guests || 0,
+      withKids: Boolean(p.withKids),
+      ...(isEventCreator(ev, viewerId) && p.username ? { username: p.username } : {})
+    })),
     placeId: ev.placeId ? String(ev.placeId) : undefined, // сходка в месте из «Мест» — покажем её в карточке места
     templateId: ev.templateId || undefined,
     durationMinutes: ev.durationMinutes || 0,
@@ -893,6 +904,39 @@ app.get('/api/events/hidden', telegramAuthMiddleware as any, async (req: Authent
 });
 
 // «Неинтересно»: скрыть сходку из ленты ({ hidden: false } — вернуть)
+// «Написать участникам»: организатор пишет текст, бот рассылает всем, кто записан
+const eventMessages = new Map<string, number[]>(); // сходка → когда отправляли (не больше 5 в сутки)
+app.post('/api/events/:id/message', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const myId = req.telegramUser!.id;
+    const id = getParamId(req.params.id);
+    const event = mongoose.Types.ObjectId.isValid(id) ? await Event.findById(id) : null;
+    if (!event || !event.isActive) return res.status(404).json({ error: 'Сходка не найдена' });
+    if (!isEventCreator(event, myId)) return res.status(403).json({ error: EVENT_MESSAGE_TEXTS.onlyCreator });
+    const text = String(req.body?.text || '').trim().slice(0, 800);
+    if (!text) return res.status(400).json({ error: EVENT_MESSAGE_TEXTS.empty });
+    const recipients = event.participants.filter((p) => p.telegramId !== myId);
+    if (!recipients.length) return res.status(400).json({ error: EVENT_MESSAGE_TEXTS.noOne });
+    const recent = (eventMessages.get(id) || []).filter((t) => Date.now() - t < 24 * 60 * 60 * 1000);
+    if (recent.length >= 5) return res.status(429).json({ error: EVENT_MESSAGE_TEXTS.tooMany });
+    eventMessages.set(id, [...recent, Date.now()]);
+
+    const html = EVENT_MESSAGE_TEXTS.message(escapeHtml(event.title), escapeHtml(event.creator.name), escapeHtml(text));
+    const rows: Btn[][] = [
+      ...(event.creator.username ? [[{ text: EVENT_MESSAGE_TEXTS.replyBtn, url: `https://t.me/${event.creator.username.replace(/^@/, '')}` }]] : []),
+      [{ text: EVENT_MESSAGE_TEXTS.openBtn, path: eventAppPath(event) }]
+    ];
+    let sent = 0;
+    for (const p of recipients) {
+      if (await sendWithButtons(p.telegramId, html, rows)) sent++;
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    res.json({ sent, total: recipients.length });
+  } catch {
+    res.status(500).json({ error: EVENT_MESSAGE_TEXTS.failed });
+  }
+});
+
 app.post('/api/events/:id/hide', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const id = getParamId(req.params.id);
