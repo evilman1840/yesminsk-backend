@@ -54,8 +54,16 @@ app.use('/api', banGuard);
 
 // Подключение к MongoDB
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/yesminsk';
-mongoose
-  .connect(MONGODB_URI)
+// Первое подключение не удалось (Atlas занят, сеть) — пробуем снова каждые 5 секунд.
+// Без повтора сервер так и остаётся без базы, и каждый запрос ждёт 10 секунд и падает
+const connectDb = (attempt = 1): Promise<void> =>
+  mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 10000 }).then(() => undefined, (err: any) => {
+    console.warn(`⚠️ MongoDB не подключилась (попытка ${attempt}):`, err?.message || err);
+    return new Promise<void>((r) => setTimeout(r, 5000)).then(() => connectDb(attempt + 1));
+  });
+mongoose.connection.on('disconnected', () => console.warn('⚠️ MongoDB отключилась, переподключаемся'));
+mongoose.connection.on('reconnected', () => console.log('✅ MongoDB снова на связи'));
+connectDb()
   .then(() => {
     console.log('✅ MongoDB успешно подключена');
     removeTestProfiles();
