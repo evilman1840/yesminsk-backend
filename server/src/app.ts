@@ -548,12 +548,19 @@ function nearbyQuery(tgUser: { id: number }, currentUser: any, goal: any) {
   return query;
 }
 
+// Сколько всего людей в приложении (прошли приветствие, не забанены). Считаем раз в 5 минут
+let appUsersCache = { at: 0, n: 0 };
+async function appUsersCount() {
+  if (Date.now() - appUsersCache.at > 5 * 60 * 1000) appUsersCache = { at: Date.now(), n: await User.countDocuments({ hasAgreedToRules: true, isBanned: { $ne: true } }) };
+  return appUsersCache.n;
+}
+
 // Сколько анкет видно человеку всего (на карту приходят только самые активные)
 app.get('/api/users/nearby-count', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
     const currentUser = await User.findOne({ telegramId: tgUser.id }, { blockedUsers: 1, skipped: 1, gender: 1, age: 1 }).lean();
-    res.json({ total: await User.countDocuments(nearbyQuery(tgUser, currentUser, req.query.goal)) });
+    res.json({ total: await User.countDocuments(nearbyQuery(tgUser, currentUser, req.query.goal)), all: await appUsersCount() });
   } catch (err: any) {
     console.warn('⚠️ /api/users/nearby-count:', err?.message || err);
     res.status(500).json({ error: 'Ошибка подсчёта' });
