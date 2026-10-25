@@ -312,7 +312,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       isGuide,
       guideAbout,
       photos,
-      ageConfirmed
+      ageConfirmed,
+      genderConfirmed
     } = req.body;
 
     const updateData: any = {};
@@ -348,7 +349,10 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       if (ageConfirmed && Array.isArray(goals) && goals.length) updateData.profileCompleted = true;
     }
     if (isEmpath !== undefined) updateData.isEmpath = Boolean(isEmpath);
+    if (gender && !['male', 'female', 'not_specified'].includes(gender)) return res.status(400).json({ error: 'Неизвестный пол' });
     if (gender) updateData.gender = gender as Gender;
+    // Пол выбран самим человеком — больше не спрашиваем
+    if (gender && genderConfirmed) updateData.genderConfirmed = true;
     if (preferredGender) updateData.preferredGender = preferredGender as PreferredGender;
     if (preferredAgeRange) updateData.preferredAgeRange = preferredAgeRange;
     if (isTourist !== undefined) updateData.isTourist = Boolean(isTourist);

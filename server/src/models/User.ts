@@ -50,6 +50,7 @@ export interface IUser extends Document {
   areaName?: string;
   isTourist: boolean;
   hasAgreedToRules: boolean;
+  genderConfirmed?: boolean; // пол выбран самим человеком (по умолчанию стоит «Не скажу»)
   legalVersion?: string;    // принятая редакция Пользовательского соглашения и Политики
   legalAcceptedAt?: Date;   // когда принял(а) — доказательство согласия на обработку данных
   isProfileActive: boolean;
@@ -124,6 +125,7 @@ const UserSchema = new Schema<IUser>(
     areaName: { type: String, default: 'Минск' },
     isTourist: { type: Boolean, default: false },
     hasAgreedToRules: { type: Boolean, default: false },
+    genderConfirmed: { type: Boolean, default: false },
     legalVersion: { type: String },
     legalAcceptedAt: { type: Date },
     isProfileActive: { type: Boolean, default: true },
