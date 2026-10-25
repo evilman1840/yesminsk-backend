@@ -32,8 +32,13 @@ import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, 
 
 dotenv.config();
 
+import compression from 'compression';
+import { avatarFor, setupAvatarRoutes } from './avatars';
+
 const app = express();
 app.use(cors());
+// Сжатие ответов: списки людей и сходок становятся в разы легче
+app.use(compression());
 app.use(express.json({ limit: '5mb' })); // фото приходят уже сжатыми (~100 КБ), запас — для старых тяжёлых
 // Забаненные не могут ничего менять
 app.use('/api', banGuard);
@@ -600,7 +605,7 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     telegramId: u.telegramId,
     firstName: u.firstName,
     username: isMatch ? u.username : undefined,
-    avatarUrl: u.avatarUrl,
+    avatarUrl: avatarFor(u.telegramId, u.avatarUrl),
     age: u.age,
     gender: u.gender,
     goal: u.goal,
@@ -777,7 +782,12 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     locationName: ev.locationName,
     coordinates: [ev.location.coordinates[1], ev.location.coordinates[0]], // [lat, lng]
     dateTime: ev.dateTime,
-    creator: ev.creator,
+    creator: {
+      telegramId: ev.creator.telegramId,
+      name: ev.creator.name,
+      username: ev.creator.username,
+      avatarUrl: avatarFor(ev.creator.telegramId, ev.creator.avatarUrl)
+    },
     participantsCount: seatsTaken(ev),
     groupsCount: ev.participants.length,
     withKidsCount: ev.participants.filter((p) => p.withKids).length,
@@ -789,7 +799,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     participants: (isEventCreator(ev, viewerId) ? ev.participants : ev.participants.slice(0, 5)).map((p) => ({
       telegramId: p.telegramId,
       name: p.name,
-      avatarUrl: p.avatarUrl,
+      avatarUrl: avatarFor(p.telegramId, p.avatarUrl),
       guests: p.guests || 0,
       withKids: Boolean(p.withKids),
       ...(isEventCreator(ev, viewerId) && p.username ? { username: p.username } : {})
@@ -1469,6 +1479,7 @@ setupAccountRoutes(app);
 
 // Люди предлагают места
 setupPlaceSuggestionRoutes(app);
+setupAvatarRoutes(app);
 setupProposalRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)
