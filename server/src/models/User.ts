@@ -21,6 +21,8 @@ export interface IUser extends Document {
   age: number;
   ageConfirmed?: boolean; // человек сам указал возраст (по умолчанию стоит 25)
   skipped?: { telegramId: number; until: Date }[]; // «Пропустить» свайпом: не показываем до until
+  canMessage?: boolean;   // бот может писать: человек нажал «Старт» в боте или разрешил сообщения
+  botBlockedAt?: Date;    // сообщение не дошло: не разрешал писать или заблокировал бота
   profileCompleted?: boolean; // сам указал возраст и интересы — только тогда анкету видят другие
   gender: Gender;
   preferredGender: PreferredGender;
@@ -77,6 +79,8 @@ const UserSchema = new Schema<IUser>(
     age: { type: Number, default: 25, min: 16, max: 99 },
     ageConfirmed: { type: Boolean },
     profileCompleted: { type: Boolean, index: true },
+    canMessage: { type: Boolean },
+    botBlockedAt: { type: Date },
     skipped: { type: [{ telegramId: Number, until: Date, _id: false }], default: undefined }, // в приложении — только 18+ (проверка при сохранении анкеты)
     gender: {
       type: String,

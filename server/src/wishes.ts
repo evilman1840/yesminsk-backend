@@ -6,7 +6,7 @@ import { EventTemplate, IEventTemplate, CUSTOM_TEMPLATE_KEY } from './models/Eve
 import { Event, IEvent } from './models/Event';
 import { Place } from './models/Place';
 import { User } from './models/User';
-import { escapeHtml } from './utils/telegramNotify';
+import { escapeHtml, markCannotMessage } from './utils/telegramNotify';
 import { meetupCreatePath } from './eventTemplates';
 import { formatWhen } from './eventNotify';
 import { WISH_TEXTS as T } from './texts';
@@ -267,6 +267,7 @@ export async function sendWithButtons(chatId: number, html: string, rows: Btn[][
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text: html, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: { inline_keyboard: keyboard } })
   }).catch(() => null);
+  if (res?.status === 403) markCannotMessage(chatId);
   return Boolean(res?.ok);
 }
 

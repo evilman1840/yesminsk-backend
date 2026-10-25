@@ -1,8 +1,17 @@
+import { User } from '../models/User';
 /**
  * Отправка уведомлений пользователям через Telegram-бота.
  * Бот может написать человеку, только если тот хоть раз открывал чат с ботом (нажимал «Старт»)
  * или разрешил боту писать при запуске мини-приложения. Ошибки доставки не ломают основной запрос.
  */
+
+// Бот не может написать (человек не нажимал «Старт», не разрешил сообщения или заблокировал бота) — запоминаем
+export const markCannotMessage = (chatId: number) => {
+  User.updateOne({ telegramId: chatId }, { $set: { canMessage: false, botBlockedAt: new Date() } }).catch(() => {});
+};
+export const markCanMessage = (chatId: number) => {
+  User.updateOne({ telegramId: chatId, canMessage: { $ne: true } }, { $set: { canMessage: true }, $unset: { botBlockedAt: 1 } }).catch(() => {});
+};
 
 export const escapeHtml = (text: string): string =>
   String(text || '')
@@ -46,6 +55,7 @@ export async function sendTelegramMessage(
     if (!res.ok) {
       const data: any = await res.json().catch(() => ({}));
       console.warn(`⚠️ Уведомление для ${chatId} не доставлено:`, data?.description || res.status);
+      if (res.status === 403) markCannotMessage(chatId);
       return false;
     }
     return true;

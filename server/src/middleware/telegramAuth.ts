@@ -8,6 +8,7 @@ export interface TelegramUserData {
   username?: string;
   photo_url?: string;
   language_code?: string;
+  allows_write_to_pm?: boolean; // разрешил боту писать (при запуске мини-приложения)
 }
 
 export interface AuthenticatedRequest extends Request {

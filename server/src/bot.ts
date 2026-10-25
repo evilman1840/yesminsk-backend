@@ -15,6 +15,7 @@ import { handleStatsCommand } from './stats';
 import { handleIdeasCommand } from './ideas';
 import { handleDigestCommand } from './digest';
 import { handleInviteStart } from './invites';
+import { markCanMessage } from './utils/telegramNotify';
 import { handlePlaceMessage, handlePlaceCallback } from './places';
 import { handleCsvMessage, handleCsvCallback } from './csvImport';
 import { handleFeedbackCallback, handleFeedbackText, handleFeedbackCommand } from './feedback';
@@ -85,6 +86,8 @@ export function setupTelegramBot(app: Express) {
 }
 
 async function handleMessage(message: any, chatId: number) {
+  // Человек написал боту (в том числе «Старт») — теперь бот может ему писать
+  markCanMessage(chatId);
   // Пара слов организатору после «Как прошло?»
   if (await handleFeedbackText(message)) return;
   // Таблицы (CSV-файл) и шаблоны (/template) — раньше мест, чтобы файл не попал в черновик места

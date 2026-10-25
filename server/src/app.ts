@@ -21,7 +21,7 @@ import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish, sendWithButtons, Btn } from './wishes';
-import { EVENT_MESSAGE_TEXTS } from './texts';
+import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
 import { Wish, WishGroup } from './models/Wish';
 import { startNudgeLoop } from './nudges';
 import { startProposalLoop } from './proposals';
@@ -150,6 +150,12 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
       user.lastActiveAt = new Date();
       await user.save();
     }
+    // Telegram сообщает, разрешил ли человек боту писать
+    if (tgUser.allows_write_to_pm && user.canMessage !== true) {
+      user.canMessage = true;
+      user.botBlockedAt = undefined;
+      await user.save();
+    }
 
     const userObj: any = user.toObject ? user.toObject() : { ...user };
     const exact = user.locationExact?.coordinates;
@@ -166,6 +172,20 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     res.json(userObj);
   } catch (err) {
     res.status(500).json({ error: 'Ошибка получения профиля' });
+  }
+});
+
+// Человек разрешил боту писать (системное окно в мини-приложении) — бот сразу пишет, чтобы появился диалог
+app.post('/api/users/bot-access', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const myId = req.telegramUser!.id;
+    if (!req.body?.allowed) return res.sendStatus(204);
+    const before = await User.findOneAndUpdate({ telegramId: myId }, { $set: { canMessage: true }, $unset: { botBlockedAt: 1 } });
+    // Приветствие — только если раньше бот не мог писать (чтобы не дублировать)
+    if (before && before.canMessage !== true) sendTelegramMessage(myId, BOT_ACCESS_TEXTS.welcome, 'Открыть ДА! МИНСК');
+    res.sendStatus(204);
+  } catch {
+    res.sendStatus(500);
   }
 });
 
