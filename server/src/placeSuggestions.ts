@@ -1,7 +1,7 @@
 import { Express, Response } from 'express';
 import mongoose, { Schema, model } from 'mongoose';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
-import { Place, matchPlaceType, PLACE_TYPES } from './models/Place';
+import { Place, matchPlaceType, PLACE_TYPES, PLACE_MOODS, PlaceMood } from './models/Place';
 import { User } from './models/User';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { geocode, placeFromYandexLink, isYandexMapsLink } from './places';
@@ -103,7 +103,17 @@ const editButtons = (kind: 's' | 'p', id: string) => [
   [
     { text: T.editAddr, data: `ed:${kind}:addr:${id}` },
     { text: T.editDesc, data: `ed:${kind}:desc:${id}` }
-  ]
+  ],
+  // Вайбы — у опубликованного места
+  ...(kind === 'p' ? [[{ text: T.editMoods, data: `edm:${id}:open` }]] : [])
+];
+
+// Вайбы кнопками: ✅ выбранные, «Готово» — показать карточку
+const moodButtons = (id: string, moods: string[]) => [
+  ...(Object.keys(PLACE_MOODS) as PlaceMood[]).map((k) => [
+    { text: `${moods.includes(k) ? '✅' : '▫️'} ${PLACE_MOODS[k].emoji} ${PLACE_MOODS[k].label}`, data: `edm:${id}:${k}` }
+  ]),
+  [{ text: T.moodsDone, data: `edm:${id}:done` }]
 ];
 
 async function sendSuggestionCard(chatId: number, s: any) {
@@ -121,7 +131,8 @@ async function sendSuggestionCard(chatId: number, s: any) {
 }
 
 async function sendPlaceCard(chatId: number, p: any) {
-  await sendWithButtons(chatId, T.placeCard(escapeHtml(p.name), escapeHtml(p.category || ''), escapeHtml(p.address || ''), escapeHtml(p.description || ''), p.mapUrl || ''), editButtons('p', String(p._id)));
+  const moods = (p.moods || []).map((m: PlaceMood) => `${PLACE_MOODS[m]?.emoji} ${PLACE_MOODS[m]?.label}`).join(', ');
+  await sendWithButtons(chatId, T.placeCard(escapeHtml(p.name), escapeHtml(p.category || ''), escapeHtml(p.address || ''), escapeHtml(p.description || ''), p.mapUrl || '', moods), editButtons('p', String(p._id)));
 }
 
 // Типы мест кнопками по два в ряд
@@ -217,7 +228,7 @@ export function setupPlaceSuggestionRoutes(app: Express) {
 // Кнопки автора: sgp:ok:<id> / sgp:no:<id>
 export async function handleSuggestionCallback(query: any): Promise<boolean> {
   const data: string = query.data || '';
-  if (!/^(sgp|ed|edc):/.test(data)) return false;
+  if (!/^(sgp|ed|edc|edm):/.test(data)) return false;
   const call = (method: string, body: any) =>
     fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
   call('answerCallbackQuery', { callback_query_id: query.id });
@@ -236,6 +247,28 @@ export async function handleSuggestionCallback(query: any): Promise<boolean> {
     }
     editing.set(chatId, { kind: kind as 's' | 'p', field: field as 'name' | 'addr' | 'desc', id });
     say(chatId, field === 'name' ? T.editAskName(escapeHtml(doc.name)) : field === 'addr' ? T.editAskAddr : T.editAskDesc);
+    return true;
+  }
+  // 🌈 Вайбы места: переключаем прямо в этом сообщении
+  if (data.startsWith('edm:')) {
+    const [, id, key] = data.split(':');
+    const place = mongoose.Types.ObjectId.isValid(id) ? await Place.findById(id) : null;
+    if (!place) return true;
+    if (key === 'open') {
+      await sendWithButtons(chatId, T.editAskMoods(escapeHtml(place.name)), moodButtons(id, place.moods));
+      return true;
+    }
+    if (key === 'done') {
+      call('editMessageReplyMarkup', { chat_id: chatId, message_id: query.message?.message_id, reply_markup: { inline_keyboard: [] } });
+      await sendPlaceCard(chatId, place);
+      return true;
+    }
+    if (!(key in PLACE_MOODS)) return true;
+    const k = key as PlaceMood;
+    place.moods = place.moods.includes(k) ? place.moods.filter((m) => m !== k) : [...place.moods, k];
+    await place.save();
+    const kb = moodButtons(id, place.moods).map((row) => row.map((b) => ({ text: b.text, callback_data: b.data })));
+    call('editMessageReplyMarkup', { chat_id: chatId, message_id: query.message?.message_id, reply_markup: { inline_keyboard: kb } });
     return true;
   }
   if (data.startsWith('edc:')) {
@@ -266,6 +299,7 @@ export async function handleSuggestionCallback(query: any): Promise<boolean> {
   const place =
     existing ||
     (await Place.create({
+      authorId: s.telegramId,
       name: s.name,
       category: s.category,
       address: s.address,
@@ -281,4 +315,20 @@ export async function handleSuggestionCallback(query: any): Promise<boolean> {
   await sendWithButtons(query.message.chat.id, T.approved(escapeHtml(place.name), place.category), editButtons('p', String(place._id)));
   if (!isAdmin(s.telegramId)) sendTelegramMessage(s.telegramId, T.authorApproved(escapeHtml(place.name)), 'Открыть «Места»', `?place=${place._id}`);
   return true;
+}
+
+// Один раз: у мест, добавленных из предложений, автор — тот, кто предложил
+export async function backfillPlaceAuthors() {
+  try {
+    const approved = await PlaceSuggestion.find({ status: 'approved', placeId: { $exists: true } }, { placeId: 1, telegramId: 1 }).lean();
+    let n = 0;
+    for (const s of approved) {
+      if (!mongoose.Types.ObjectId.isValid(s.placeId!)) continue;
+      const r = await Place.updateOne({ _id: s.placeId, authorId: { $exists: false } }, { $set: { authorId: s.telegramId } });
+      n += r.modifiedCount;
+    }
+    if (n) console.log(`✅ Авторы мест из предложений: ${n}`);
+  } catch (err: any) {
+    console.warn('⚠️ Авторы мест:', err?.message || err);
+  }
 }

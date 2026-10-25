@@ -26,7 +26,7 @@ import { Wish, WishGroup } from './models/Wish';
 import { startNudgeLoop } from './nudges';
 import { startProposalLoop, setupProposalRoutes } from './proposals';
 import { setupAccountRoutes } from './account';
-import { setupPlaceSuggestionRoutes } from './placeSuggestions';
+import { setupPlaceSuggestionRoutes, backfillPlaceAuthors } from './placeSuggestions';
 import { runPlaceImports } from './placesImport';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
 
@@ -72,6 +72,7 @@ connectDb()
     restoreSwipeHides();
     widenFuzzyLocations();
     moveAvatarsOut();
+    backfillPlaceAuthors();
     seedEventTemplates();
   })
   .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));

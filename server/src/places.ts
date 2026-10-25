@@ -6,14 +6,15 @@ import { Place, PlaceTip, PLACE_MOODS, PLACE_PRICES, PLACE_TYPES, matchPlaceType
 import { User } from './models/User';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { sendTelegramPhoto, isCachedPhoto } from './utils/telegramFile';
-import { isAdmin } from './news';
+import { isAdmin, adminIds } from './news';
 
 /* ======================================================================
  * Адреса для приложения
  * ==================================================================== */
 
 // savedByOthers — сколько ещё людей сохранили место (кроме меня)
-const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false, savedByOthers = 0) => ({
+type PlaceAuthor = { telegramId: number; name: string; avatarUrl: string } | null;
+const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false, savedByOthers = 0, author: PlaceAuthor = null) => ({
   id: p._id.toString(),
   name: p.name,
   category: p.category || '',
@@ -40,7 +41,8 @@ const formatPlace = (p: IPlace, tipsCount = 0, isSaved = false, savedByOthers = 
   kidsNote: p.kidsNote || '',
   reviews: (p.reviews || []).map((r) => ({ rating: r.rating ?? null, text: r.text, source: r.source || 'Яндекс Карты' })),
   savedByOthers,
-  tipsCount
+  tipsCount,
+  author // кто добавил место: аватарка открывает анкету
 });
 
 let savedCache: { at: number; data: any[] } | null = null;
@@ -67,6 +69,11 @@ export function setupPlacesRoutes(app: Express) {
         savedCountsCached()
       ]);
       const countById = new Map(counts.map((c) => [String(c._id), c.n]));
+      // Авторы мест: у старых мест без автора — автор проекта
+      const fallbackAuthor = adminIds()[0];
+      const authorIdOf = (p: IPlace) => p.authorId || fallbackAuthor;
+      const authorUsers = await User.find({ telegramId: { $in: [...new Set(places.map(authorIdOf).filter(Boolean))] }, isBanned: { $ne: true } }, { telegramId: 1, firstName: 1, avatarUrl: 1 }).lean();
+      const authors = new Map(authorUsers.map((u) => [u.telegramId, { telegramId: u.telegramId, name: u.firstName, avatarUrl: avatarFor(u.telegramId, u.avatarUrl) }]));
       const savedById = new Map(savedCounts.map((c: any) => [String(c._id), c.n as number]));
       const saved = new Set(me?.savedPlaces || []);
       // «Неинтересно» не показываем; сохранённые — всегда
@@ -77,7 +84,7 @@ export function setupPlacesRoutes(app: Express) {
           .map((p) => {
             const id = p._id.toString();
             const total = savedById.get(id) || 0;
-            return formatPlace(p, countById.get(id) || 0, saved.has(id), Math.max(0, total - (saved.has(id) ? 1 : 0)));
+            return formatPlace(p, countById.get(id) || 0, saved.has(id), Math.max(0, total - (saved.has(id) ? 1 : 0)), authors.get(authorIdOf(p)!) || null);
           })
       );
     } catch (err) {
@@ -143,11 +150,15 @@ export function setupPlacesRoutes(app: Express) {
       const id = String(req.params.id);
       if (!mongoose.Types.ObjectId.isValid(id)) return res.json([]);
       const tips = await PlaceTip.find({ placeId: id }).sort({ createdAt: -1 }).limit(50).lean();
+      // Аватарки — текущие, из анкет (по нажатию открывается анкета)
+      const users = await User.find({ telegramId: { $in: [...new Set(tips.map((t) => t.telegramId))] } }, { telegramId: 1, avatarUrl: 1 }).lean();
+      const avatars = new Map(users.map((u) => [u.telegramId, avatarFor(u.telegramId, u.avatarUrl)]));
       res.json(
         tips.map((t) => ({
           id: t._id.toString(),
+          telegramId: t.telegramId,
           name: t.name,
-          avatarUrl: t.avatarUrl,
+          avatarUrl: avatars.get(t.telegramId) || t.avatarUrl,
           text: t.text,
           createdAt: t.createdAt,
           isMine: t.telegramId === req.telegramUser!.id
@@ -187,7 +198,7 @@ export function setupPlacesRoutes(app: Express) {
         [[{ text: '🗑 Удалить совет', callback_data: `tipdel:${tip._id}` }]]
       );
 
-      res.json({ success: true, tip: { id: tip._id.toString(), name: tip.name, avatarUrl: tip.avatarUrl, text, createdAt: tip.createdAt, isMine: true } });
+      res.json({ success: true, tip: { id: tip._id.toString(), telegramId: tgUser.id, name: tip.name, avatarUrl: tip.avatarUrl, text, createdAt: tip.createdAt, isMine: true } });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || 'Не удалось сохранить совет' });
     }
@@ -870,6 +881,7 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
     case 'publish':
       if (!d.coords) return answer('Нет адреса'), true;
       await Place.create({
+        authorId: query.from?.id,
         name: d.name,
         category: d.category,
         description: d.description,

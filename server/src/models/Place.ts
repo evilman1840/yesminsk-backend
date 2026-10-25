@@ -61,6 +61,7 @@ export interface IPlace extends Document {
   reviews: { rating?: number; text: string; source: string }[]; // отзывы из таблиц автора (с Яндекс Карт)
   kidsLevel?: KidsLevel;
   kidsNote: string;      // что там детям, с какого возраста, минусы
+  authorId?: number;     // кто добавил место (предложил человек или автор проекта)
   createdAt: Date;
 }
 
@@ -91,6 +92,7 @@ const PlaceSchema = new Schema<IPlace>(
     amenities: { type: [String], default: [] },
     kidsLevel: { type: String, enum: KIDS_LEVELS },
     kidsNote: { type: String, default: '', maxlength: 600 },
+    authorId: { type: Number },
     reviews: {
       type: [{ rating: { type: Number, min: 1, max: 5 }, text: { type: String, maxlength: 600 }, source: { type: String, default: 'Яндекс Карты' } }],
       default: []
