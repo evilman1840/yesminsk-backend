@@ -11,15 +11,36 @@ const { MongoClient } = require('mongodb');
 const { EJSON } = require('bson');
 
 async function backup(uri) {
-  const client = await MongoClient.connect(uri);
+  const client = await MongoClient.connect(uri, { retryReads: true, socketTimeoutMS: 120000 });
   const db = client.db();
   const dir = path.join(os.homedir(), `yesminsk-backup-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}`);
   fs.mkdirSync(dir, { recursive: true });
   console.log(`База: ${db.databaseName}`);
   for (const { name } of await db.listCollections().toArray()) {
-    const docs = await db.collection(name).find({}).toArray();
+    // Порциями по 20 и с повтором: бесплатная база рвёт соединение на больших ответах
+    const docs = [];
+    let lastId = null;
+    for (let tries = 0; ; ) {
+      try {
+        const batch = await db
+          .collection(name)
+          .find(lastId ? { _id: { $gt: lastId } } : {})
+          .sort({ _id: 1 })
+          .limit(20)
+          .toArray();
+        if (!batch.length) break;
+        docs.push(...batch);
+        lastId = batch[batch.length - 1]._id;
+        tries = 0;
+        if (docs.length % 100 < 20 && docs.length >= 100) process.stdout.write(`  ${name}: ${docs.length}…\r`);
+      } catch (e) {
+        if (++tries > 5) throw e;
+        console.log(`  ${name}: обрыв, пробую ещё раз (${tries}/5)`);
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
     fs.writeFileSync(path.join(dir, `${name}.json`), EJSON.stringify(docs, { relaxed: false }));
-    console.log(`  ${name}: ${docs.length}`);
+    console.log(`  ${name}: ${docs.length}      `);
   }
   await client.close();
   console.log(`\n✅ Готово: ${dir}`);
