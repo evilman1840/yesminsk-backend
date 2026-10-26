@@ -508,10 +508,20 @@ export async function wishStatsLines(since: Date): Promise<string[]> {
   const names = new Map((await EventTemplate.find({}, { key: 1, emoji: 1 }).lean()).map((t) => [t.key, t.emoji]));
   const withProfile = linkUsers.length ? await User.countDocuments({ telegramId: { $in: linkUsers }, hasAgreedToRules: true }) : 0;
   const rate = groups ? `${Math.round((built / groups) * 100)}%` : '0%';
+  // Открытые группы: на каком шаге стоят
+  const open = await WishGroup.find({ status: 'open' }, { proposal: 1, askPlaceAt: 1, meetupId: 1 }).lean();
+  const waitPlace = open.filter((g) => !g.proposal && g.askPlaceAt).length;
+  const proposedGroups = open.filter((g) => g.proposal && !g.meetupId);
+  const waitPeople = open.length - waitPlace - proposedGroups.length - open.filter((g) => g.meetupId).length;
+  // Лучший вариант времени в предложениях: сколько уже нажали «Пойду»
+  const yesCounts = proposedGroups.map((g: any) => Math.max(0, ...(g.proposal?.options || []).map((o: any) => (o.yes || []).length)));
+  const best = yesCounts.length ? ` (больше всего «Пойду» на одном варианте: ${Math.max(...yesCounts)})` : '';
+  const expired = await WishGroup.countDocuments({ createdAt: { $gte: since }, status: 'expired', meetupId: { $exists: false } });
   return [
     T.statsTitle,
     T.statsCreated(created, byKind.map((k) => `${names.get(k._id) || k._id} ${k.n}`).join(' · ')),
     T.statsGroups(groups, built, rate),
+    T.statsFunnel(waitPeople, waitPlace, proposedGroups.length, best, expired),
     T.statsLinks(linkUsers.length, withProfile),
     T.statsActive(active)
   ];

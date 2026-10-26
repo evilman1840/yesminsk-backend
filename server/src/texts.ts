@@ -131,6 +131,9 @@ export const WISH_TEXTS = {
   statsTitle: '🙋 <b>«Хочу сходить» за 30 дней</b>',
   statsCreated: (n: number, list: string) => `Желаний: ${n}${list ? ` (${list})` : ''}`,
   statsGroups: (groups: number, built: number, rate: string) => `Совпало групп: ${groups} · из них собрали сходку: ${built} (${rate})`,
+  // Где застревают открытые группы сейчас
+  statsFunnel: (waitPeople: number, waitPlace: number, proposed: number, best: string, expired: number) =>
+    `Сейчас в группах: ждут людей ${waitPeople} · ждут место ${waitPlace} · предложено время ${proposed}${best} · истекли без сходки (30 дн.) ${expired}`,
   statsLinks: (n: number, withProfile: number) => `По ссылкам wish_: ${people(n)}, из них заполнили анкету ${withProfile}`,
   statsActive: (n: number) => `Активных желаний сейчас: ${n}`
 };
