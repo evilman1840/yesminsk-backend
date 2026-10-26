@@ -18,6 +18,7 @@ import { sendLike } from './social';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
 import { setupNewsRoutes, isAdmin } from './news';
+import { setupFundRoutes } from './fund';
 import { banGuard, setupModerationRoutes } from './moderation';
 import { markInviteJoined } from './invites';
 import { setupPlacesRoutes } from './places';
@@ -1568,6 +1569,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
 
 // Новости проекта
 setupNewsRoutes(app);
+setupFundRoutes(app);
 
 // Жалобы и модерация
 setupModerationRoutes(app);

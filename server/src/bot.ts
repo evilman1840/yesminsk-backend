@@ -12,6 +12,7 @@ import { Donation } from './models/Donation';
 import { handleNewsMessage } from './news';
 import { handleModerationCallback, handleModerationCommand } from './moderation';
 import { handleStatsCommand } from './stats';
+import { handleFundCommand } from './fund';
 import { handleIdeasCommand } from './ideas';
 import { handleDigestCommand } from './digest';
 import { handleInviteStart } from './invites';
@@ -99,6 +100,7 @@ async function handleMessage(message: any, chatId: number) {
   if (await handleNewsMessage(message)) return;
   if (await handleModerationCommand(message)) return;
   if (await handleStatsCommand(message)) return;
+  if (await handleFundCommand(message)) return;
   if (await handleIdeasCommand(message)) return;
   if (await handleDigestCommand(message)) return;
   if (await handleFeedbackCommand(message)) return;
@@ -210,6 +212,8 @@ async function registerBotCommands(botToken: string) {
     { command: 'placelink', description: 'Ссылка на Яндекс Карты: /placelink номер ссылка' },
     { command: 'cancel', description: 'Отменить добавление места' },
     { command: 'news', description: 'Опубликовать новость: /news текст' },
+    { command: 'fund', description: 'Шкала донатов: /fund всего котёл' },
+    { command: 'placeedit', description: 'Поправить место: /placeedit номер' },
     { command: 'delnews', description: 'Удалить последнюю новость' },
     { command: 'unban', description: 'Разбанить: /unban ID' },
     { command: 'myid', description: 'Мой Telegram ID' },

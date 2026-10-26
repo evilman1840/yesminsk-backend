@@ -293,3 +293,11 @@ export const USERNAME_TEXTS = {
     `заведи имя пользователя, это 30 секунд: Telegram → Настройки → Изменить (или нажми на своё имя) → «Имя пользователя».`,
   statsLine: (n: number, total: number) => `✍️ Без @username: ${n} из ${total}`
 };
+
+// Шкала донатов (/fund)
+export const FUND_TEXTS = {
+  usage: '\n\nТак: <code>/fund 95 48,45</code>\nПервое число: всего собрано. Второе: сколько из этого в котёл для пользователей. На развитие пойдёт остальное.',
+  current: (total: string, community: string, dev: string) => `💛 Сейчас: собрано <b>${total}</b>\n☕ Котёл для пользователей: ${community}\n🌱 На развитие: ${dev}`,
+  saved: (total: string, community: string, dev: string) => `✅ Обновил шкалу: собрано <b>${total}</b>\n☕ Котёл для пользователей: ${community}\n🌱 На развитие: ${dev}\n\nУже видно в «Новостях» и в окне доната.`,
+  bad: 'Не понял числа. Второе число не может быть больше первого.'
+};
