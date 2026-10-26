@@ -29,7 +29,7 @@ import { setupWishRoutes, startWishLoop, onMeetupFromWish, sendWithButtons, Btn 
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
 import { Wish, WishGroup } from './models/Wish';
 import { startNudgeLoop } from './nudges';
-import { startProposalLoop, setupProposalRoutes } from './proposals';
+import { startProposalLoop, setupProposalRoutes, fixAutoMeetupHosts } from './proposals';
 import { setupAccountRoutes } from './account';
 import { setupPlaceSuggestionRoutes, backfillPlaceAuthors } from './placeSuggestions';
 import { runPlaceImports } from './placesImport';
@@ -79,6 +79,7 @@ connectDb()
     restoreSwipeHides();
     widenFuzzyLocations();
     fixOneSeatEvents();
+    fixAutoMeetupHosts();
     moveAvatarsOut();
     backfillPlaceAuthors();
     removeNonConsented();

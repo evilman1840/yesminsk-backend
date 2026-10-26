@@ -62,8 +62,9 @@ async function placeFor(group: IWishGroup) {
     if (p) return { placeId: String(p._id), placeName: p.name, coords: [p.location.coordinates[1], p.location.coordinates[0]] as [number, number] };
   }
   const tpl = await EventTemplate.findOne({ key: group.kind }).lean();
-  if (tpl?.placeTypes?.length) {
-    const places = await Place.find({ category: { $in: tpl.placeTypes } }).lean();
+  // Типы мест по порядку — это приоритет: для кофе сначала кофейни, кафе — только если кофеен нет
+  for (const type of tpl?.placeTypes || []) {
+    const places = await Place.find({ category: type }).lean();
     const p = await closestToGroup(group, places);
     if (p) return { placeId: String(p._id), placeName: p.name, coords: [p.location.coordinates[1], p.location.coordinates[0]] as [number, number] };
   }
@@ -136,6 +137,8 @@ async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
   const description = [fill(tpl?.description || ''), p.note].filter(Boolean).join('\n\n') || 'Сходка из «Хочу сходить»';
 
   const yesUsers = await User.find({ telegramId: { $in: option.yes } }).lean();
+  // Хозяин встречи — первый, кто нажал «Пойду» (а не автор проекта): он в списке и может написать остальным
+  const host = yesUsers.find((u) => u.telegramId === option.yes[0]) || yesUsers[0];
   const event = await Event.create({
     title: title.slice(0, 100),
     description: description.slice(0, 600),
@@ -151,13 +154,9 @@ async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
     locationName: p.placeName,
     location: { type: 'Point', coordinates: [p.coords[1], p.coords[0]] },
     dateTime: option.at,
-    // Организатор — ГУЛЯЙ! (аккаунт автора), сам автор в участники не записывается
-    creator: {
-      telegramId: admin?.telegramId || adminIds()[0] || 0,
-      name: admin?.firstName || 'ГУЛЯЙ!',
-      username: admin?.username,
-      avatarUrl: admin?.avatarUrl || 'https://yesminsk-app.vercel.app/favicon.svg'
-    },
+    creator: host
+      ? { telegramId: host.telegramId, name: host.firstName, username: host.username, avatarUrl: host.avatarUrl || '' }
+      : { telegramId: admin?.telegramId || adminIds()[0] || 0, name: admin?.firstName || 'ГУЛЯЙ!', username: admin?.username, avatarUrl: admin?.avatarUrl || '' },
     participants: yesUsers.map((u) => ({ telegramId: u.telegramId, name: u.firstName, username: u.username, avatarUrl: u.avatarUrl || '', joinedAt: new Date() })),
     maxParticipants: Math.max(tpl?.seats || 0, (await groupSize(group._id)) + 2),
     isActive: true
@@ -171,7 +170,8 @@ async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
 
   const when = formatWhen(event.dateTime);
   for (const id of option.yes) {
-    await sendWithButtons(id, T.createdForYes(escapeHtml(event.title), when, escapeHtml(event.locationName)), [[{ text: T.openEvent, path: `?event=${eventId}` }]]);
+    const text = id === host?.telegramId ? T.createdForHost(escapeHtml(event.title), when, escapeHtml(event.locationName)) : T.createdForYes(escapeHtml(event.title), when, escapeHtml(event.locationName));
+    await sendWithButtons(id, text, [[{ text: T.openEvent, path: `?event=${eventId}` }]]);
   }
   for (const id of adminIds()) sendTelegramMessage(id, T.adminCreated(escapeHtml(event.title), when, option.yes.length), T.openEvent, `?event=${eventId}`);
 }
@@ -428,4 +428,25 @@ export function setupProposalRoutes(app: Express) {
       res.status(500).json({ error: SG.notFound });
     }
   });
+}
+
+// Один раз: у встреч, собранных из «Хочу сходить» раньше, организатором стоял автор проекта — передаём первому участнику
+export async function fixAutoMeetupHosts() {
+  try {
+    const groups = await WishGroup.find({ meetupId: { $exists: true } }, { meetupId: 1 }).lean();
+    const admins = adminIds();
+    for (const g of groups) {
+      if (!g.meetupId || !mongoose.Types.ObjectId.isValid(g.meetupId)) continue;
+      const ev = await Event.findById(g.meetupId);
+      if (!ev || !admins.includes(Number(ev.creator.telegramId))) continue;
+      const first = ev.participants.find((p) => !admins.includes(p.telegramId));
+      if (!first) continue;
+      ev.creator = { telegramId: first.telegramId, name: first.name, username: first.username, avatarUrl: first.avatarUrl || '' } as any;
+      await Event.updateOne({ _id: ev._id }, { $set: { creator: ev.creator } });
+      sendWithButtons(first.telegramId, T.createdForHost(escapeHtml(ev.title), formatWhen(ev.dateTime), escapeHtml(ev.locationName)), [[{ text: T.openEvent, path: `?event=${ev._id}` }]]).catch(() => {});
+      console.log(`✅ Хозяин встречи «${ev.title}» — ${first.name}`);
+    }
+  } catch (err: any) {
+    console.warn('⚠️ Хозяева встреч:', err?.message || err);
+  }
 }

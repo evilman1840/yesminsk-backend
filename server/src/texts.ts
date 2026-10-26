@@ -211,6 +211,8 @@ export const PROPOSAL_TEXTS = {
   createdForYes: (title: string, when: string, where: string) =>
     `🎉 <b>Сходка собрана!</b>\n\n${title}\n🕒 ${when}\n📍 ${where}\n\nТы в списке участников. Если планы поменяются, отмени участие в приложении.`,
   openEvent: 'Открыть сходку',
+  createdForHost: (title: string, when: string, where: string) =>
+    `🎉 <b>Встреча собрана, и ты её хозяин!</b>\n\n${title}\n🕒 ${when}\n📍 ${where}\n\nТвоё «Пойду» было первым. Ничего особенного делать не нужно: приди чуть раньше и займи столик. В приложении можно написать участникам или поменять детали.`,
   // Напоминание тем, кто не ответил на предложение
   remind: (n: number, what: string, when: string, place: string) =>
     n > 0

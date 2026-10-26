@@ -20,7 +20,7 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
     description: 'Без темы и без программы. Просто посидим, поговорим о чём угодно, посмеёмся. Можно уйти, когда захочется 🙂',
     seats: 4,
     durationMinutes: 90,
-    placeTypes: ['Кафе', 'Кофейня']
+    placeTypes: ['Кофейня', 'Кафе']
   },
   {
     key: 'cinema',

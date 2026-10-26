@@ -26,6 +26,8 @@ export async function seedEventTemplates() {
     // Цена теперь общая для всех сходок: убираем старое поле «Сколько стоит?» у «Поиграем?», ставим «Платно»
     await EventTemplate.updateOne({ key: 'sport', 'fields.key': 'cost' }, { $pull: { fields: { key: 'cost' } }, $set: { paid: true } });
     await EventTemplate.updateOne({ key: 'cinema', paid: { $exists: false } }, { $set: { paid: true } });
+    // Кофе: сначала кофейни, кафе — если кофеен нет (порядок типов = приоритет)
+    await EventTemplate.updateOne({ key: 'coffee', placeTypes: ['Кафе', 'Кофейня'] }, { $set: { placeTypes: ['Кофейня', 'Кафе'] } });
     // «Хочу сходить»: фраза желания у шаблонов, созданных до неё
     for (const t of DEFAULT_TEMPLATES.filter((d) => d.wishPhrase)) {
       await EventTemplate.updateOne({ key: t.key, wishPhrase: { $exists: false } }, { $set: { wishPhrase: t.wishPhrase } });
