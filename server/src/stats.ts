@@ -108,7 +108,7 @@ export async function buildStats(): Promise<string> {
   const date = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 
   return [
-    `📊 <b>ДА! МИНСК: статистика</b>`,
+    `📊 <b>ГУЛЯЙ! статистика</b>`,
     `<i>${date}</i>`,
     ``,
     `👥 <b>Люди: ${usersTotal}</b>`,

@@ -261,7 +261,7 @@ app.post('/api/users/bot-access', telegramAuthMiddleware as any, async (req: Aut
     if (!req.body?.allowed) return res.sendStatus(204);
     const before = await User.findOneAndUpdate({ telegramId: myId }, { $set: { canMessage: true }, $unset: { botBlockedAt: 1 } });
     // Приветствие — только если раньше бот не мог писать (чтобы не дублировать)
-    if (before && before.canMessage !== true) sendTelegramMessage(myId, BOT_ACCESS_TEXTS.welcome, 'Открыть ДА! МИНСК');
+    if (before && before.canMessage !== true) sendTelegramMessage(myId, BOT_ACCESS_TEXTS.welcome, 'Открыть «ГУЛЯЙ!»');
     res.sendStatus(204);
   } catch {
     res.sendStatus(500);
@@ -358,8 +358,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     if (GOES_WITH.includes(goesWith)) updateData.goesWith = goesWith;
     if (DIGEST_FREQUENCIES.includes(digest)) updateData.digest = digest;
     if (age !== undefined) {
-      // ДА! МИНСК — только для взрослых
-      if (Number(age) < 18) return res.status(400).json({ error: 'ДА! МИНСК только для тех, кому 18+' });
+      // ГУЛЯЙ! — только для взрослых
+      if (Number(age) < 18) return res.status(400).json({ error: '«ГУЛЯЙ!» только для тех, кому 18+' });
       updateData.age = Number(age);
       if (ageConfirmed) updateData.ageConfirmed = true;
       // Возраст указан сам и интересы выбраны — анкету можно показывать
@@ -433,7 +433,7 @@ app.post('/api/donate/invoice', telegramAuthMiddleware as any, async (req: Authe
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: 'Поддержать ДА! МИНСК',
+        title: 'Поддержать «ГУЛЯЙ!»',
         description: 'Спасибо, что помогаешь приложению жить и развиваться 💛',
         payload: `donate:${tgUser.id}:${stars}`,
         currency: 'XTR',
@@ -917,7 +917,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     photos: (ev.photos || []).map(photoUrl),
     isPaid: Boolean(ev.isPaid),
     price: ev.isPaid && ev.price ? ev.price : undefined,
-    // «⭐ От ДА! МИНСК» — сходки автора проекта
+    // «⭐ От ГУЛЯЙ!» — сходки автора проекта
     isOfficial: isAdmin(ev.creator.telegramId)
   };
 };

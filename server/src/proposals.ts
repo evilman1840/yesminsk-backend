@@ -18,7 +18,7 @@ import { parsePlaceText, suggestPlace } from './placeSuggestions';
 
 /**
  * «Хочу сходить» без организатора: когда в группе набирается PROPOSE_AT человек, бот сам предлагает
- * время и место. Как только CONFIRM_MIN нажмут «✅ Пойду», создаётся официальная сходка от ДА! МИНСК
+ * время и место. Как только CONFIRM_MIN нажмут «✅ Пойду», создаётся официальная сходка от ГУЛЯЙ!
  */
 
 const HOUR = 60 * 60 * 1000;
@@ -89,7 +89,7 @@ export async function proposeForGroup(group: IWishGroup, force = false, override
     if (!group.noPlaceNotifiedAt) {
       await WishGroup.updateOne({ _id: group._id }, { $set: { noPlaceNotifiedAt: new Date() } });
       const what = await phraseFor(group.kind, group.sport);
-      for (const id of adminIds()) sendTelegramMessage(id, SG.adminAsked(escapeHtml(what), await groupSize(group._id)), 'Открыть ДА! МИНСК', '?tab=places');
+      for (const id of adminIds()) sendTelegramMessage(id, SG.adminAsked(escapeHtml(what), await groupSize(group._id)), 'Открыть «ГУЛЯЙ!»', '?tab=places');
     }
     return false;
   }
@@ -115,7 +115,7 @@ async function offerMessage(group: IWishGroup) {
   };
 }
 
-// Набралось «Пойду» — создаём официальную сходку от ДА! МИНСК
+// Набралось «Пойду» — создаём официальную сходку от ГУЛЯЙ!
 async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
   const p = group.proposal!;
   const option = p.options[optionIndex];
@@ -151,10 +151,10 @@ async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
     locationName: p.placeName,
     location: { type: 'Point', coordinates: [p.coords[1], p.coords[0]] },
     dateTime: option.at,
-    // Организатор — ДА! МИНСК (аккаунт автора), сам автор в участники не записывается
+    // Организатор — ГУЛЯЙ! (аккаунт автора), сам автор в участники не записывается
     creator: {
       telegramId: admin?.telegramId || adminIds()[0] || 0,
-      name: admin?.firstName || 'ДА! МИНСК',
+      name: admin?.firstName || 'ГУЛЯЙ!',
       username: admin?.username,
       avatarUrl: admin?.avatarUrl || 'https://yesminsk-app.vercel.app/favicon.svg'
     },

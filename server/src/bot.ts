@@ -22,7 +22,7 @@ import { handleFeedbackCallback, handleFeedbackText, handleFeedbackCommand } fro
 import { eventSummaryHtml, eventAppPath } from './eventNotify';
 
 /**
- * Telegram-бот: отвечает на /start приветствием и кнопкой «Открыть ДА! МИНСК».
+ * Telegram-бот: отвечает на /start приветствием и кнопкой «Открыть «ГУЛЯЙ!»».
  * Работает через вебхук: Telegram сам присылает сообщения боту на наш сервер.
  * На Render адрес сервера берётся из RENDER_EXTERNAL_URL (Render задаёт его автоматически)
  * или из PUBLIC_URL. Локально вебхук не включается.
@@ -35,13 +35,13 @@ const getWebhookSecret = (botToken: string) =>
   crypto.createHash('sha256').update(`yesminsk-webhook:${botToken}`).digest('hex').slice(0, 64);
 
 const GREETING = (firstName?: string) =>
-  `👋 Привет${firstName ? `, ${escapeHtml(firstName)}` : ''}! Это <b>ДА! МИНСК</b>, выходи гулять!\n\n` +
+  `👋 Привет${firstName ? `, ${escapeHtml(firstName)}` : ''}! Это <b>ГУЛЯЙ!</b> 🙂 Здесь легко найти, куда и с кем выйти погулять в Минске.\n\n` +
   `📍 Места по настроению: куда сходить соло, компанией или с детьми\n` +
   `🗓 Сходки: присоединяйся к прогулкам, кофе и настолкам или собери свою\n` +
   `👋 Люди рядом: без флирта, только дружба\n\n` +
   `Жми кнопку ниже, чтобы открыть приложение 👇`;
 
-const HINT = `Я пока не умею отвечать на сообщения 🙂\nВсё есть в приложении ДА! МИНСК. Жми кнопку ниже 👇`;
+const HINT = `Я пока не умею отвечать на сообщения 🙂\nВсё есть в приложении «ГУЛЯЙ!». Жми кнопку ниже 👇`;
 
 export function setupTelegramBot(app: Express) {
   app.post(WEBHOOK_PATH, (req: Request, res: Response) => {
@@ -133,9 +133,9 @@ async function handleMessage(message: any, chatId: number) {
   }
 
   if (text.startsWith('/start') || text.startsWith('/help')) {
-    sendTelegramMessage(chatId, GREETING(message.from?.first_name), 'Открыть ДА! МИНСК');
+    sendTelegramMessage(chatId, GREETING(message.from?.first_name), 'Открыть «ГУЛЯЙ!»');
   } else {
-    sendTelegramMessage(chatId, HINT, 'Открыть ДА! МИНСК');
+    sendTelegramMessage(chatId, HINT, 'Открыть «ГУЛЯЙ!»');
   }
 }
 
@@ -162,7 +162,7 @@ async function handleDonation(chatId: number, telegramId: number, payment: any) 
   } catch (err: any) {
     console.warn('⚠️ Не удалось сохранить донат:', err?.message || err);
   }
-  sendTelegramMessage(chatId, `💛 <b>Спасибо за поддержку!</b>\n\nТвои ${payment.total_amount} ⭐ помогают ДА! МИНСК оставаться бесплатным и становиться лучше.`);
+  sendTelegramMessage(chatId, `💛 <b>Спасибо за поддержку!</b>\n\nТвои ${payment.total_amount} ⭐ помогают «ГУЛЯЙ!» оставаться бесплатным и становиться лучше.`);
 }
 
 // Ответ на ссылку-приглашение: карточка сходки и кнопка, открывающая её в приложении
@@ -170,7 +170,7 @@ async function sendEventInvite(chatId: number, eventId: string, firstName?: stri
   try {
     const event = mongoose.Types.ObjectId.isValid(eventId) ? await Event.findById(eventId) : null;
     if (!event || !event.isActive || event.dateTime.getTime() < Date.now() - 2 * 60 * 60 * 1000) {
-      sendTelegramMessage(chatId, `Эта сходка уже прошла или отменена 😔\nНо в приложении есть другие встречи, загляни!`, 'Открыть ДА! МИНСК', '?tab=events');
+      sendTelegramMessage(chatId, `Эта сходка уже прошла или отменена 😔\nНо в приложении есть другие встречи, загляни!`, 'Открыть «ГУЛЯЙ!»', '?tab=events');
       return;
     }
     sendTelegramMessage(
@@ -193,7 +193,7 @@ async function registerBotCommands(botToken: string) {
       body: JSON.stringify(body)
     }).catch(() => {});
 
-  await call({ commands: [{ command: 'start', description: 'Открыть ДА! МИНСК' }] });
+  await call({ commands: [{ command: 'start', description: 'Открыть «ГУЛЯЙ!»' }] });
 
   const adminCommands = [
     { command: 'stats', description: 'Статистика приложения' },
@@ -213,7 +213,7 @@ async function registerBotCommands(botToken: string) {
     { command: 'delnews', description: 'Удалить последнюю новость' },
     { command: 'unban', description: 'Разбанить: /unban ID' },
     { command: 'myid', description: 'Мой Telegram ID' },
-    { command: 'start', description: 'Открыть ДА! МИНСК' }
+    { command: 'start', description: 'Открыть «ГУЛЯЙ!»' }
   ];
   for (const id of (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map((x) => Number(x.trim())).filter(Boolean)) {
     await call({ commands: adminCommands, scope: { type: 'chat', chat_id: id } });

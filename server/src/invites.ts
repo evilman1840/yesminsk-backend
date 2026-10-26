@@ -28,12 +28,12 @@ export async function handleInviteStart(chatId: number, inviteeId: number, invit
     }
   }
 
-  const who = inviter ? `<b>${escapeHtml(inviter.firstName)}</b> зовёт тебя в ДА! МИНСК` : 'Тебя зовут в ДА! МИНСК';
+  const who = inviter ? `<b>${escapeHtml(inviter.firstName)}</b> зовёт тебя в «ГУЛЯЙ!»` : 'Тебя зовут в «ГУЛЯЙ!»';
   sendTelegramMessage(
     chatId,
     `👋 Привет${firstName ? `, ${escapeHtml(firstName)}` : ''}! ${who}: компанию для прогулок, кофе и общения в Минске.\n\n` +
       `Без дейтинга, только дружеское общение. Жми кнопку ниже 👇`,
-    'Открыть ДА! МИНСК'
+    'Открыть «ГУЛЯЙ!»'
   );
 }
 
@@ -44,6 +44,6 @@ export async function markInviteJoined(inviteeId: number, inviteeName: string) {
   await User.updateOne({ telegramId: inviteeId }, { $set: { invitedBy: invite.inviterId } });
   sendTelegramMessage(
     invite.inviterId,
-    `🎉 <b>${escapeHtml(inviteeName)}</b> теперь в ДА! МИНСК по твоему приглашению. Спасибо, что зовёшь друзей!`
+    `🎉 <b>${escapeHtml(inviteeName)}</b> теперь в «ГУЛЯЙ!» по твоему приглашению. Спасибо, что зовёшь друзей!`
   );
 }

@@ -900,7 +900,7 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
       });
       drafts.delete(chatId);
       removeKeyboard();
-      sendTelegramMessage(chatId, `✅ Место «${escapeHtml(d.name)}» опубликовано! Добавить ещё: /place`, 'Открыть ДА! МИНСК', '?tab=places');
+      sendTelegramMessage(chatId, `✅ Место «${escapeHtml(d.name)}» опубликовано! Добавить ещё: /place`, 'Открыть «ГУЛЯЙ!»', '?tab=places');
       break;
     case 'cancel':
       drafts.delete(chatId);

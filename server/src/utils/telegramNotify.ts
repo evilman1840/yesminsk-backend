@@ -25,7 +25,7 @@ export const escapeHtml = (text: string): string =>
 export async function sendTelegramMessage(
   chatId: number,
   html: string,
-  buttonText = 'Открыть ДА! МИНСК',
+  buttonText = 'Открыть «ГУЛЯЙ!»',
   appPath = ''
 ): Promise<boolean> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
