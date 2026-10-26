@@ -44,6 +44,7 @@ export interface IEvent extends Document {
   };
   participants: IEventParticipant[];
   maxParticipants?: number;
+  photosHidden?: boolean;
   isActive: boolean;
   reminderDaySentAt?: Date;  // напоминание «завтра сходка» уже отправлено
   reminderHourSentAt?: Date; // напоминание «через час» уже отправлено
@@ -73,6 +74,7 @@ const EventSchema = new Schema<IEvent>(
     extras: { type: Schema.Types.Mixed },
     badges: { type: [String], default: [] },
     photos: { type: [String], default: [] },
+    photosHidden: { type: Boolean, default: false }, // жалоба «неприличное фото» — не показываем до решения
     isPaid: { type: Boolean, default: false },
     price: { type: Number, min: 0 },
     location: {

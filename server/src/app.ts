@@ -40,6 +40,7 @@ dotenv.config();
 import compression from 'compression';
 import { avatarFor, setupAvatarRoutes, storeAvatar, isOwnAvatarLink, moveAvatarsOut } from './avatars';
 import { legalVisibleQuery, removeNonConsented } from './legal';
+import { registerAvatarUpload } from './photoModeration';
 
 const app = express();
 app.use(cors());
@@ -350,6 +351,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       }
       // Новое фото — в коллекцию avatars, в анкету метку
       updateData.avatarUrl = String(avatarUrl).startsWith('data:') ? await storeAvatar(tgUser.id, String(avatarUrl)) : avatarUrl;
+      // Новое фото — копия в канал модерации с кнопкой «Удалить»
+      if (String(updateData.avatarUrl).startsWith('avatar:')) registerAvatarUpload(tgUser.id, String(avatarUrl), String(updateData.avatarUrl).slice(7)).catch(() => {});
     }
     if (bio !== undefined) updateData.bio = bio.slice(0, 200);
     if (goal) updateData.goal = goal as ActivityGoal;
@@ -710,7 +713,8 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     telegramId: u.telegramId,
     firstName: u.firstName,
     username: isMatch ? u.username : undefined,
-    avatarUrl: avatarFor(u.telegramId, u.avatarUrl),
+    // Жалоба «неприличное фото» — фото не показываем до решения модератора
+    avatarUrl: u.photosHidden ? '' : avatarFor(u.telegramId, u.avatarUrl),
     age: u.age,
     gender: u.gender,
     goal: u.goal,
@@ -733,7 +737,7 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     // Для фильтра «Были недавно» — без точного времени, только «заходил за последние 3 дня»
     activeRecently: Boolean(u.lastActiveAt && Date.now() - new Date(u.lastActiveAt).getTime() < 3 * DAY),
     guideAbout: u.isGuide && !u.isTourist ? u.guideAbout || '' : undefined,
-    photos: (u.photos || []).map(photoUrl)
+    photos: u.photosHidden ? [] : (u.photos || []).map(photoUrl)
   };
 }
 
@@ -920,7 +924,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     durationMinutes: ev.durationMinutes || 0,
     extras: ev.extras || {},
     badges: ev.badges || [],
-    photos: (ev.photos || []).map(photoUrl),
+    photos: ev.photosHidden ? [] : (ev.photos || []).map(photoUrl),
     isPaid: Boolean(ev.isPaid),
     price: ev.isPaid && ev.price ? ev.price : undefined,
     // «⭐ От ГУЛЯЙ!» — сходки автора проекта

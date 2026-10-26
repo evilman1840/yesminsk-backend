@@ -114,3 +114,13 @@ export async function sendTelegramPhoto(res: Response, fileId: string) {
 
 // Фото уже в кеше — значит, проверено, что оно наше
 export const isCachedPhoto = (fileId: string) => cache.has(fileId);
+
+// Фото удалено модератором: убираем из памяти и из базы уменьшенных
+export async function purgePhoto(fileId: string) {
+  const item = cache.get(fileId);
+  if (item) {
+    cache.delete(fileId);
+    cacheBytes -= item.body.length;
+  }
+  await SmallPhoto.deleteOne({ fileId }).catch(() => {});
+}

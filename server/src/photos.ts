@@ -1,6 +1,7 @@
 import { Express, Request, Response } from 'express';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import { sendTelegramPhoto, isCachedPhoto } from './utils/telegramFile';
+import { registerChannelPhoto } from './photoModeration';
 import { Event } from './models/Event';
 import { User } from './models/User';
 import { PHOTO_TEXTS as T } from './texts';
@@ -28,7 +29,7 @@ const tooMany = (telegramId: number) => {
 };
 
 // Фото → file_id: отправляем в канал без звука, берём самый большой размер
-async function storePhoto(buffer: Buffer, mime: string): Promise<string> {
+async function storePhoto(buffer: Buffer, mime: string, uploaderId: number): Promise<string> {
   if (isDevStorage()) {
     const id = `dev_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     devPhotos.set(id, buffer);
@@ -41,7 +42,10 @@ async function storePhoto(buffer: Buffer, mime: string): Promise<string> {
   const res: any = await (await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendPhoto`, { method: 'POST', body: form })).json();
   if (!res?.ok) throw new Error(res?.description || 'sendPhoto failed');
   const sizes = res.result.photo || [];
-  return sizes[sizes.length - 1].file_id;
+  const fileId = sizes[sizes.length - 1].file_id;
+  // Подпись «кто загрузил» и кнопки «Удалить» под фото в канале
+  registerChannelPhoto(fileId, uploaderId, res.result.chat.id, res.result.message_id).catch(() => {});
+  return fileId;
 }
 
 // Чистим список file_id из формы: строки, без повторов, не больше 5
@@ -64,7 +68,7 @@ export function setupPhotoRoutes(app: Express) {
       if (!match) return res.status(400).json({ error: T.badFile });
       const buffer = Buffer.from(match[3], 'base64');
       if (buffer.length > MAX_BYTES) return res.status(413).json({ error: T.tooBig });
-      res.json({ id: await storePhoto(buffer, match[1]) });
+      res.json({ id: await storePhoto(buffer, match[1], req.telegramUser!.id) });
     } catch (err: any) {
       console.warn('⚠️ Фото не сохранилось:', err?.message || err);
       res.status(500).json({ error: T.failed });

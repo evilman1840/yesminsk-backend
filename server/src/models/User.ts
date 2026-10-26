@@ -67,6 +67,7 @@ export interface IUser extends Document {
   hiddenPlaces?: string[];   // места, смахнутые «Неинтересно»
   hiddenEvents?: string[];   // сходки, смахнутые «Неинтересно»
   hiddenByReports?: boolean; // скрыт после 3 жалоб до решения модератора
+  photosHidden?: boolean;    // жалоба «неприличное фото»: фото не показываем до решения модератора
   guideAbout?: string;    // что может показать
   lastActiveAt: Date;
 }
@@ -142,6 +143,7 @@ const UserSchema = new Schema<IUser>(
     hiddenPlaces: { type: [String], default: [] },
     hiddenEvents: { type: [String], default: [] },
     hiddenByReports: { type: Boolean, default: false },
+    photosHidden: { type: Boolean, default: false },
     guideAbout: { type: String, maxlength: 140, default: '' },
     lastActiveAt: { type: Date, default: Date.now }
   },

@@ -10,7 +10,8 @@ import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
 import { Event } from './models/Event';
 import { Donation } from './models/Donation';
 import { handleNewsMessage } from './news';
-import { handleModerationCallback, handleModerationCommand } from './moderation';
+import { handleModerationCallback, handleModerationCommand, banUser } from './moderation';
+import { handlePhotoModerationCallback, handlePhotosCommand } from './photoModeration';
 import { handleStatsCommand } from './stats';
 import { handleFundCommand } from './fund';
 import { handleIdeasCommand } from './ideas';
@@ -57,7 +58,7 @@ export function setupTelegramBot(app: Express) {
     // Нажатие кнопки под жалобой (бан / всё в порядке)
     if (req.body?.callback_query) {
       const q = req.body.callback_query;
-      (async () => (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handleNudgeCallback(q)) || (await handleProposalCallback(q)) || (await handleSuggestionCallback(q)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)))().catch((err) =>
+      (async () => (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handleNudgeCallback(q)) || (await handleProposalCallback(q)) || (await handleSuggestionCallback(q)) || (await handlePhotoModerationCallback(q, banUser)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)))().catch((err) =>
         console.warn('⚠️ Ошибка обработки кнопки:', err?.message || err)
       );
       return;
@@ -99,6 +100,7 @@ async function handleMessage(message: any, chatId: number) {
   // Новости проекта (/news, /delnews, /myid) — в том числе фото и альбомы
   if (await handleNewsMessage(message)) return;
   if (await handleModerationCommand(message)) return;
+  if (await handlePhotosCommand(message)) return;
   if (await handleStatsCommand(message)) return;
   if (await handleFundCommand(message)) return;
   if (await handleIdeasCommand(message)) return;

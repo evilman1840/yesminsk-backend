@@ -7,19 +7,21 @@ import { Event } from './models/Event';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { isAdmin } from './news';
 import { formatWhen } from './eventNotify';
+import { removeUserPhotos, removeEventPhotos } from './photoModeration';
 
 /**
  * Модерация: жалобы на анкеты и сходки, автоскрытие после 3 жалоб, бан через кнопки в боте.
  * Жалобы приходят администраторам (ADMIN_TELEGRAM_IDS) в чат с ботом.
  */
 
-export type ReportReason = 'flirt' | 'rude' | 'spam' | 'fake' | 'danger' | 'minor' | 'other';
+export type ReportReason = 'flirt' | 'rude' | 'spam' | 'fake' | 'photo' | 'danger' | 'minor' | 'other';
 
 const REASONS: Record<ReportReason, string> = {
   flirt: '💋 Флирт, намёки на свидания',
   rude: '😠 Грубость, оскорбления',
   spam: '📢 Спам или реклама',
   fake: '🎭 Фейк, чужие фото',
+  photo: '📷 Неприличное фото',
   danger: '⚠️ Опасное поведение',
   minor: '🔞 Похоже, младше 18',
   other: '❓ Другое'
@@ -111,7 +113,7 @@ async function clearEvent(eventId: string) {
 export async function handleModerationCallback(query: any): Promise<boolean> {
   const data: string = query.data || '';
   const [action, id] = data.split(':');
-  if (!['ban', 'okuser', 'delev', 'okev'].includes(action)) return false;
+  if (!['ban', 'okuser', 'delev', 'okev', 'delphu', 'delphe', 'okphu', 'okphe'].includes(action)) return false;
 
   if (!isAdmin(query.from?.id)) {
     callBot('answerCallbackQuery', { callback_query_id: query.id, text: 'Только для администратора' });
@@ -131,6 +133,20 @@ export async function handleModerationCallback(query: any): Promise<boolean> {
   } else if (action === 'okev') {
     await clearEvent(id);
     result = '✅ Жалобы отклонены, сходка снова видна';
+  } else if (action === 'delphu') {
+    // Жалоба на фото: удаляем все фото человека и пишем ему
+    await removeUserPhotos(Number(id));
+    sendTelegramMessage(Number(id), '🗑 Твои фото удалены: они нарушают правила «ГУЛЯЙ!». Загрузи, пожалуйста, другие.', 'Открыть «ГУЛЯЙ!»', '?tab=profile');
+    result = '🗑 Фото удалены';
+  } else if (action === 'delphe') {
+    await removeEventPhotos(id);
+    result = '🗑 Фото сходки удалены';
+  } else if (action === 'okphu') {
+    await User.updateOne({ telegramId: Number(id) }, { $set: { photosHidden: false } });
+    result = '✅ Фото в порядке, снова видны';
+  } else if (action === 'okphe') {
+    if (mongoose.Types.ObjectId.isValid(id)) await Event.updateOne({ _id: id }, { $set: { photosHidden: false } });
+    result = '✅ Фото в порядке, снова видны';
   }
 
   callBot('answerCallbackQuery', { callback_query_id: query.id, text: result });
@@ -207,6 +223,9 @@ export function setupModerationRoutes(app: Express) {
         await User.updateOne({ telegramId: fromId }, { $addToSet: { blockedUsers: targetIdNum } });
 
         const target = await User.findOne({ telegramId: targetIdNum });
+        // Неприличное фото: фото прячем сразу, с первой жалобы
+        const isPhoto = reason === 'photo';
+        if (isPhoto) await User.updateOne({ telegramId: targetIdNum }, { $set: { photosHidden: true } });
         const autoHidden = openCount >= AUTO_HIDE_AFTER && !target?.hiddenByReports;
         if (autoHidden) await User.updateOne({ telegramId: targetIdNum }, { $set: { hiddenByReports: true } });
 
@@ -216,29 +235,45 @@ export function setupModerationRoutes(app: Express) {
             `${target?.username ? ` · @${escapeHtml(target.username)}` : ''} · ID ${targetIdNum}\n` +
             `📝 ${escapeHtml(target?.bio || 'без описания')}\n\n` +
             `Причина: ${REASONS[reason as ReportReason]}${commentLine}\n${reporterLine}` +
-            (autoHidden ? `\n\n🙈 Анкета скрыта автоматически (${AUTO_HIDE_AFTER}+ жалоб) до твоего решения.` : ''),
-          [
-            { text: '🚫 Забанить', data: `ban:${targetIdNum}` },
-            { text: '✅ Всё в порядке', data: `okuser:${targetIdNum}` }
-          ]
+            (autoHidden ? `\n\n🙈 Анкета скрыта автоматически (${AUTO_HIDE_AFTER}+ жалоб) до твоего решения.` : '') +
+            (isPhoto ? `\n\n🙈 Фото человека скрыты до твоего решения. Посмотреть: /photos ${targetIdNum}` : ''),
+          isPhoto
+            ? [
+                { text: '🗑 Удалить фото', data: `delphu:${targetIdNum}` },
+                { text: '🚫 Забанить', data: `ban:${targetIdNum}` },
+                { text: '✅ Фото в порядке', data: `okphu:${targetIdNum}` }
+              ]
+            : [
+                { text: '🚫 Забанить', data: `ban:${targetIdNum}` },
+                { text: '✅ Всё в порядке', data: `okuser:${targetIdNum}` }
+              ]
         );
       } else {
         const event = mongoose.Types.ObjectId.isValid(targetId) ? await Event.findById(targetId) : null;
         if (!event) return res.status(404).json({ error: 'Сходка не найдена' });
         const autoHidden = openCount >= AUTO_HIDE_AFTER && event.isActive;
         if (autoHidden) await Event.updateOne({ _id: event._id }, { $set: { isActive: false } });
+        const isPhoto = reason === 'photo';
+        if (isPhoto) await Event.updateOne({ _id: event._id }, { $set: { photosHidden: true } });
 
         notifyAdmins(
           `⚠️ <b>Жалоба на сходку</b> (${openCount} открыт${openCount === 1 ? 'ая' : 'ых'})\n\n` +
             `📍 <b>${escapeHtml(event.title)}</b>\n🕒 ${formatWhen(event.dateTime)} · ${escapeHtml(event.locationName)}\n` +
             `📝 ${escapeHtml(event.description)}\n👤 Организатор: ${escapeHtml(event.creator.name)} · ID ${event.creator.telegramId}\n\n` +
             `Причина: ${REASONS[reason as ReportReason]}${commentLine}\n${reporterLine}` +
-            (autoHidden ? `\n\n🙈 Сходка скрыта автоматически (${AUTO_HIDE_AFTER}+ жалоб) до твоего решения.` : ''),
-          [
-            { text: '🗑 Скрыть сходку', data: `delev:${event._id}` },
-            { text: '🚫 Забанить автора', data: `ban:${event.creator.telegramId}` },
-            { text: '✅ Всё в порядке', data: `okev:${event._id}` }
-          ]
+            (autoHidden ? `\n\n🙈 Сходка скрыта автоматически (${AUTO_HIDE_AFTER}+ жалоб) до твоего решения.` : '') +
+            (isPhoto ? `\n\n🙈 Фото сходки скрыты до твоего решения. Посмотреть: /photos ev:${event._id}` : ''),
+          isPhoto
+            ? [
+                { text: '🗑 Удалить фото', data: `delphe:${event._id}` },
+                { text: '🚫 Забанить автора', data: `ban:${event.creator.telegramId}` },
+                { text: '✅ Фото в порядке', data: `okphe:${event._id}` }
+              ]
+            : [
+                { text: '🗑 Скрыть сходку', data: `delev:${event._id}` },
+                { text: '🚫 Забанить автора', data: `ban:${event.creator.telegramId}` },
+                { text: '✅ Всё в порядке', data: `okev:${event._id}` }
+              ]
         );
       }
 
