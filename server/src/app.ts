@@ -217,6 +217,11 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
       // Без save(): старая анкета с полем, которое не проходит проверку схемы, не должна ронять вход
       user.lastActiveAt = new Date();
       const set: Record<string, any> = { lastActiveAt: user.lastActiveAt };
+      // Завёл или сменил @username в Telegram — запоминаем (иначе ему нельзя написать)
+      if ((tgUser.username || '') !== (user.username || '')) {
+        user.username = tgUser.username || undefined;
+        set.username = tgUser.username || '';
+      }
       // Фото из Telegram (не своё загруженное): ссылка меняется, когда человек меняет фото в Telegram — обновляем
       if (tgUser.photo_url && user.avatarUrl !== tgUser.photo_url && /^https:\/\/t\.me\/i\/userpic\//.test(user.avatarUrl || '')) {
         user.avatarUrl = tgUser.photo_url;

@@ -1,3 +1,4 @@
+import { USERNAME_TEXTS as U } from './texts';
 import { IUser } from './models/User';
 import { Reaction } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
@@ -37,10 +38,13 @@ export async function sendLike(me: IUser, target: IUser, context = ''): Promise<
         'Открыть анкету',
         `?user=${target.telegramId}`
       );
+      // Без @username второй человек не сможет написать первым — подсказываем завести
+      if (!target.username) sendTelegramMessage(target.telegramId, U.noUsernameMatch(escapeHtml(me.firstName), Boolean(me.username)), 'Открыть анкету', `?user=${me.telegramId}`);
+      if (!me.username) sendTelegramMessage(me.telegramId, U.noUsernameMatch(escapeHtml(target.firstName), Boolean(target.username)), 'Открыть анкету', `?user=${target.telegramId}`);
     } else {
       sendTelegramMessage(
         target.telegramId,
-        `👋 <b>${escapeHtml(me.firstName)}</b> передаёт вам привет и хочет пообщаться${context ? ` ${escapeHtml(context)}` : ''}!\n\nЗагляните в раздел «Хотят пообщаться». Если тоже захотите, нажмите 👋, и сможете написать друг другу.`,
+        `👋 <b>${escapeHtml(me.firstName)}</b> передаёт тебе привет и хочет пообщаться${context ? ` ${escapeHtml(context)}` : ''}!\n\nЗагляни в «Хотят пообщаться». Если тоже захочешь, нажми 👋, и сможете написать друг другу.`,
         'Посмотреть анкету',
         `?user=${me.telegramId}`
       );

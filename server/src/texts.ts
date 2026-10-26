@@ -283,3 +283,13 @@ export const BOT_ACCESS_TEXTS = {
     '🔔 Готово! Теперь сюда будут приходить напоминания о сходках, совпадения по «Хочу сходить» и приветы 👋. Если надоест, можно выключить подборки в анкете.',
   statsLine: (can: number, total: number, blocked: number) => `🔔 Бот может писать: ${can} из ${total}${blocked ? ` · не доходит: ${blocked}` : ''}`
 };
+
+// Нет @username в Telegram: написать не получится — просим завести
+export const USERNAME_TEXTS = {
+  // Тому, у кого нет username, при взаимном 👋
+  noUsernameMatch: (name: string, otherHasUsername: boolean) =>
+    `✍️ У тебя нет имени пользователя в Telegram, поэтому ${name} не сможет написать тебе первым.\n\n` +
+    (otherHasUsername ? `Напиши первым по ссылке выше 👆 или ` : '') +
+    `заведи имя пользователя, это 30 секунд: Telegram → Настройки → Изменить (или нажми на своё имя) → «Имя пользователя».`,
+  statsLine: (n: number, total: number) => `✍️ Без @username: ${n} из ${total}`
+};

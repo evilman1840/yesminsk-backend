@@ -8,7 +8,7 @@ import { Place, PlaceTip } from './models/Place';
 import { sendTelegramMessage } from './utils/telegramNotify';
 import { isAdmin } from './news';
 import { meetupStatsLines } from './meetupMetrics';
-import { BOT_ACCESS_TEXTS } from './texts';
+import { BOT_ACCESS_TEXTS, USERNAME_TEXTS } from './texts';
 import { wishStatsLines } from './wishes';
 import { nudgeStatsLines } from './nudges';
 
@@ -101,6 +101,7 @@ export async function buildStats(): Promise<string> {
 
   const meetupLines = await meetupStatsLines(ago(30));
   // Скольким людям бот может писать (остальные открыли приложение по ссылке и не разрешили сообщения)
+  const noUsername = await User.countDocuments({ ...real, username: { $in: [null, ''] } });
   const [canMessage, blocked] = await Promise.all([User.countDocuments({ ...real, canMessage: true }), User.countDocuments({ ...real, canMessage: false })]);
   const wishLines = await wishStatsLines(ago(30));
   const nudgeLines = await nudgeStatsLines(ago(30));
@@ -118,6 +119,7 @@ export async function buildStats(): Promise<string> {
     `🧭 Гиды ${guides} · 🧳 туристы ${tourists} · ⚡ «Хочу сейчас» ${availableNow}`,
     `🙈 В невидимке ${invisible} · 💌 пришли по приглашениям ${invitedJoined}`,
     BOT_ACCESS_TEXTS.statsLine(canMessage, usersTotal, blocked),
+    USERNAME_TEXTS.statsLine(noUsername, usersTotal),
     ``,
     `👋 <b>Знакомства</b>`,
     `«Пообщаться» всего ${likes.length} (за 7 дней ${plus(likes7)})`,
