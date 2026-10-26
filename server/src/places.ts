@@ -247,6 +247,22 @@ interface Draft {
 // Черновики живут в памяти сервера (если сервер перезапустится — начни /place заново)
 const drafts = new Map<number, Draft>();
 
+// Черновик дублируем в базе: деплой перезапускает сервер, и без этого недописанное место терялось
+const PlaceDraft = mongoose.model('PlaceDraft', new mongoose.Schema({ chatId: { type: Number, unique: true }, draft: Object, updatedAt: Date }));
+async function loadDraft(chatId: number) {
+  if (!chatId || drafts.has(chatId)) return;
+  const saved = await PlaceDraft.findOne({ chatId }).lean().catch(() => null);
+  // Черновики старше суток не поднимаем
+  if (saved?.draft && Date.now() - new Date(saved.updatedAt as any).getTime() < 24 * 60 * 60 * 1000) drafts.set(chatId, saved.draft as Draft);
+}
+async function syncDraft(chatId: number) {
+  if (!chatId) return;
+  const d = drafts.get(chatId);
+  if (!d) return PlaceDraft.deleteOne({ chatId }).catch(() => {});
+  const { photoTimer, ...plain } = d;
+  await PlaceDraft.updateOne({ chatId }, { $set: { draft: plain, updatedAt: new Date() } }, { upsert: true }).catch(() => {});
+}
+
 type Keyboard = { text: string; callback_data: string }[][];
 
 async function callBot(method: string, body: any) {
@@ -469,6 +485,15 @@ const newDraft = (): Draft => ({
  * Сообщения автора боту, связанные с местами. Возвращает true, если сообщение обработано
  */
 export async function handlePlaceMessage(message: any): Promise<boolean> {
+  const chatId: number = message.chat?.id;
+  await loadDraft(chatId);
+  const hadDraft = drafts.has(chatId);
+  const handled = await handlePlaceMessageInner(message);
+  if (hadDraft || drafts.has(chatId)) await syncDraft(chatId);
+  return handled;
+}
+
+async function handlePlaceMessageInner(message: any): Promise<boolean> {
   const chatId: number = message.chat.id;
   const fromId: number = message.from?.id;
   const text: string = (message.text || '').trim();
@@ -775,6 +800,14 @@ export async function handlePlaceMessage(message: any): Promise<boolean> {
  * Нажатия кнопок в диалоге добавления места и удаление советов
  */
 export async function handlePlaceCallback(query: any): Promise<boolean> {
+  const chatId: number = query.message?.chat?.id;
+  if (String(query.data || '').startsWith('pl:')) await loadDraft(chatId);
+  const handled = await handlePlaceCallbackInner(query);
+  if (String(query.data || '').startsWith('pl:')) await syncDraft(chatId);
+  return handled;
+}
+
+async function handlePlaceCallbackInner(query: any): Promise<boolean> {
   const data: string = query.data || '';
   if (!data.startsWith('pl:') && !data.startsWith('tipdel:') && !data.startsWith('plcat:')) return false;
 
@@ -812,7 +845,8 @@ export async function handlePlaceCallback(query: any): Promise<boolean> {
 
   const d = drafts.get(chatId);
   if (!d) {
-    answer('Черновик не найден, начни заново: /place');
+    answer('Черновик не найден');
+    say(chatId, 'Черновик места не найден 😔 Начни заново: /place');
     return true;
   }
   const [, action, value] = data.split(':');
