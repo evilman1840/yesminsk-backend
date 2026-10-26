@@ -15,7 +15,11 @@ const Avatar = model(
   new Schema({
     telegramId: { type: Number, required: true, unique: true },
     data: { type: String, required: true },
-    v: { type: String, required: true }
+    v: { type: String, required: true },
+    // Уменьшенные версии (WebP): 900 px — анкета на весь экран, 200 px — кружки на карте и в списках.
+    // Хранятся в базе, чтобы после перезапуска сервера не пересчитывать сотни фото заново
+    img900: Buffer,
+    img200: Buffer
   })
 );
 
@@ -39,7 +43,7 @@ export const isOwnAvatarLink = (url: string) => url.startsWith('avatar:') || /\/
 // Новое фото из приложения: кладём в коллекцию, в анкету — метку
 export async function storeAvatar(telegramId: number, data: string): Promise<string> {
   const v = version(data);
-  await Avatar.updateOne({ telegramId }, { $set: { data, v } }, { upsert: true });
+  await Avatar.updateOne({ telegramId }, { $set: { data, v }, $unset: { img900: 1, img200: 1 } }, { upsert: true });
   return `avatar:${v}`;
 }
 
@@ -78,18 +82,44 @@ export async function moveAvatarsOut() {
 
 // Уменьшенные фото профиля в памяти (по версии): одну аватарку видят многие
 const small = new Map<string, { type: string; body: Buffer }>();
+let smallBytes = 0;
+const MAX_SMALL_BYTES = 20 * 1024 * 1024; // память сервера 512 МБ — держим не больше 20 МБ аватарок
+const remember = (key: string, item: { type: string; body: Buffer }) => {
+  if (small.has(key)) return;
+  small.set(key, item);
+  smallBytes += item.body.length;
+  while (smallBytes > MAX_SMALL_BYTES && small.size) {
+    const [k, old] = small.entries().next().value!;
+    small.delete(k);
+    smallBytes -= old.body.length;
+  }
+};
+// lean() отдаёт BSON Binary: байты в .buffer
+const toBuffer = (raw: any): Buffer | null => (!raw ? null : Buffer.isBuffer(raw) ? raw : raw.buffer ? Buffer.from(raw.buffer) : null);
 
 export function setupAvatarRoutes(app: Express) {
   app.get('/api/users/:telegramId/avatar', async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.telegramId);
       if (!Number.isFinite(id)) return res.sendStatus(404);
-      const key = `${id}:${req.query.v || ''}`;
+      // ?w=200 — кружок на карте и в списках; иначе — 900 px для анкеты
+      const w = req.query.w === '200' ? 200 : 900;
+      const field = w === 200 ? 'img200' : 'img900';
+      const key = `${id}:${req.query.v || ''}:${w}`;
       const hit = small.get(key);
       if (hit) {
         res.set('Content-Type', hit.type);
         res.set('Cache-Control', 'public, max-age=2592000, immutable');
         return res.send(hit.body);
+      }
+      const ready = await Avatar.findOne({ telegramId: id }, { [field]: 1 }).lean();
+      const readyBytes = toBuffer((ready as any)?.[field]);
+      if (readyBytes && readyBytes.length > 100) {
+        const item = { type: 'image/webp', body: readyBytes };
+        remember(key, item);
+        res.set('Content-Type', item.type);
+        res.set('Cache-Control', 'public, max-age=2592000, immutable');
+        return res.send(item.body);
       }
       const stored = await Avatar.findOne({ telegramId: id }, { data: 1 }).lean();
       // До переноса фото ещё могло лежать в анкете
@@ -97,10 +127,11 @@ export function setupAvatarRoutes(app: Express) {
       const m = data?.match(/^data:(image\/[\w.+-]+);base64,(.+)$/s);
       if (!m) return res.sendStatus(404);
       const original = Buffer.from(m[2], 'base64');
-      // Аватарка бывает на весь экран анкеты: 900 px хватает и для ретины
-      const item = (await limited(() => shrinkImage(original, 900))) || { type: m[1], body: original };
-      if (small.size > 3000) small.delete(small.keys().next().value!);
-      small.set(key, item);
+      const shrunk = await limited(() => shrinkImage(original, w));
+      const item = shrunk || { type: m[1], body: original };
+      // Сохраняем уменьшенную версию в базу — после перезапуска возьмём готовую
+      if (shrunk && stored) Avatar.updateOne({ telegramId: id }, { $set: { [field]: shrunk.body } }).catch(() => {});
+      remember(key, item);
       res.set('Content-Type', item.type);
       res.set('Cache-Control', 'public, max-age=2592000, immutable');
       res.send(item.body);
