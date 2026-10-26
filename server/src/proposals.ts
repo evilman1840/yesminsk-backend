@@ -176,6 +176,53 @@ async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
   for (const id of adminIds()) sendTelegramMessage(id, T.adminCreated(escapeHtml(event.title), when, option.yes.length), T.openEvent, `?event=${eventId}`);
 }
 
+/* ---------- Догоняем предложения: собрать встречу или напомнить ---------- */
+
+const REMIND_AFTER = 4 * HOUR;   // не ответил на предложение — один раз напоминаем
+const WINNER_AFTER = 12 * HOUR;  // голоса разошлись — собираем на варианте, где больше всего «Пойду» (от двух)
+
+// Вариант с наибольшим числом «Пойду» среди тех, что ещё впереди (с запасом в 2 часа)
+const bestOption = (g: IWishGroup) => {
+  let best = -1;
+  let yes = 0;
+  g.proposal!.options.forEach((o, i) => {
+    if (new Date(o.at).getTime() < Date.now() + 2 * HOUR) return;
+    if (o.yes.length > yes) {
+      best = i;
+      yes = o.yes.length;
+    }
+  });
+  return { best, yes };
+};
+
+export async function followUpProposals() {
+  for (const g of await WishGroup.find({ status: 'open', proposal: { $exists: true } })) {
+    const p = g.proposal!;
+    const age = Date.now() - new Date(p.createdAt || Date.now()).getTime();
+    const { best, yes } = bestOption(g);
+    // Порог набран (например, после снижения CONFIRM_MIN) или время вышло и есть хотя бы двое — собираем
+    if (best >= 0 && (yes >= CONFIRM_MIN() || (age > WINNER_AFTER && yes >= 2))) {
+      const claimed = await WishGroup.findOneAndUpdate({ _id: g._id, status: 'open' }, { $set: { status: 'fulfilled' } }, { new: true });
+      if (claimed) await createEventFromProposal(claimed, best);
+      continue;
+    }
+    // Один раз напоминаем тем, кто не нажал ни одного варианта
+    if (age > REMIND_AFTER && !(p as any).remindedAt) {
+      await WishGroup.updateOne({ _id: g._id }, { $set: { 'proposal.remindedAt': new Date() } });
+      const answered = new Set([...p.no, ...p.options.flatMap((o) => o.yes)]);
+      const silent = (await Wish.find({ groupId: g._id, status: 'matched' }, { telegramId: 1 }).lean()).map((w) => w.telegramId).filter((id) => !answered.has(id));
+      if (!silent.length) continue;
+      const what = escapeHtml(await phraseFor(g.kind, g.sport));
+      const when = best >= 0 ? formatWhen(p.options[best].at) : '';
+      const msg = await offerMessage(g);
+      for (const id of silent) {
+        await sendWithButtons(id, T.remind(yes, what, when, escapeHtml(p.placeName)), msg.rows);
+        await new Promise((r) => setTimeout(r, 60));
+      }
+    }
+  }
+}
+
 /* ---------- Цикл: предложить, отправить днём ---------- */
 
 let running = false;
@@ -198,6 +245,8 @@ export async function runProposals() {
 
     // 2. Отправляем днём
     if (!process.env.TELEGRAM_BOT_TOKEN || !isDaytime()) return;
+    // Собрать встречу, где голосов уже хватает, или напомнить молчащим
+    await followUpProposals();
     // Места нет — просим группу прислать ссылку
     for (const w of await Wish.find({ pending: 'askplace', status: 'matched' })) {
       const g = await WishGroup.findById(w.groupId);

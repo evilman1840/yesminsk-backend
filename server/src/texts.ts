@@ -211,6 +211,11 @@ export const PROPOSAL_TEXTS = {
   createdForYes: (title: string, when: string, where: string) =>
     `🎉 <b>Сходка собрана!</b>\n\n${title}\n🕒 ${when}\n📍 ${where}\n\nТы в списке участников. Если планы поменяются, отмени участие в приложении.`,
   openEvent: 'Открыть сходку',
+  // Напоминание тем, кто не ответил на предложение
+  remind: (n: number, what: string, when: string, place: string) =>
+    n > 0
+      ? `🙋 Уже ${n} ${n % 10 === 1 && n % 100 !== 11 ? 'человек идёт' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'человека идут' : 'человек идут'} ${what}: <b>${when}</b>, место: ${place}.\n\nПрисоединишься? Нажми время, которое подходит 👇`
+      : `🙋 Напоминаю: собираемся ${what}, место: ${place}. Нажми время, которое подходит, и как только наберётся компания, бот всё соберёт 👇`,
   adminCreated: (title: string, when: string, n: number) =>
     `⭐ Из «Хочу сходить» собралась встреча: <b>${title}</b>, ${when}. Записались: ${n}.\n\nЗагляни, если сможешь 🙂`,
   adminNoPlace: (what: string, n: number) =>
