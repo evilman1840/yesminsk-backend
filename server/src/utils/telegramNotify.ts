@@ -17,7 +17,8 @@ export const escapeHtml = (text: string): string =>
   String(text || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 
 /**
  * appPath — что открыть в приложении, например `?event=<id>` (откроет сразу нужную сходку)

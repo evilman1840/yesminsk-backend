@@ -201,7 +201,7 @@ export function setupPlacesRoutes(app: Express) {
 
       res.json({ success: true, tip: { id: tip._id.toString(), telegramId: tgUser.id, name: tip.name, avatarUrl: tip.avatarUrl, text, createdAt: tip.createdAt, isMine: true } });
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Не удалось сохранить совет' });
+      res.status(500).json({ error: 'Не удалось сохранить совет' });
     }
   });
 
@@ -390,15 +390,39 @@ export async function geocode(address: string): Promise<{ coords: [number, numbe
 
 export const isYandexMapsLink = (url: string) => /^https?:\/\/([\w-]+\.)*(yandex\.(by|ru|com|kz)|ya\.ru)\/(maps|-\/)/i.test(url.trim());
 
+const isYandexHost = (url: string) => {
+  try {
+    const u = new URL(url);
+    return (u.protocol === 'https:' || u.protocol === 'http:') && !u.username && !u.port && /(^|\.)(yandex\.(by|ru|com|kz)|ya\.ru)$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
+};
+
 // Точка из ссылки Яндекс Карт: из параметров адреса или со страницы места
 export async function placeFromYandexLink(url: string): Promise<{ coords: [number, number]; label: string } | null> {
   try {
-    const res = await fetch(url.trim(), {
-      redirect: 'follow',
-      headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148', 'Accept-Language': 'ru' }
-    });
-    const finalUrl = decodeURIComponent(res.url || url);
-    const html = await res.text();
+    // Переходы по редиректам — сами и только внутри Яндекса: ссылку присылают люди,
+    // и редирект на чужой или внутренний адрес заставил бы сервер ходить куда не надо
+    let current = url.trim();
+    let res: globalThis.Response | null = null;
+    for (let hop = 0; hop < 5; hop++) {
+      if (!isYandexHost(current)) return null;
+      res = await fetch(current, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(8000),
+        headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148', 'Accept-Language': 'ru' }
+      });
+      const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+      if (!location) break;
+      current = new URL(location, current).toString();
+      res = null;
+    }
+    if (!res) return null;
+    const finalUrl = decodeURIComponent(current);
+    // Страница места — сотни КБ; больше 3 МБ не читаем
+    if (Number(res.headers.get('content-length') || 0) > 3_000_000) return null;
+    const html = (await res.text()).slice(0, 3_000_000);
 
     let lng: number | null = null;
     let lat: number | null = null;

@@ -24,7 +24,7 @@ export function verifyTelegramWebAppData(initData: string, botToken: string): Te
   try {
     const urlParams = new URLSearchParams(initData);
     const hash = urlParams.get('hash');
-    if (!hash) return null;
+    if (!hash || !/^[a-f0-9]{64}$/i.test(hash)) return null;
 
     urlParams.delete('hash');
 
@@ -64,7 +64,8 @@ export function verifyTelegramWebAppData(initData: string, botToken: string): Te
     if (!authDate || Date.now() / 1000 - authDate > maxAgeSec) return null;
 
     const userParam = urlParams.get('user');
-    return userParam ? JSON.parse(userParam) : null;
+    const user = userParam ? JSON.parse(userParam) : null;
+    return user && Number.isSafeInteger(user.id) && user.id > 0 ? user : null;
   } catch (err) {
     console.error('Ошибка верификации Telegram initData:', err);
     return null;
@@ -82,8 +83,9 @@ export const telegramAuthMiddleware = (
   const initData = req.headers['x-telegram-init-data'] as string;
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
-  // Мок-пользователь для локального тестирования в браузере (без открытия через Telegram)
-  if (process.env.NODE_ENV === 'development' && (!botToken || !initData)) {
+  // Мок-пользователь для локального тестирования в браузере (без открытия через Telegram).
+  // На Render (переменная RENDER) — никогда, даже если по ошибке выставили NODE_ENV=development
+  if (process.env.NODE_ENV === 'development' && !process.env.RENDER && (!botToken || !initData)) {
     req.telegramUser = {
       id: 999001,
       first_name: 'Алексей',

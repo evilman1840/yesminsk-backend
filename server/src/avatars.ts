@@ -124,7 +124,8 @@ export function setupAvatarRoutes(app: Express) {
       const stored = await Avatar.findOne({ telegramId: id }, { data: 1 }).lean();
       // До переноса фото ещё могло лежать в анкете
       const data = stored?.data || (await User.findOne({ telegramId: id, avatarUrl: /^data:/ }, { avatarUrl: 1 }).lean())?.avatarUrl;
-      const m = data?.match(/^data:(image\/[\w.+-]+);base64,(.+)$/s);
+      // Только обычные картинки: SVG и прочее могли бы выполнить код в браузере
+      const m = data?.match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/s);
       if (!m) return res.sendStatus(404);
       const original = Buffer.from(m[2], 'base64');
       const shrunk = await limited(() => shrinkImage(original, w));

@@ -200,7 +200,8 @@ export function setupModerationRoutes(app: Express) {
       const { targetType, targetId, reason } = req.body;
       const comment = String(req.body.comment || '').slice(0, 500);
 
-      if (!['user', 'event'].includes(targetType) || !targetId || !(reason in REASONS)) {
+      const badTarget = targetType === 'user' ? !Number.isSafeInteger(Number(targetId)) || Number(targetId) === fromId : !mongoose.Types.ObjectId.isValid(String(targetId));
+      if (!['user', 'event'].includes(targetType) || !targetId || badTarget || !Object.prototype.hasOwnProperty.call(REASONS, reason)) {
         return res.status(400).json({ error: 'Неполная жалоба' });
       }
 
@@ -279,7 +280,7 @@ export function setupModerationRoutes(app: Express) {
 
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Не удалось отправить жалобу' });
+      res.status(500).json({ error: 'Не удалось отправить жалобу' });
     }
   });
 }

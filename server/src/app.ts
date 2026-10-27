@@ -7,6 +7,7 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
+import { securityHeaders, stripMongoOperators, rateLimit } from './middleware/security';
 import { User, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, DIGEST_FREQUENCIES, Gender, PreferredGender } from './models/User';
 import { startDigestLoop } from './digest';
 import { startFeedbackLoop } from './feedback';
@@ -43,6 +44,10 @@ import { legalVisibleQuery, removeNonConsented } from './legal';
 import { registerAvatarUpload } from './photoModeration';
 
 const app = express();
+// Render стоит перед нами прокси: настоящий IP человека — в X-Forwarded-For
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+app.use(securityHeaders);
 app.use(cors());
 // Сжатие ответов: списки людей и сходок становятся в разы легче
 app.use(compression());
@@ -56,6 +61,12 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '5mb' })); // фото приходят уже сжатыми (~100 КБ), запас — для старых тяжёлых
+// Ключи «$ne», «a.b» из тела и адреса — вырезаем, чтобы нельзя было подменить запрос к базе
+app.use(stripMongoOperators);
+// Частота запросов: чтение (карта тянет сотни аватарок) — щедро, изменения — строже. Вебхук Telegram не ограничиваем
+const isWebhook = (req: Request) => req.path.startsWith('/api/telegram/');
+app.use('/api', rateLimit({ name: 'все запросы', windowMs: 60 * 1000, max: 1500, skip: isWebhook }));
+app.use('/api', rateLimit({ name: 'изменения', windowMs: 60 * 1000, max: 120, skip: (req) => req.method === 'GET' || isWebhook(req) }));
 // Забаненные не могут ничего менять
 app.use('/api', banGuard);
 
@@ -151,6 +162,32 @@ async function restoreSwipeHides() {
 
 // Самое большое фото в анкете (data:-строка, ~450 КБ)
 const MAX_AVATAR_CHARS = 600_000;
+
+// Фото профиля: своё сжатое фото (JPEG/PNG/WebP) или ссылка на фото из Telegram / заглушку.
+// Чужие адреса не пускаем: по ним можно узнать IP каждого, кто открыл анкету
+const AVATAR_DATA_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/;
+const AVATAR_HOSTS = ['t.me', 'cdn1.telegram-cdn.org', 'cdn4.telegram-cdn.org', 'cdn5.telegram-cdn.org', 'images.unsplash.com'];
+function isAllowedAvatar(value: string): boolean {
+  if (value.startsWith('data:')) return AVATAR_DATA_RE.test(value);
+  try {
+    const url = new URL(value);
+    const appHost = process.env.MINI_APP_URL ? new URL(process.env.MINI_APP_URL).host : '';
+    return url.protocol === 'https:' && (AVATAR_HOSTS.includes(url.host) || url.host === appHost || url.host === 'yesminsk-app.vercel.app');
+  } catch {
+    return false;
+  }
+}
+
+// Строка из формы: обрезаем пробелы и длину; не строка — undefined
+const cleanText = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : undefined);
+
+// Точка [lat, lng] из формы: числа в разумных пределах, иначе null
+function cleanLatLng(v: unknown): [number, number] | null {
+  if (!Array.isArray(v) || v.length !== 2) return null;
+  const [lat, lng] = v.map(Number);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return [lat, lng];
+}
 
 // Выдуманные анкеты из /api/users/seed — удаляем с рабочего сервера, чтобы люди не писали «пустоте»
 const TEST_PROFILES = [
@@ -344,19 +381,23 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     const updateData: any = {};
     // Ещё до 5 фото в анкете (id из /api/photos)
     if (cleanPhotoIds(photos)) updateData.photos = cleanPhotoIds(photos);
-    if (firstName || name) updateData.firstName = firstName || name;
+    const cleanName = cleanText(firstName || name, 40);
+    if (cleanName) updateData.firstName = cleanName;
     if (avatarUrl && !isOwnAvatarLink(String(avatarUrl))) {
       // Защита базы от огромных фото (приложение сжимает их до ~100 КБ)
       if (String(avatarUrl).length > MAX_AVATAR_CHARS) {
         return res.status(413).json({ error: 'Фото слишком большое. Загрузи его ещё раз, приложение сожмёт автоматически' });
+      }
+      if (typeof avatarUrl !== 'string' || !isAllowedAvatar(avatarUrl)) {
+        return res.status(400).json({ error: 'Это фото не подходит. Выбери фото JPEG или PNG с телефона' });
       }
       // Новое фото — в коллекцию avatars, в анкету метку
       updateData.avatarUrl = String(avatarUrl).startsWith('data:') ? await storeAvatar(tgUser.id, String(avatarUrl)) : avatarUrl;
       // Новое фото — копия в канал модерации с кнопкой «Удалить»
       if (String(updateData.avatarUrl).startsWith('avatar:')) registerAvatarUpload(tgUser.id, String(avatarUrl), String(updateData.avatarUrl).slice(7)).catch(() => {});
     }
-    if (bio !== undefined) updateData.bio = bio.slice(0, 200);
-    if (goal) updateData.goal = goal as ActivityGoal;
+    if (bio !== undefined) updateData.bio = cleanText(bio, 200) ?? '';
+    if (ACTIVITY_GOALS.includes(goal)) updateData.goal = goal as ActivityGoal;
     if (Array.isArray(goals)) {
       const clean = [...new Set(goals.filter((g: any) => ACTIVITY_GOALS.includes(g)))] as ActivityGoal[];
       if (clean.length) {
@@ -369,8 +410,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     if (DIGEST_FREQUENCIES.includes(digest)) updateData.digest = digest;
     if (age !== undefined) {
       // ГУЛЯЙ! — только для взрослых
-      if (Number(age) < 18) return res.status(400).json({ error: '«ГУЛЯЙ!» только для тех, кому 18+' });
-      updateData.age = Number(age);
+      if (!Number.isFinite(Number(age)) || Number(age) < 18) return res.status(400).json({ error: '«ГУЛЯЙ!» только для тех, кому 18+' });
+      updateData.age = Math.min(99, Math.floor(Number(age)));
       if (ageConfirmed) updateData.ageConfirmed = true;
       // Возраст указан сам и интересы выбраны — анкету можно показывать
       if (ageConfirmed && Array.isArray(goals) && goals.length) updateData.profileCompleted = true;
@@ -380,21 +421,27 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     if (gender) updateData.gender = gender as Gender;
     // Пол выбран самим человеком — больше не спрашиваем
     if (gender && genderConfirmed) updateData.genderConfirmed = true;
-    if (preferredGender) updateData.preferredGender = preferredGender as PreferredGender;
-    if (preferredAgeRange) updateData.preferredAgeRange = preferredAgeRange;
+    if (['all', 'male', 'female'].includes(preferredGender)) updateData.preferredGender = preferredGender as PreferredGender;
+    if (preferredAgeRange && typeof preferredAgeRange === 'object') {
+      const min = Math.floor(Number(preferredAgeRange.min));
+      const max = Math.floor(Number(preferredAgeRange.max));
+      if (min >= 18 && max <= 99 && min <= max) updateData.preferredAgeRange = { min, max };
+    }
     if (isTourist !== undefined) updateData.isTourist = Boolean(isTourist);
-    if (areaName) {
-      updateData.areaName = areaName;
-      if (/турист|проездом/i.test(areaName)) {
+    const cleanArea = cleanText(areaName, 60);
+    if (cleanArea) {
+      updateData.areaName = cleanArea;
+      if (/турист|проездом/i.test(cleanArea)) {
         updateData.isTourist = true;
       }
     }
-    if (isProfileActive !== undefined) updateData.isProfileActive = isProfileActive;
+    if (isProfileActive !== undefined) updateData.isProfileActive = Boolean(isProfileActive);
     if (isGuide !== undefined) updateData.isGuide = Boolean(isGuide);
     if (guideAbout !== undefined) updateData.guideAbout = String(guideAbout).slice(0, 140);
 
-    if (coordinates && Array.isArray(coordinates) && coordinates.length === 2) {
-      const [lat, lng] = coordinates.map(Number);
+    const latLng = cleanLatLng(coordinates);
+    if (latLng) {
+      const [lat, lng] = latLng;
       const prev = await User.findOne({ telegramId: tgUser.id }, { locationExact: 1, locationManual: 1, locationFuzzy: 1 }).lean();
       const old = prev?.locationExact?.coordinates;
       // Человек сам поставил метку и точка почти не изменилась (сохранил анкету) — метку не трогаем
@@ -416,7 +463,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     const f = updatedUser?.locationFuzzy?.coordinates;
     res.json({ success: true, user: updatedUser, shownCoordinates: f?.length === 2 ? [f[1], f[0]] : null, locationManual: Boolean(updatedUser?.locationManual) });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Ошибка сохранения профиля' });
+    console.warn('⚠️ Сохранение анкеты:', err?.message || err);
+    res.status(500).json({ error: 'Ошибка сохранения профиля' });
   }
 };
 
@@ -455,7 +503,7 @@ app.post('/api/donate/invoice', telegramAuthMiddleware as any, async (req: Authe
 
     res.json({ url: data.result });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Ошибка создания доната' });
+    res.status(500).json({ error: 'Ошибка создания доната' });
   }
 });
 
@@ -524,7 +572,7 @@ app.post('/api/users/block', telegramAuthMiddleware as any, async (req: Authenti
     const tgUser = req.telegramUser!;
     const blockedTelegramId = req.body.blockedTelegramId ?? req.body.targetTelegramId;
 
-    if (!blockedTelegramId) {
+    if (!blockedTelegramId || !Number.isFinite(Number(blockedTelegramId))) {
       return res.status(400).json({ error: 'Не указан ID пользователя' });
     }
 
@@ -587,7 +635,7 @@ app.get('/api/users/nearby-count', telegramAuthMiddleware as any, async (req: Au
   try {
     const tgUser = req.telegramUser!;
     const currentUser = await User.findOne({ telegramId: tgUser.id }, { blockedUsers: 1, skipped: 1, gender: 1, age: 1 }).lean();
-    res.json({ total: await User.countDocuments(nearbyQuery(tgUser, currentUser, req.query.goal)), all: await appUsersCount() });
+    res.json({ total: await User.countDocuments(nearbyQuery(tgUser, currentUser, typeof req.query.goal === 'string' ? req.query.goal : undefined)), all: await appUsersCount() });
   } catch (err: any) {
     console.warn('⚠️ /api/users/nearby-count:', err?.message || err);
     res.status(500).json({ error: 'Ошибка подсчёта' });
@@ -598,7 +646,7 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
   try {
     const tgUser = req.telegramUser!;
     const currentUser = await User.findOne({ telegramId: tgUser.id });
-    const query = nearbyQuery(tgUser, currentUser, req.query.goal);
+    const query = nearbyQuery(tgUser, currentUser, typeof req.query.goal === 'string' ? req.query.goal : undefined);
 
     // Самые активные 300: анкеты лёгкие (фото — ссылкой), карта не перегружается
     const users = await User.find(query).limit(300).sort({ lastActiveAt: -1 });
@@ -811,7 +859,7 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
       user: formatPublicUser(target, me, { iLiked: true, likedMe: isMatch, isMatch })
     });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Ошибка сохранения реакции' });
+    res.status(500).json({ error: 'Ошибка сохранения реакции' });
   }
 });
 
@@ -868,7 +916,7 @@ app.get('/api/reactions/inbox', telegramAuthMiddleware as any, async (req: Authe
 
     res.json({ likedMe, matches });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Ошибка загрузки симпатий' });
+    res.status(500).json({ error: 'Ошибка загрузки симпатий' });
   }
 });
 
@@ -950,6 +998,18 @@ const cleanPrice = (v: unknown) => {
 
 const cleanDuration = (v: unknown) => Math.min(24 * 60, Math.max(0, Math.round(Number(v) || 0)));
 
+const EVENT_CATEGORIES = ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'talk', 'support', 'other'];
+
+// Дата сходки: настоящая дата не дальше чем через год
+const cleanEventDate = (v: unknown) => {
+  const d = new Date(v as any);
+  const t = d.getTime();
+  return Number.isFinite(t) && t > Date.now() - DAY && t < Date.now() + 366 * DAY ? d : null;
+};
+
+// Не больше 10 новых сходок в сутки от одного человека: иначе бот рассылает «собирают сходку» тысячам и Telegram считает его спамером
+const EVENTS_PER_DAY = 10;
+
 const cleanTags = (tags: unknown) =>
   Array.isArray(tags) ? [...new Set(tags.filter((t: any) => EVENT_TAGS.includes(t)))] : undefined;
 
@@ -977,7 +1037,7 @@ async function notifyPlaceSavers(event: IEvent) {
 app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const { category } = req.query;
+    const category = typeof req.query.category === 'string' ? req.query.category : undefined;
 
     const filter: any = {
       isActive: true,
@@ -1034,18 +1094,27 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       wishGroupId
     } = req.body;
 
-    if (!title || !description || !locationName || !coordinates || !dateTime) {
+    const cleanTitle = cleanText(title, 100);
+    const cleanDescription = cleanText(description, 600);
+    const cleanLocation = cleanText(locationName, 150);
+    const latLng = cleanLatLng(coordinates);
+    const when = cleanEventDate(dateTime);
+    if (!cleanTitle || !cleanDescription || !cleanLocation || !latLng || !when) {
       return res.status(400).json({ error: 'Заполните все обязательные поля события' });
+    }
+    if (category && !EVENT_CATEGORIES.includes(category)) return res.status(400).json({ error: 'Неизвестный тип сходки' });
+    if ((await Event.countDocuments({ 'creator.telegramId': tgUser.id, createdAt: { $gte: new Date(Date.now() - DAY) } })) >= EVENTS_PER_DAY) {
+      return res.status(429).json({ error: 'Сегодня ты уже собрал(а) много сходок. Новые можно будет создать завтра' });
     }
 
     const tpl = await templateFields(templateId, extras);
     if ('error' in tpl) return res.status(400).json({ error: tpl.error });
 
-    const [lat, lng] = coordinates;
+    const [lat, lng] = latLng;
 
     const newEvent = await Event.create({
-      title: title.slice(0, 100),
-      description: description.slice(0, 600),
+      title: cleanTitle,
+      description: cleanDescription,
       category: category || 'walk',
       customCategory: category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '',
       tags: cleanTags(tags) || [],
@@ -1057,12 +1126,12 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       photos: cleanPhotoIds(photos) || [],
       isPaid: Boolean(isPaid),
       price: isPaid ? cleanPrice(price) : undefined,
-      locationName,
+      locationName: cleanLocation,
       location: {
         type: 'Point',
-        coordinates: [Number(lng), Number(lat)]
+        coordinates: [lng, lat]
       },
-      dateTime: new Date(dateTime),
+      dateTime: when,
       creator: {
         telegramId: tgUser.id,
         name: user?.firstName || tgUser.first_name,
@@ -1089,7 +1158,8 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     if (wishGroupId) onMeetupFromWish(wishGroupId, newEvent, tgUser.id).catch((err) => console.warn('⚠️ «Хочу сходить» после сходки:', err?.message || err));
     if (newEvent.placeId) notifyPlaceSavers(newEvent).catch((err) => console.warn('⚠️ Уведомление сохранившим место:', err?.message || err));
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Ошибка создания события' });
+    console.warn('⚠️ Создание сходки:', err?.message || err);
+    res.status(500).json({ error: 'Ошибка создания события' });
   }
 });
 
@@ -1303,21 +1373,30 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
     const oldTime = event.dateTime.getTime();
     const oldPlace = event.locationName;
 
-    if (title) event.title = title.slice(0, 100);
-    if (description) event.description = description.slice(0, 600);
+    const cleanTitle = cleanText(title, 100);
+    const cleanDescription = cleanText(description, 600);
+    const cleanLocation = cleanText(locationName, 150);
+    if (cleanTitle) event.title = cleanTitle;
+    if (cleanDescription) event.description = cleanDescription;
     if (category) {
+      if (!EVENT_CATEGORIES.includes(category)) return res.status(400).json({ error: 'Неизвестный тип сходки' });
       event.category = category;
       event.customCategory = category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '';
     }
     if (cleanTags(tags)) event.tags = cleanTags(tags);
-    if (locationName) event.locationName = locationName;
-    if (dateTime) event.dateTime = new Date(dateTime);
+    if (cleanLocation) event.locationName = cleanLocation;
+    if (dateTime) {
+      const when = cleanEventDate(dateTime);
+      if (!when) return res.status(400).json({ error: 'Проверь дату и время сходки' });
+      event.dateTime = when;
+    }
     if (maxParticipants !== undefined) event.maxParticipants = seatsLimit(maxParticipants);
-    if (coordinates && Array.isArray(coordinates)) {
-      const [lat, lng] = coordinates;
+    const latLng = cleanLatLng(coordinates);
+    if (latLng) {
+      const [lat, lng] = latLng;
       event.location = {
         type: 'Point',
-        coordinates: [Number(lng), Number(lat)]
+        coordinates: [lng, lat]
       };
     }
 
@@ -1341,7 +1420,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
 
     res.json(formatEvent(event, tgUser.id));
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Ошибка обновления события' });
+    res.status(500).json({ error: 'Ошибка обновления события' });
   }
 };
 
@@ -1563,7 +1642,7 @@ app.get('/api/users/seed', async (_req: Request, res: Response) => {
       message: `Успешно загружено ${seedProfiles.length} тестовых анкет в Минске!`
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Ошибка сидирования' });
+    res.status(500).json({ error: 'Ошибка сидирования' });
   }
 });
 
