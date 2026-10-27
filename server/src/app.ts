@@ -39,7 +39,7 @@ import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, 
 dotenv.config();
 
 import compression from 'compression';
-import { avatarFor, setupAvatarRoutes, storeAvatar, isOwnAvatarLink, moveAvatarsOut } from './avatars';
+import { avatarFor, setupAvatarRoutes, storeAvatar, isOwnAvatarLink, moveAvatarsOut, syncEventAvatars, syncAllEventAvatars } from './avatars';
 import { legalVisibleQuery, removeNonConsented } from './legal';
 import { registerAvatarUpload } from './photoModeration';
 
@@ -91,7 +91,7 @@ connectDb()
     widenFuzzyLocations();
     fixOneSeatEvents();
     fixAutoMeetupHosts();
-    moveAvatarsOut();
+    moveAvatarsOut().then(syncAllEventAvatars);
     backfillPlaceAuthors();
     removeNonConsented();
     seedEventTemplates();
@@ -268,6 +268,7 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
         set.avatarUrl = tgUser.photo_url;
       }
       await User.updateOne({ _id: user._id }, { $set: set });
+      if (set.avatarUrl) syncEventAvatars(user.telegramId, set.avatarUrl).catch(() => {});
     }
     // Telegram сообщает, разрешил ли человек боту писать
     if (!isDraft && tgUser.allows_write_to_pm && user.canMessage !== true) {
@@ -459,6 +460,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     // Без upsert: запись появляется только после согласия с Соглашением (agree-rules)
     const updatedUser = await User.findOneAndUpdate({ telegramId: tgUser.id }, { $set: updateData }, { new: true });
     if (!updatedUser) return res.status(400).json({ error: 'Сначала прими правила на первом экране' });
+    // Новое фото — сразу и в сходках, где человек организатор или участник
+    if (updateData.avatarUrl) syncEventAvatars(tgUser.id, updateData.avatarUrl).catch((err) => console.warn('⚠️ Фото в сходках:', err?.message || err));
 
     const f = updatedUser?.locationFuzzy?.coordinates;
     res.json({ success: true, user: updatedUser, shownCoordinates: f?.length === 2 ? [f[1], f[0]] : null, locationManual: Boolean(updatedUser?.locationManual) });

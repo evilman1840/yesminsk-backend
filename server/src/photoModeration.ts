@@ -4,7 +4,7 @@ import { Event } from './models/Event';
 import { isAdmin } from './news';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { purgePhoto } from './utils/telegramFile';
-import { deleteAvatar } from './avatars';
+import { deleteAvatar, syncEventAvatars } from './avatars';
 import { PHOTO_MOD_TEXTS as T } from './texts';
 
 /**
@@ -82,7 +82,10 @@ async function removeUpload(up: any) {
   } else if (up.kind === 'avatar') {
     // Удаляем, только если это фото всё ещё стоит в анкете
     const r = await User.updateOne({ telegramId: up.telegramId, avatarUrl: `avatar:${up.avatarV}` }, { $set: { avatarUrl: '' } });
-    if (r.modifiedCount) await deleteAvatar(up.telegramId);
+    if (r.modifiedCount) {
+      await deleteAvatar(up.telegramId);
+      await syncEventAvatars(up.telegramId, '');
+    }
   }
   up.status = 'deleted';
   await up.save();
@@ -94,6 +97,7 @@ export async function removeUserPhotos(telegramId: number) {
   for (const id of u?.photos || []) await purgePhoto(id);
   await User.updateOne({ telegramId }, { $set: { photos: [], avatarUrl: '', photosHidden: false } });
   await deleteAvatar(telegramId);
+  await syncEventAvatars(telegramId, '');
 }
 
 export async function removeEventPhotos(eventId: string) {

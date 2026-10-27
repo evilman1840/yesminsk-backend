@@ -47,6 +47,33 @@ export async function storeAvatar(telegramId: number, data: string): Promise<str
   return `avatar:${v}`;
 }
 
+// Сходки хранят копию метки фото организатора и участников — при смене фото обновляем её во всех сходках
+export async function syncEventAvatars(telegramId: number, avatarUrl?: string) {
+  const mark = avatarUrl || NO_AVATAR; // в сходке фото обязательно
+  await Event.updateMany({ 'creator.telegramId': telegramId }, { $set: { 'creator.avatarUrl': mark } });
+  await Event.updateMany(
+    { 'participants.telegramId': telegramId },
+    { $set: { 'participants.$[p].avatarUrl': mark } },
+    { arrayFilters: [{ 'p.telegramId': telegramId }] }
+  );
+}
+
+// Один раз: фото в уже созданных сходках — как сейчас в анкетах
+export async function syncAllEventAvatars() {
+  const KEY = 'event-avatars-sync-2026-10-27';
+  try {
+    const migrations = mongoose.connection.db!.collection('migrations');
+    if (await migrations.findOne({ key: KEY })) return;
+    const ids = new Set<number>([...(await Event.distinct('creator.telegramId')), ...(await Event.distinct('participants.telegramId'))].map(Number));
+    const users = await User.find({ telegramId: { $in: [...ids] } }, { telegramId: 1, avatarUrl: 1 }).lean();
+    for (const u of users) await syncEventAvatars(u.telegramId, u.avatarUrl);
+    await migrations.insertOne({ key: KEY, users: users.length, at: new Date() });
+    console.log(`✅ Фото в сходках обновлены: ${users.length} человек`);
+  } catch (err: any) {
+    console.warn('⚠️ Фото в сходках:', err?.message || err);
+  }
+}
+
 // Удаление аккаунта: фото профиля тоже стираем
 export const deleteAvatar = (telegramId: number) => Avatar.deleteOne({ telegramId });
 
