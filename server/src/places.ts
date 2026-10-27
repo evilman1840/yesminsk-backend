@@ -301,10 +301,16 @@ const typesKeyboard = (prefix: string): Keyboard => {
   return rows;
 };
 
-const MAX_PHOTOS = 10;
+export const MAX_PLACE_PHOTOS = 10;
+const MAX_PHOTOS = MAX_PLACE_PHOTOS;
 
 // Фото к уже опубликованному месту: /placephoto номер → дальше просто шли фото
 const photoTargets = new Map<number, { placeId: string; until: number; added: number; timer?: NodeJS.Timeout }>();
+
+// «🖼 Фото» в карточке правки (/placeedit): дальше просто шли фото — как после /placephoto
+export function startPlacePhotos(chatId: number, placeId: string) {
+  photoTargets.set(chatId, { placeId, until: Date.now() + 10 * 60 * 1000, added: 0 });
+}
 
 // Чей альбом: фото альбома приходят отдельными сообщениями (подпись — у одного), обрабатываются параллельно
 const albumOwners = new Map<string, { kind: 'news' | 'place'; placeId?: string }>();
@@ -592,10 +598,12 @@ async function handlePlaceMessageInner(message: any): Promise<boolean> {
     state.added += 1;
     if (state.timer) clearTimeout(state.timer);
     state.timer = setTimeout(() => {
-      Place.findById(fresh._id, { photos: 1 }).then((p) =>
-        say(chatId, `🖼 К «${escapeHtml(fresh.name)}» добавлено фото: ${state.added} (всего ${p?.photos.length ?? fresh.photos.length}). Можно слать ещё или /cancel.`)
-      );
+      // Сколько добавили — запоминаем до сброса: ответ из базы приходит позже
+      const added = state.added;
       state.added = 0;
+      Place.findById(fresh._id, { photos: 1 }).then((p) =>
+        say(chatId, `🖼 К «${escapeHtml(fresh.name)}» добавлено фото: ${added} (всего ${p?.photos.length ?? fresh.photos.length}). Можно слать ещё или /cancel.`)
+      );
     }, 1500);
     photoTargets.set(chatId, state);
     return true;

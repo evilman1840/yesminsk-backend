@@ -242,8 +242,9 @@ export const SUGGEST_TEXTS = {
   // Автору проекта
   adminCard: (name: string, type: string, address: string, desc: string, link: string, who: string, context: string) =>
     `📍 <b>Предлагают место</b>\n\n<b>${name}</b>\n🏷 ${type || '<i>тип не выбран</i>'}${address ? `\n📍 ${address}` : ''}${desc ? `\n📝 ${desc}` : ''}${link ? `\n${link}` : ''}\n\nОт: ${who}${context ? `\n${context}` : ''}\n\nМожно поправить кнопками ниже, потом «Добавить».`,
-  placeCard: (name: string, type: string, address: string, desc: string, link: string, moods: string) =>
-    `✏️ <b>${name}</b>\n🏷 ${type || '<i>тип не выбран</i>'}${address ? `\n📍 ${address}` : ''}${desc ? `\n📝 ${desc}` : ''}\n🌈 ${moods || '<i>вайбы не выбраны</i>'}${link ? `\n${link}` : ''}\n\nЧто поправить?`,
+  placeCard: (name: string, type: string, address: string, desc: string, link: string, moods: string, photos = 0, tip = '', blog = '') =>
+    `✏️ <b>${name}</b>\n🏷 ${type || '<i>тип не выбран</i>'}${address ? `\n📍 ${address}` : ''}${desc ? `\n📝 ${desc}` : ''}\n🌈 ${moods || '<i>вайбы не выбраны</i>'}` +
+    `\n🖼 ${photos ? `Фото: ${photos}` : '<i>фото нет</i>'}\n💡 ${tip || '<i>совета нет</i>'}\n📖 ${blog || '<i>статьи нет</i>'}${link ? `\n${link}` : ''}\n\nЧто поправить?`,
   editMoods: '🌈 Вайбы',
   editAskMoods: (name: string) => `🌈 Какие вайбы у «${name}»? Нажимай, чтобы включить или выключить, потом «Готово».`,
   moodsDone: 'Готово →',
@@ -251,6 +252,16 @@ export const SUGGEST_TEXTS = {
   editCat: '🏷 Тип',
   editAddr: '📍 Адрес',
   editDesc: '📝 Описание',
+  editPhotos: '🖼 Фото',
+  editTip: '💡 Совет от Миши',
+  editBlog: '📖 Статья',
+  editAskPhotos: (name: string, n: number, max: number) =>
+    `🖼 Шли фото для «${name}», можно альбомом, до ${max} всего (сейчас ${n}). Закончить: /cancel`,
+  editClearPhotos: '🗑 Убрать все фото',
+  editPhotosCleared: (name: string, n: number) => `🗑 У «${name}» убраны все фото (${n}).`,
+  editAskTip: (current: string) => `${current ? `Сейчас: «${current}»\n\n` : ''}💡 Пришли совет: фишку, которую знают только местные. Убрать совет: «-» (или /cancel)`,
+  editAskBlog: (current: string) => `${current ? `Сейчас: ${current}\n\n` : ''}📖 Пришли ссылку на статью (https://…). Убрать ссылку: «-» (или /cancel)`,
+  editBadBlog: 'Нужна ссылка, начинающаяся с https:// Убрать ссылку: «-» (или /cancel)',
   editAskName: (name: string) => `Сейчас: «${name}». Пришли новое название (или /cancel)`,
   editAskAddr: 'Пришли адрес или ссылку из Яндекс Карт (или /cancel)',
   editAskDesc: 'Пришли описание одной фразой. Убрать описание: «-» (или /cancel)',

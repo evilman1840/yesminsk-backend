@@ -4,7 +4,7 @@ import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/teleg
 import { Place, matchPlaceType, PLACE_TYPES, PLACE_MOODS, PlaceMood } from './models/Place';
 import { User } from './models/User';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
-import { geocode, placeFromYandexLink, isYandexMapsLink } from './places';
+import { geocode, placeFromYandexLink, isYandexMapsLink, startPlacePhotos, MAX_PLACE_PHOTOS } from './places';
 import { sendWithButtons } from './wishes';
 import { isAdmin, adminIds } from './news';
 import { SUGGEST_TEXTS as T } from './texts';
@@ -104,8 +104,19 @@ const editButtons = (kind: 's' | 'p', id: string) => [
     { text: T.editAddr, data: `ed:${kind}:addr:${id}` },
     { text: T.editDesc, data: `ed:${kind}:desc:${id}` }
   ],
-  // Вайбы — у опубликованного места
-  ...(kind === 'p' ? [[{ text: T.editMoods, data: `edm:${id}:open` }]] : [])
+  // Вайбы, фото, совет и статья — у опубликованного места
+  ...(kind === 'p'
+    ? [
+        [
+          { text: T.editMoods, data: `edm:${id}:open` },
+          { text: T.editPhotos, data: `edp:${id}:open` }
+        ],
+        [
+          { text: T.editTip, data: `ed:p:tip:${id}` },
+          { text: T.editBlog, data: `ed:p:blog:${id}` }
+        ]
+      ]
+    : [])
 ];
 
 // Вайбы кнопками: ✅ выбранные, «Готово» — показать карточку
@@ -132,7 +143,11 @@ async function sendSuggestionCard(chatId: number, s: any) {
 
 async function sendPlaceCard(chatId: number, p: any) {
   const moods = (p.moods || []).map((m: PlaceMood) => `${PLACE_MOODS[m]?.emoji} ${PLACE_MOODS[m]?.label}`).join(', ');
-  await sendWithButtons(chatId, T.placeCard(escapeHtml(p.name), escapeHtml(p.category || ''), escapeHtml(p.address || ''), escapeHtml(p.description || ''), p.mapUrl || '', moods), editButtons('p', String(p._id)));
+  await sendWithButtons(
+    chatId,
+    T.placeCard(escapeHtml(p.name), escapeHtml(p.category || ''), escapeHtml(p.address || ''), escapeHtml(p.description || ''), p.mapUrl || '', moods, (p.photos || []).length, escapeHtml(p.mishaTip || ''), escapeHtml(p.blogUrl || '')),
+    editButtons('p', String(p._id))
+  );
 }
 
 // Типы мест кнопками по два в ряд
@@ -149,7 +164,8 @@ const typeButtons = (kind: string, id: string) => {
 const say = (chatId: number, html: string) => sendWithButtons(chatId, html, []);
 
 // Автор правит поле: ждём следующее сообщение текстом
-const editing = new Map<number, { kind: 's' | 'p'; field: 'name' | 'addr' | 'desc'; id: string }>();
+type EditField = 'name' | 'addr' | 'desc' | 'tip' | 'blog';
+const editing = new Map<number, { kind: 's' | 'p'; field: EditField; id: string }>();
 
 const loadTarget = async (kind: string, id: string): Promise<any> =>
   !mongoose.Types.ObjectId.isValid(id) ? null : kind === 's' ? PlaceSuggestion.findById(id) : Place.findById(id);
@@ -188,6 +204,16 @@ export async function handleSuggestionEditMessage(message: any): Promise<boolean
 
   if (state.field === 'name') doc.name = text.slice(0, 80);
   if (state.field === 'desc') doc.description = text === '-' ? '' : text.slice(0, 300);
+  if (state.field === 'tip') doc.mishaTip = text === '-' ? '' : text.slice(0, 400);
+  if (state.field === 'blog') {
+    const url = text === '-' ? '' : text.match(/https?:\/\/\S+/)?.[0] || '';
+    if (text !== '-' && !url) {
+      editing.set(chatId, state);
+      say(chatId, T.editBadBlog);
+      return true;
+    }
+    doc.blogUrl = url;
+  }
   if (state.field === 'addr') {
     // Ссылка из Яндекс Карт или адрес: ищем точку
     const parsed = await parsePlaceText(text);
@@ -228,7 +254,7 @@ export function setupPlaceSuggestionRoutes(app: Express) {
 // Кнопки автора: sgp:ok:<id> / sgp:no:<id>
 export async function handleSuggestionCallback(query: any): Promise<boolean> {
   const data: string = query.data || '';
-  if (!/^(sgp|ed|edc|edm):/.test(data)) return false;
+  if (!/^(sgp|ed|edc|edm|edp):/.test(data)) return false;
   const call = (method: string, body: any) =>
     fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
   call('answerCallbackQuery', { callback_query_id: query.id });
@@ -245,8 +271,45 @@ export async function handleSuggestionCallback(query: any): Promise<boolean> {
       await sendWithButtons(chatId, T.editAskCat(escapeHtml(doc.name)), typeButtons(kind, id));
       return true;
     }
-    editing.set(chatId, { kind: kind as 's' | 'p', field: field as 'name' | 'addr' | 'desc', id });
-    say(chatId, field === 'name' ? T.editAskName(escapeHtml(doc.name)) : field === 'addr' ? T.editAskAddr : T.editAskDesc);
+    // Совет и статья — только у опубликованного места
+    if ((field === 'tip' || field === 'blog') && kind !== 'p') return true;
+    if (!['name', 'addr', 'desc', 'tip', 'blog'].includes(field)) return true;
+    editing.set(chatId, { kind: kind as 's' | 'p', field: field as EditField, id });
+    say(
+      chatId,
+      field === 'name'
+        ? T.editAskName(escapeHtml(doc.name))
+        : field === 'addr'
+        ? T.editAskAddr
+        : field === 'tip'
+        ? T.editAskTip(escapeHtml(doc.mishaTip || ''))
+        : field === 'blog'
+        ? T.editAskBlog(escapeHtml(doc.blogUrl || ''))
+        : T.editAskDesc
+    );
+    return true;
+  }
+  // 🖼 Фото места: дальше просто шли фото; «Убрать все фото» — кнопкой
+  if (data.startsWith('edp:')) {
+    const [, id, action] = data.split(':');
+    const place = mongoose.Types.ObjectId.isValid(id) ? await Place.findById(id) : null;
+    if (!place) return true;
+    if (action === 'clear') {
+      const n = place.photos.length;
+      place.photos = [];
+      await place.save();
+      call('editMessageReplyMarkup', { chat_id: chatId, message_id: query.message?.message_id, reply_markup: { inline_keyboard: [] } });
+      await say(chatId, T.editPhotosCleared(escapeHtml(place.name), n));
+      await sendPlaceCard(chatId, place);
+      return true;
+    }
+    editing.delete(chatId);
+    startPlacePhotos(chatId, id);
+    await sendWithButtons(
+      chatId,
+      T.editAskPhotos(escapeHtml(place.name), place.photos.length, MAX_PLACE_PHOTOS),
+      place.photos.length ? [[{ text: T.editClearPhotos, data: `edp:${id}:clear` }]] : []
+    );
     return true;
   }
   // 🌈 Вайбы места: переключаем прямо в этом сообщении
