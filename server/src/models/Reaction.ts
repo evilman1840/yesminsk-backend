@@ -1,6 +1,7 @@
 import { Schema, model, Document } from 'mongoose';
 
-export type ReactionType = 'like' | 'dislike';
+// unmatch — был 👋, потом передумал общаться (из «На связи»)
+export type ReactionType = 'like' | 'dislike' | 'unmatch';
 
 export interface IReaction extends Document {
   fromTelegramId: number; // Кто поставил реакцию
@@ -14,7 +15,7 @@ const ReactionSchema = new Schema<IReaction>(
   {
     fromTelegramId: { type: Number, required: true, index: true },
     toTelegramId: { type: Number, required: true, index: true },
-    type: { type: String, enum: ['like', 'dislike'], required: true }
+    type: { type: String, enum: ['like', 'dislike', 'unmatch'], required: true }
   },
   { timestamps: true }
 );

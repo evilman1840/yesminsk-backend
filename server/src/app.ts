@@ -866,6 +866,21 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
   }
 });
 
+// «Отменить» в «На связи»: снимаю свой 👋. Человек пропадает из «На связи» у обоих, @username больше не видно.
+// Ему ничего не пишем. Если снова нажать 👋 — снова «На связи»
+app.post('/api/reactions/unmatch', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const myId = req.telegramUser!.id;
+    const targetId = Number(req.body?.targetTelegramId);
+    if (!Number.isSafeInteger(targetId) || targetId === myId) return res.status(400).json({ error: 'Не указан пользователь' });
+    await Reaction.updateOne({ fromTelegramId: myId, toTelegramId: targetId, type: 'like' }, { $set: { type: 'unmatch' } });
+    res.json({ success: true });
+  } catch (err: any) {
+    console.warn('⚠️ /api/reactions/unmatch:', err?.message || err);
+    res.status(500).json({ error: 'Не получилось отменить' });
+  }
+});
+
 // «Пропустить» (свайп влево): человек вернётся в ленту через 3 дня. { undo: true } — вернуть сразу
 const SKIP_DAYS = 3;
 app.post('/api/users/:telegramId/skip', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
@@ -962,8 +977,8 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     isJoined: Boolean(mine),
     myGuests: mine?.guests || 0,
     myWithKids: Boolean(mine?.withKids),
-    // Кто идёт: организатор видит всех и их Telegram (чтобы написать детали), остальные — первых пятерых без контактов
-    participants: (isEventCreator(ev, viewerId) ? ev.participants : ev.participants.slice(0, 5)).map((p) => ({
+    // Кто идёт: все видят всех; Telegram участников — только организатору (чтобы написать детали)
+    participants: ev.participants.map((p) => ({
       telegramId: p.telegramId,
       name: p.name,
       avatarUrl: avatarFor(p.telegramId, p.avatarUrl),
