@@ -25,6 +25,7 @@ import { markInviteJoined } from './invites';
 import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
+import { rankEvent, distanceTo, Viewer } from './eventRanking';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish, sendWithButtons, Btn } from './wishes';
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
@@ -817,7 +818,8 @@ function theirPreferencesAllow(me: any): any[] {
   ];
 }
 
-const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 
 const isAvailableNow = (u: any) => Boolean(u?.availableUntil && new Date(u.availableUntil).getTime() > Date.now());
 
@@ -1057,29 +1059,58 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
     const tgUser = req.telegramUser!;
     const category = typeof req.query.category === 'string' ? req.query.category : undefined;
 
-    const filter: any = {
+    const now = Date.now();
+    const me = await User.findOne({ telegramId: tgUser.id }, { hiddenEvents: 1, isEmpath: 1, goals: 1, goal: 1, locationExact: 1 }).lean();
+    const mineQuery = { $or: [{ 'creator.telegramId': tgUser.id }, { 'participants.telegramId': tgUser.id }] };
+    const categoryQuery = category && category !== 'all' ? { category: category as EventCategory } : {};
+
+    // Лента: ближайшие 30 дней (начавшиеся — ещё полчаса, можно успеть подойти).
+    // «Неинтересно» и «только для эмпатов» (если я не эмпат) — не показываем
+    const hiddenIds = (me?.hiddenEvents || []).filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const feedQuery: any = {
       isActive: true,
-      dateTime: { $gte: new Date(Date.now() - 4 * 60 * 60 * 1000) }
+      ...categoryQuery,
+      dateTime: { $gte: new Date(now - 30 * 60 * 1000), $lte: new Date(now + 30 * DAY) },
+      'creator.telegramId': { $ne: tgUser.id },
+      'participants.telegramId': { $ne: tgUser.id },
+      ...(hiddenIds.length ? { _id: { $nin: hiddenIds } } : {}),
+      ...(me?.isEmpath ? {} : { tags: { $ne: 'empaths' } })
+    };
+    // Свои и куда записан — всегда, даже дальше месяца (для «⭐ Мои»); начавшиеся — ещё 4 часа
+    const [feed, mine] = await Promise.all([
+      Event.find(feedQuery).sort({ dateTime: 1 }).limit(200),
+      Event.find({ isActive: true, ...categoryQuery, ...mineQuery, dateTime: { $gte: new Date(now - 4 * HOUR) } }).sort({ dateTime: 1 }).limit(100)
+    ]);
+
+    // Кто у меня «На связи»: я нажал 👋 и мне нажали
+    const [myLikes, likesToMe] = await Promise.all([
+      Reaction.distinct('toTelegramId', { fromTelegramId: tgUser.id, type: 'like' }),
+      Reaction.distinct('fromTelegramId', { toTelegramId: tgUser.id, type: 'like' })
+    ]);
+    const toMe = new Set(likesToMe.map(Number));
+    const viewer: Viewer = {
+      goals: me?.goals?.length ? me.goals : me?.goal ? [me.goal] : [],
+      home: me?.locationExact?.coordinates?.length === 2 ? (me.locationExact.coordinates as [number, number]) : undefined,
+      matchIds: new Set(myLikes.map(Number).filter((id) => toMe.has(id))),
+      now
     };
 
-    // «Неинтересно» не показываем — кроме тех, куда человек сам записался
-    const me = await User.findOne({ telegramId: tgUser.id }, { hiddenEvents: 1 }).lean();
-    const hiddenIds = (me?.hiddenEvents || []).filter((id) => mongoose.Types.ObjectId.isValid(id));
-    if (hiddenIds.length) {
-      filter.$or = [{ _id: { $nin: hiddenIds } }, { 'participants.telegramId': tgUser.id }];
-    }
+    // Порядок — по баллам (см. eventRanking.ts); приложение ещё поднимает непросмотренные
+    const ranked = [...mine, ...feed].map((ev) => {
+      const input = {
+        dateTime: ev.dateTime,
+        category: ev.category,
+        location: ev.location.coordinates as [number, number],
+        participantIds: ev.participants.map((p) => p.telegramId),
+        seatsTaken: seatsTaken(ev),
+        maxParticipants: ev.maxParticipants || 0,
+        isOfficial: isAdmin(ev.creator.telegramId)
+      };
+      return { ev, score: rankEvent(input, viewer), distanceMeters: distanceTo(input, viewer) };
+    });
+    ranked.sort((a, b) => b.score - a.score || a.ev.dateTime.getTime() - b.ev.dateTime.getTime());
 
-    if (category && category !== 'all') {
-      filter.category = category as EventCategory;
-    }
-
-    const events = await Event.find(filter).sort({ dateTime: 1 }).limit(40);
-
-    const formatted = events.map((ev) => formatEvent(ev, tgUser.id));
-
-    // Официальные сходки — первыми
-    formatted.sort((a, b) => Number(b.isOfficial) - Number(a.isOfficial));
-    res.json(formatted);
+    res.json(ranked.map(({ ev, distanceMeters }) => ({ ...formatEvent(ev, tgUser.id), ...(distanceMeters !== null ? { distanceMeters } : {}) })));
   } catch (err: any) {
     console.warn('⚠️ /api/events:', err?.message || err);
     res.status(500).json({ error: 'Ошибка загрузки событий' });
