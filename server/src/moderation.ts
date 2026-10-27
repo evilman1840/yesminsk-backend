@@ -29,6 +29,13 @@ const REASONS: Record<ReportReason, string> = {
 
 const AUTO_HIDE_AFTER = 3; // столько разных людей пожаловались — скрываем до проверки
 
+// Жалоба «неприличное фото» прячет фото сразу только у новых аккаунтов: у давних так можно было бы скрыть фото кому угодно
+const NEW_ACCOUNT_DAYS = 7;
+const isNewAccount = (u: any) => {
+  const created = u?.createdAt ? new Date(u.createdAt).getTime() : u?._id?.getTimestamp?.().getTime();
+  return !created || Date.now() - created < NEW_ACCOUNT_DAYS * 24 * 60 * 60 * 1000;
+};
+
 interface IReport extends Document {
   fromTelegramId: number;
   targetType: 'user' | 'event';
@@ -224,9 +231,10 @@ export function setupModerationRoutes(app: Express) {
         await User.updateOne({ telegramId: fromId }, { $addToSet: { blockedUsers: targetIdNum } });
 
         const target = await User.findOne({ telegramId: targetIdNum });
-        // Неприличное фото: фото прячем сразу, с первой жалобы
+        // Неприличное фото: у нового аккаунта прячем сразу, с первой жалобы; у давнего — ждём решения модератора
         const isPhoto = reason === 'photo';
-        if (isPhoto) await User.updateOne({ telegramId: targetIdNum }, { $set: { photosHidden: true } });
+        const photoHidden = isPhoto && isNewAccount(target);
+        if (photoHidden) await User.updateOne({ telegramId: targetIdNum }, { $set: { photosHidden: true } });
         const autoHidden = openCount >= AUTO_HIDE_AFTER && !target?.hiddenByReports;
         if (autoHidden) await User.updateOne({ telegramId: targetIdNum }, { $set: { hiddenByReports: true } });
 
@@ -237,7 +245,11 @@ export function setupModerationRoutes(app: Express) {
             `📝 ${escapeHtml(target?.bio || 'без описания')}\n\n` +
             `Причина: ${REASONS[reason as ReportReason]}${commentLine}\n${reporterLine}` +
             (autoHidden ? `\n\n🙈 Анкета скрыта автоматически (${AUTO_HIDE_AFTER}+ жалоб) до твоего решения.` : '') +
-            (isPhoto ? `\n\n🙈 Фото человека скрыты до твоего решения. Посмотреть: /photos ${targetIdNum}` : ''),
+            (isPhoto
+              ? photoHidden
+                ? `\n\n🙈 Фото человека скрыты до твоего решения (аккаунт новый). Посмотреть: /photos ${targetIdNum}`
+                : `\n\n👀 Аккаунт давний — фото пока видны, реши сам. Посмотреть: /photos ${targetIdNum}`
+              : ''),
           isPhoto
             ? [
                 { text: '🗑 Удалить фото', data: `delphu:${targetIdNum}` },
@@ -255,7 +267,8 @@ export function setupModerationRoutes(app: Express) {
         const autoHidden = openCount >= AUTO_HIDE_AFTER && event.isActive;
         if (autoHidden) await Event.updateOne({ _id: event._id }, { $set: { isActive: false } });
         const isPhoto = reason === 'photo';
-        if (isPhoto) await Event.updateOne({ _id: event._id }, { $set: { photosHidden: true } });
+        const photoHidden = isPhoto && isNewAccount(await User.findOne({ telegramId: event.creator.telegramId }, { createdAt: 1 }).lean());
+        if (photoHidden) await Event.updateOne({ _id: event._id }, { $set: { photosHidden: true } });
 
         notifyAdmins(
           `⚠️ <b>Жалоба на сходку</b> (${openCount} открыт${openCount === 1 ? 'ая' : 'ых'})\n\n` +
@@ -263,7 +276,11 @@ export function setupModerationRoutes(app: Express) {
             `📝 ${escapeHtml(event.description)}\n👤 Организатор: ${escapeHtml(event.creator.name)} · ID ${event.creator.telegramId}\n\n` +
             `Причина: ${REASONS[reason as ReportReason]}${commentLine}\n${reporterLine}` +
             (autoHidden ? `\n\n🙈 Сходка скрыта автоматически (${AUTO_HIDE_AFTER}+ жалоб) до твоего решения.` : '') +
-            (isPhoto ? `\n\n🙈 Фото сходки скрыты до твоего решения. Посмотреть: /photos ev:${event._id}` : ''),
+            (isPhoto
+              ? photoHidden
+                ? `\n\n🙈 Фото сходки скрыты до твоего решения (организатор — новый аккаунт). Посмотреть: /photos ev:${event._id}`
+                : `\n\n👀 Организатор давний — фото пока видны, реши сам. Посмотреть: /photos ev:${event._id}`
+              : ''),
           isPhoto
             ? [
                 { text: '🗑 Удалить фото', data: `delphe:${event._id}` },
