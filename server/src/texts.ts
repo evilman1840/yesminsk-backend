@@ -165,7 +165,10 @@ export const NUDGE_TEXTS = {
   // /stats
   statsTitle: '👋 <b>Приветственный толчок за 30 дней</b>',
   statsSent: (first: number, second: number) => `Отправлено: первых ${first}, вторых ${second}`,
-  statsVariant: (v: string, sent: number, acted: number, rate: string) => `${v}: ${sent} → за 48 ч что-то сделали ${acted} (${rate})`,
+  statsVariant: (v: string, sent: number, matured: number, acted: number) =>
+    matured
+      ? `${v}: ${sent} · 48 ч прошло у ${matured} → что-то сделали ${acted} из ${matured} (${Math.round((acted / matured) * 100)}%)`
+      : `${v}: ${sent} · 48 ч ещё ни у кого не прошло`,
   statsOff: (n: number, rate: string) => `«Не сейчас»: ${n} (${rate})`,
   variantNames: { A: 'А (сходки)', B: 'Б (сохранённое место)', C: 'В (простой шаг)', second: 'Второе' } as Record<string, string>
 };

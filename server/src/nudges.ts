@@ -253,7 +253,7 @@ export async function nudgeStatsLines(since: Date): Promise<string[]> {
         (await Event.exists({ participants: { $elemMatch: { telegramId: l.telegramId, joinedAt: { $gte: from, $lte: to } } } }));
       if (did) acted++;
     }
-    lines.push(T.statsVariant(T.variantNames[v], sent, acted, done.length ? `${Math.round((acted / done.length) * 100)}%` : 'ждём 48 ч'));
+    lines.push(T.statsVariant(T.variantNames[v], sent, done.length, acted));
   }
   const nudged = new Set(logs.map((l) => l.telegramId));
   const off = await User.countDocuments({ telegramId: { $in: [...nudged] }, nudgeOptedOut: true });
