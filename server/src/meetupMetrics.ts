@@ -14,7 +14,7 @@ export const FORM_STEPS = ['opened', 'template', 'published', 'closed', 'error']
 // Что не заполнено и какая ошибка — чтобы понять, где бросают форму
 export const FORM_FIELDS = ['title', 'description', 'place', 'time', 'templateField'] as const;
 export const FORM_ERRORS = ['required', 'geocode', 'templateField', 'photoWait', 'customCategory', 'server'] as const;
-export const FORM_SOURCES = ['feed', 'empty', 'place', 'link'] as const;
+export const FORM_SOURCES = ['feed', 'empty', 'place', 'link', 'map'] as const;
 type FormStep = (typeof FORM_STEPS)[number];
 
 interface IMeetupFormEvent {
