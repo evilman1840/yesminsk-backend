@@ -6,7 +6,7 @@ import { sendLike } from './social';
 import { isAdmin } from './news';
 
 /**
- * «Как прошло?» — после сходки бот спрашивает участников: оценка, пара слов организатору
+ * «Как прошло?» — после сходки бот спрашивает участников и организатора: оценка, пара слов организатору
  * и «хочешь общаться с участниками дальше?» (бот передаст им 👋 — кто ответит тем же, окажутся «На связи»).
  * Через сутки организатор получает сводку
  */
@@ -60,8 +60,18 @@ async function askParticipants(event: IEvent) {
   }
 }
 
+// Организатору — тот же вопрос про его сходку (если кто-то, кроме него, записался)
+async function askHost(event: IEvent) {
+  const hostId = event.creator.telegramId;
+  if (!event.participants.some((p) => p.telegramId !== hostId)) return;
+  await say(hostId, `👋 Как прошла твоя сходка «<b>${escapeHtml(event.title)}</b>»?`, [
+    [3, 2, 1].map((score) => ({ text: `${SCORES[score].emoji} ${SCORES[score].label}`, callback_data: `fb:${event._id}:${score}` }))
+  ]);
+}
+
 async function sendSummary(event: IEvent) {
-  const feedback = event.feedback || [];
+  // Сводка — что думают участники; своя оценка организатора в неё не входит
+  const feedback = (event.feedback || []).filter((f) => f.telegramId !== event.creator.telegramId);
   if (!feedback.length) return;
   const counts = [3, 2, 1].map((s) => `${SCORES[s].emoji} ${SCORES[s].label}: ${feedback.filter((f) => f.score === s).length}`);
   const comments = feedback.filter((f) => f.comment).slice(0, 10);
@@ -85,6 +95,17 @@ async function runFeedback() {
       // Отмечаем сразу — чтобы не спросить дважды, если цикл запустится снова
       await Event.updateOne({ _id: event._id }, { $set: { feedbackAskedAt: new Date() } });
       await askParticipants(event);
+    }
+    // Организатор — отдельной отметкой: так спросим и по сходкам, где участников уже спросили до этого
+    const hostsToAsk = await Event.find({
+      isActive: true,
+      dateTime: { $lte: new Date(now - ASK_AFTER), $gte: new Date(now - ASK_UNTIL) },
+      feedbackHostAskedAt: { $exists: false }
+    });
+    for (const event of hostsToAsk) {
+      await Event.updateOne({ _id: event._id }, { $set: { feedbackHostAskedAt: new Date() } });
+      await askHost(event);
+      await new Promise((r) => setTimeout(r, 60));
     }
   }
   const toSummarize = await Event.find({
@@ -136,9 +157,11 @@ export async function handleFeedbackCallback(query: any): Promise<boolean> {
       text: `Как прошла сходка «${event.title}»? ${SCORES[score].emoji} ${SCORES[score].label}`
     });
 
-    pendingComments.set(chatId, { eventId, until: Date.now() + 30 * 60 * 1000 });
+    // Организатору «передам организатору» ни к чему — только предложим общаться с участниками дальше
+    const isHost = Number(event.creator.telegramId) === Number(fromId);
+    if (!isHost) pendingComments.set(chatId, { eventId, until: Date.now() + 30 * 60 * 1000 });
     const others = event.participants.filter((p) => p.telegramId !== fromId).length;
-    const lines = ['Спасибо! ✍️ Если хочешь, напиши пару слов о сходке, передам организатору.'];
+    const lines = [isHost ? 'Спасибо! 🙌 Когда участники оценят сходку, пришлю тебе сводку.' : 'Спасибо! ✍️ Если хочешь, напиши пару слов о сходке, передам организатору.'];
     if (others > 0) lines.push('', `🤝 Хочешь общаться с участниками дальше? Бот передаст им 👋 от тебя. Кто ответит тем же, окажется у тебя «На связи».`);
     await say(
       chatId,

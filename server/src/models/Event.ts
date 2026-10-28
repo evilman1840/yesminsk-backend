@@ -51,6 +51,7 @@ export interface IEvent extends Document {
   // «Как прошло?» после сходки
   feedback?: { telegramId: number; name: string; score: number; comment?: string; wantsContact?: boolean; createdAt: Date }[];
   feedbackAskedAt?: Date;        // участникам задан вопрос
+  feedbackHostAskedAt?: Date;    // организатору задан вопрос (отдельно: раньше его не спрашивали)
   feedbackSummarySentAt?: Date;  // организатору отправлена сводка
   createdAt: Date;
   updatedAt: Date;
@@ -115,6 +116,7 @@ const EventSchema = new Schema<IEvent>(
       }
     ],
     feedbackAskedAt: { type: Date },
+    feedbackHostAskedAt: { type: Date },
     feedbackSummarySentAt: { type: Date }
   },
   { timestamps: true }
