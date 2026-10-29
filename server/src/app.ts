@@ -36,7 +36,7 @@ import { startProposalLoop, setupProposalRoutes, fixAutoMeetupHosts } from './pr
 import { setupAccountRoutes } from './account';
 import { setupPlaceSuggestionRoutes, backfillPlaceAuthors } from './placeSuggestions';
 import { runPlaceImports } from './placesImport';
-import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote } from './eventNotify';
+import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote, rsvpButtons } from './eventNotify';
 
 dotenv.config();
 
@@ -991,6 +991,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     isJoined: Boolean(mine),
     myGuests: mine?.guests || 0,
     myWithKids: Boolean(mine?.withKids),
+    myConfirmed: Boolean(mine?.confirmedAt),
     // Кто идёт: все видят всех; Telegram участников — только организатору (чтобы написать детали)
     participants: ev.participants.map((p) => ({
       telegramId: p.telegramId,
@@ -998,6 +999,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
       avatarUrl: avatarFor(p.telegramId, p.avatarUrl),
       guests: p.guests || 0,
       withKids: Boolean(p.withKids),
+      confirmed: Boolean(p.confirmedAt), // «✅ Точно приду» — значок у аватарки
       ...(isEventCreator(ev, viewerId) && p.username ? { username: p.username } : {})
     })),
     placeId: ev.placeId ? String(ev.placeId) : undefined, // сходка в месте из «Мест» — покажем её в карточке места
@@ -1273,6 +1275,7 @@ app.post('/api/events/:id/message', telegramAuthMiddleware as any, async (req: A
 
     const html = EVENT_MESSAGE_TEXTS.message(escapeHtml(event.title), escapeHtml(event.creator.name), escapeHtml(text));
     const rows: Btn[][] = [
+      rsvpButtons(event),
       ...(event.creator.username ? [[{ text: EVENT_MESSAGE_TEXTS.replyBtn, url: `https://t.me/${event.creator.username.replace(/^@/, '')}` }]] : []),
       [{ text: EVENT_MESSAGE_TEXTS.openBtn, path: eventAppPath(event) }]
     ];
@@ -1379,12 +1382,39 @@ app.post('/api/events/:id/leave', telegramAuthMiddleware as any, async (req: Aut
       return res.status(404).json({ error: 'Событие не найдено' });
     }
 
-    event.participants = event.participants.filter((p) => p.telegramId !== tgUser.id);
-    await event.save();
+    // Из списка убираем, но в базе оставляем пометку, что человек отменил
+    const leaving = event.participants.find((p) => p.telegramId === tgUser.id);
+    if (leaving) {
+      event.participants = event.participants.filter((p) => p.telegramId !== tgUser.id);
+      event.cancellations = [
+        ...(event.cancellations || []),
+        { telegramId: tgUser.id, name: leaving.name, joinedAt: leaving.joinedAt, cancelledAt: new Date(), via: req.body?.via === 'bot' ? 'bot' : 'app' }
+      ];
+      await event.save();
+    }
 
     res.json({ success: true, message: 'Вы покинули событие' });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка выхода' });
+  }
+});
+
+// «✅ Точно приду»: отметка у аватарки участника
+app.post('/api/events/:id/confirm', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const eventId = getParamId(req.params.id);
+    const event = mongoose.Types.ObjectId.isValid(eventId) ? await Event.findById(eventId) : null;
+    if (!event || !event.isActive) return res.status(404).json({ error: 'Сходка не найдена' });
+    const me = event.participants.find((p) => p.telegramId === tgUser.id);
+    if (!me) return res.status(400).json({ error: 'Ты уже не записан(а) на эту сходку' });
+    if (!me.confirmedAt) {
+      me.confirmedAt = new Date();
+      await event.save();
+    }
+    res.json(formatEvent(event, tgUser.id));
+  } catch {
+    res.status(500).json({ error: 'Не получилось отметить, попробуй ещё раз' });
   }
 });
 

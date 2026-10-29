@@ -10,6 +10,16 @@ export interface IEventParticipant {
   joinedAt: Date;
   guests?: number;     // сколько человек ведёт с собой (+1, +2…)
   withKids?: boolean;  // идёт с детьми
+  confirmedAt?: Date;  // нажал «Точно приду» (из напоминания или в приложении)
+}
+
+// Отменил участие: из списка убираем, а здесь остаётся след (кто, когда, откуда)
+export interface IEventCancellation {
+  telegramId: number;
+  name: string;
+  joinedAt?: Date;
+  cancelledAt: Date;
+  via: 'app' | 'bot'; // из приложения или по кнопке «Отменить» в сообщении бота
 }
 
 // Пометки организатора: для кого сходка
@@ -51,6 +61,7 @@ export interface IEvent extends Document {
   reminderHourSentAt?: Date; // напоминание «через час» уже отправлено
   // «Как прошло?» после сходки
   feedback?: { telegramId: number; name: string; score: number; comment?: string; wantsContact?: boolean; createdAt: Date }[];
+  cancellations?: IEventCancellation[];
   feedbackAskedAt?: Date;        // участникам задан вопрос
   feedbackHostAskedAt?: Date;    // организатору задан вопрос (отдельно: раньше его не спрашивали)
   feedbackSummarySentAt?: Date;  // организатору отправлена сводка
@@ -100,7 +111,17 @@ const EventSchema = new Schema<IEvent>(
         avatarUrl: { type: String, required: true },
         joinedAt: { type: Date, default: Date.now },
         guests: { type: Number, default: 0, min: 0 },
-        withKids: { type: Boolean, default: false }
+        withKids: { type: Boolean, default: false },
+        confirmedAt: { type: Date }
+      }
+    ],
+    cancellations: [
+      {
+        telegramId: { type: Number, required: true },
+        name: { type: String, default: '' },
+        joinedAt: { type: Date },
+        cancelledAt: { type: Date, default: Date.now },
+        via: { type: String, enum: ['app', 'bot'], default: 'app' }
       }
     ],
     maxParticipants: { type: Number, default: 0 }, // 0 = без ограничений

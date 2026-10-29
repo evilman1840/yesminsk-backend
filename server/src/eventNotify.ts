@@ -1,6 +1,6 @@
 import { Event, IEvent } from './models/Event';
 import { priceLabel } from './texts';
-import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
+import { sendTelegramMessage, escapeHtml, markCannotMessage } from './utils/telegramNotify';
 
 /**
  * Уведомления о сходках через бота: напоминания, изменения, отмена, новые участники
@@ -46,6 +46,36 @@ export const eventSummaryHtml = (event: IEvent) =>
 
 export const eventAppPath = (event: IEvent) => `?event=${event._id.toString()}`;
 
+// Кнопки «✅ Точно приду» / «❌ Отменить»: открывают сходку в приложении, оно само отмечает ответ (rsvp=yes|no)
+export type EventBtn = { text: string; path?: string; url?: string };
+export const rsvpButtons = (event: IEvent): EventBtn[] => [
+  { text: '✅ Точно приду', path: `${eventAppPath(event)}&rsvp=yes` },
+  { text: '❌ Отменить', path: `${eventAppPath(event)}&rsvp=no` }
+];
+
+export async function sendEventButtons(chatId: number, html: string, rows: EventBtn[][]) {
+  const appUrl = (process.env.MINI_APP_URL || '').replace(/\/+$/, '');
+  const keyboard = rows
+    .map((row) => row.filter((b) => b.url || appUrl).map((b) => (b.url ? { text: b.text, url: b.url } : { text: b.text, web_app: { url: `${appUrl}/${b.path || ''}` } })))
+    .filter((row) => row.length);
+  const res = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text: html, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: { inline_keyboard: keyboard } })
+  }).catch(() => null);
+  if (res?.status === 403) markCannotMessage(chatId);
+  return Boolean(res?.ok);
+}
+
+// Напоминание: участникам — «Точно приду / Отменить», организатору — просто открыть сходку
+const remindParticipants = (event: IEvent, html: string) => {
+  for (const p of event.participants) {
+    const isHost = p.telegramId === event.creator.telegramId;
+    const rows: EventBtn[][] = [...(isHost ? [] : [rsvpButtons(event)]), [{ text: 'Открыть сходку', path: eventAppPath(event) }]];
+    sendEventButtons(p.telegramId, html, rows);
+  }
+};
+
 // Сообщение всем участникам (кроме exceptId — обычно того, кто сам что-то поменял)
 export const notifyParticipants = (event: IEvent, html: string, exceptId?: number, buttonText = 'Открыть сходку') => {
   for (const p of event.participants) {
@@ -73,7 +103,7 @@ export async function sendDueReminders() {
     ev.reminderDaySentAt = new Date();
     await ev.save();
     if (ev.dateTime.getTime() - ev.createdAt.getTime() < 24 * HOUR) continue;
-    notifyParticipants(ev, `⏰ <b>Напоминаем о сходке</b>\n\n${eventSummaryHtml(ev)}\n\nПланы поменялись? Отмени участие в приложении, так организатор будет знать.`);
+    remindParticipants(ev, `⏰ <b>Напоминаем о сходке</b>\n\n${eventSummaryHtml(ev)}\n\nПридёшь? Нажми «Точно приду». Планы поменялись — «Отменить», так организатор будет знать.`);
   }
 
   const hourEvents = await Event.find({
@@ -84,7 +114,7 @@ export async function sendDueReminders() {
   for (const ev of hourEvents) {
     ev.reminderHourSentAt = new Date();
     await ev.save();
-    notifyParticipants(ev, `🔔 <b>Скоро сходка: меньше чем через час!</b>\n\n${eventSummaryHtml(ev)}\n\nХорошей встречи 💛`);
+    remindParticipants(ev, `🔔 <b>Скоро сходка: меньше чем через час!</b>\n\n${eventSummaryHtml(ev)}\n\nХорошей встречи 💛`);
   }
 }
 
