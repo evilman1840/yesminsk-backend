@@ -96,6 +96,10 @@ export const priceShort = (ev: { isPaid?: boolean; price?: number }) =>
 const people = (n: number) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? 'человек' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'человека' : 'человек'}`;
 
 export const WISH_TEXTS = {
+  // Собрали сходку из шторки «Тоже хотят» — тем, у кого такое же желание на это время
+  kindMeetup: (what: string, title: string, when: string, where: string) =>
+    `🙋 Ты хотел(а) ${what}, и как раз собрали сходку!\n\n<b>${title}</b>\n🕒 ${when}\n📍 ${where}\n\nЗагляни: если подходит, запишись 🙂`,
+  kindMeetupBtn: 'Открыть сходку',
   when: { today: 'сегодня', tomorrow: 'завтра', weekend: 'на выходных', week: 'на неделе' } as Record<string, string>,
   // Сообщение о совпадении (одно или несколько желаний сразу)
   matchOne: (n: number, what: string, when: string) =>

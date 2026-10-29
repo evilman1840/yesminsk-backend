@@ -19,7 +19,7 @@ export interface RankContext {
   myCoords: [number, number] | null; // [lng, lat]
   myGoesWith?: string;
   myAge?: number;
-  sharedPlans: Map<number, string[]>; // человек → общие «Хочу сходить» (названия)
+  sharedPlans: Map<number, { kind: string; name: string }[]>; // человек → общие «Хочу сходить»
   sameEvent: Set<number>;             // идём на одну сходку
   likesIn: Map<number, number>;       // сколько «Пообщаться» получил человек
   dayKey: string;
@@ -79,9 +79,12 @@ export const whyShown = (id: number, ctx: RankContext): string[] => {
   const out: string[] = [];
   if (ctx.sameEvent.has(id)) out.push(T.sameEvent);
   const plans = ctx.sharedPlans.get(id) || [];
-  if (plans.length) out.push(T.samePlans(plans.slice(0, 2).join(', ')));
+  if (plans.length) out.push(T.samePlans(plans.slice(0, 2).map((p) => p.name).join(', ')));
   return out;
 };
+
+// Общие «Хочу сходить» ключами — нажать на строку «Тоже хочет» и увидеть, кто ещё хочет того же
+export const sharedKinds = (id: number, ctx: RankContext) => ctx.sharedPlans.get(id) || [];
 
 /**
  * Данные для очков одним заходом: мои планы и сходки, планы и сходки кандидатов, сколько их зовут
@@ -91,15 +94,14 @@ export async function buildRankContext(me: any, candidateIds: number[]): Promise
   const myWishes = await Wish.find({ telegramId: viewerId, status: { $in: ['active', 'matched'] } }, { kind: 1 }).lean();
   const myKinds = [...new Set(myWishes.map((w) => w.kind))];
 
-  const sharedPlans = new Map<number, string[]>();
+  const sharedPlans = new Map<number, { kind: string; name: string }[]>();
   if (myKinds.length) {
     const templates = await EventTemplate.find({ key: { $in: myKinds } }, { key: 1, name: 1 }).lean();
     const nameOf = new Map(templates.map((t: any) => [t.key, t.name]));
     const theirs = await Wish.find({ kind: { $in: myKinds }, status: { $in: ['active', 'matched'] }, telegramId: { $in: candidateIds } }, { telegramId: 1, kind: 1 }).lean();
     for (const w of theirs) {
-      const name = nameOf.get(w.kind) || w.kind;
       const list = sharedPlans.get(w.telegramId) || [];
-      if (!list.includes(name)) sharedPlans.set(w.telegramId, [...list, name]);
+      if (!list.some((p) => p.kind === w.kind)) sharedPlans.set(w.telegramId, [...list, { kind: w.kind, name: nameOf.get(w.kind) || w.kind }]);
     }
   }
 

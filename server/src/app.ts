@@ -13,6 +13,7 @@ import { startDigestLoop } from './digest';
 import { startFeedbackLoop } from './feedback';
 import { Event, EventCategory, IEvent, EVENT_TAGS } from './models/Event';
 import { Place } from './models/Place';
+import { EventTemplate } from './models/EventTemplate';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
 import { Reaction, ReactionType } from './models/Reaction';
 import { sendLike } from './social';
@@ -27,9 +28,9 @@ import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { rankEvent, distanceTo, Viewer } from './eventRanking';
-import { buildRankContext, scoreUser, whyShown } from './peopleRanking';
+import { buildRankContext, scoreUser, whyShown, sharedKinds } from './peopleRanking';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
-import { setupWishRoutes, startWishLoop, onMeetupFromWish, sendWithButtons, Btn } from './wishes';
+import { setupWishRoutes, startWishLoop, onMeetupFromWish, notifyWishersOfMeetup, sendWithButtons, Btn } from './wishes';
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
 import { Wish, WishGroup } from './models/Wish';
 import { startNudgeLoop } from './nudges';
@@ -677,7 +678,7 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
           .map((x) => x.u)
       : candidates.slice(0, 300);
 
-    res.json(users.map((u) => ({ ...formatPublicUser(u, currentUser, flags.get(u.telegramId)), ...(ctx ? { why: whyShown(u.telegramId, ctx) } : {}) })));
+    res.json(users.map((u) => ({ ...formatPublicUser(u, currentUser, flags.get(u.telegramId)), ...(ctx ? { why: whyShown(u.telegramId, ctx), wishKinds: sharedKinds(u.telegramId, ctx) } : {}) })));
   } catch (err: any) {
     console.warn('⚠️ /api/users/nearby:', err?.message || err);
     res.status(500).json({ error: 'Ошибка загрузки пользователей' });
@@ -708,6 +709,35 @@ app.get('/api/users/:telegramId/public', telegramAuthMiddleware as any, async (r
     res.json(formatPublicUser(target, me, flags.get(targetId)));
   } catch {
     res.status(500).json({ error: 'Не удалось загрузить анкету' });
+  }
+});
+
+// «Тоже хочет»: все, у кого сейчас такое же желание, и моя группа совпадения (если есть) — чтобы собрать сходку
+app.get('/api/wishes/kind/:kind/people', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const kind = getParamId(req.params.kind).slice(0, 40);
+    const myId = req.telegramUser!.id;
+    const me = await User.findOne({ telegramId: myId });
+    const tpl = await EventTemplate.findOne({ key: kind }, { name: 1, emoji: 1 }).lean();
+    if (!tpl) return res.sendStatus(404);
+    const wishes = await Wish.find({ kind, status: { $in: ['active', 'matched'] }, telegramId: { $ne: myId } }, { telegramId: 1 }).lean();
+    const ids = [...new Set(wishes.map((w) => w.telegramId))];
+    const people = await User.find({ ...visibleUserQuery(me, 0), telegramId: { $in: ids, $nin: me?.blockedUsers || [] } })
+      .sort({ lastActiveAt: -1 })
+      .limit(30);
+    const mine = await Wish.findOne({ telegramId: myId, kind, status: { $in: ['active', 'matched'] } }).lean();
+    const group = mine?.groupId ? await WishGroup.findById(mine.groupId, { status: 1, meetupId: 1 }).lean() : null;
+    const flags = await getReactionFlags(myId, people.map((u) => u.telegramId));
+    res.json({
+      kind,
+      name: tpl.name,
+      emoji: tpl.emoji || '✨',
+      people: people.map((u) => formatPublicUser(u, me, flags.get(u.telegramId))),
+      wishGroupId: group?.status === 'open' ? String(group._id) : null,
+      eventId: group?.meetupId || null
+    });
+  } catch {
+    res.status(500).json({ error: 'Не удалось загрузить' });
   }
 });
 
@@ -1238,6 +1268,8 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     // Сходка в место — пишем тем, у кого оно в 🔖 сохранённых
     // Собрали по «Хочу сходить» → остальным в группе «Сходку собрали»
     if (wishGroupId) onMeetupFromWish(wishGroupId, newEvent, tgUser.id).catch((err) => console.warn('⚠️ «Хочу сходить» после сходки:', err?.message || err));
+    // Собрали из «Тоже хотят» — пишем всем, кто хотел того же на это время
+    if (req.body?.notifyWishers) notifyWishersOfMeetup(newEvent, wishGroupId).catch((err) => console.warn('⚠️ «Тоже хотят» после сходки:', err?.message || err));
     if (newEvent.placeId) notifyPlaceSavers(newEvent).catch((err) => console.warn('⚠️ Уведомление сохранившим место:', err?.message || err));
   } catch (err: any) {
     console.warn('⚠️ Создание сходки:', err?.message || err);

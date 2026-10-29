@@ -249,6 +249,30 @@ export async function onMeetupFromWish(groupId: unknown, event: IEvent, creatorI
   sendPending().catch(() => {});
 }
 
+/**
+ * Сходку собрали из шторки «Тоже хотят»: пишем тем, у кого такое же желание и время сходки попадает в их окно.
+ * Группу, из которой собирали, не трогаем — ей пишет onMeetupFromWish
+ */
+export async function notifyWishersOfMeetup(event: IEvent, skipGroupId?: unknown) {
+  if (!event.templateId) return;
+  const wishes = await Wish.find({
+    kind: event.templateId,
+    status: { $in: ['active', 'matched'] },
+    telegramId: { $ne: event.creator.telegramId },
+    windowStart: { $lte: event.dateTime },
+    windowEnd: { $gte: event.dateTime },
+    ...(skipGroupId && mongoose.Types.ObjectId.isValid(String(skipGroupId)) ? { groupId: { $ne: new mongoose.Types.ObjectId(String(skipGroupId)) } } : {})
+  }).limit(50).lean();
+  const ids = [...new Set(wishes.map((w) => w.telegramId))].slice(0, 30);
+  if (!ids.length) return;
+  const what = escapeHtml(await phraseFor(event.templateId));
+  const html = T.kindMeetup(what, escapeHtml(event.title), formatWhen(event.dateTime), escapeHtml(event.locationName));
+  for (const id of ids) {
+    await sendWithButtons(id, html, [[{ text: T.kindMeetupBtn, path: `?event=${event._id}` }]]);
+    await new Promise((r) => setTimeout(r, 60));
+  }
+}
+
 /* ---------- Сообщения бота ---------- */
 
 export type Btn = { text: string; path?: string; data?: string; url?: string };
