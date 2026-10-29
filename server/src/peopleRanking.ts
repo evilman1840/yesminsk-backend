@@ -2,6 +2,7 @@ import { Wish } from './models/Wish';
 import { Event } from './models/Event';
 import { Reaction } from './models/Reaction';
 import { EventTemplate } from './models/EventTemplate';
+import { PeopleSeen } from './models/PeopleSeen';
 import { calculateDistanceMeters } from './utils/geoUtils';
 import { PEOPLE_TEXTS as T } from './texts';
 import { CUSTOM_WISH } from './wishes';
@@ -23,6 +24,7 @@ export interface RankContext {
   sharedPlans: Map<number, { kind: string; sport?: string; name: string }[]>; // человек → общие «Хочу сходить» (у «Своего» — текст в sport)
   sameEvent: Set<number>;             // идём на одну сходку
   likesIn: Map<number, number>;       // сколько «Пообщаться» получил человек
+  seen: Map<number, { count: number; at: number }>; // кого я уже видел(а) в «Людях»
   dayKey: string;
 }
 
@@ -68,6 +70,13 @@ export function scoreUser(u: any, ctx: RankContext, flags?: { iLiked: boolean; l
   s -= Math.min(3, (ctx.likesIn.get(u.telegramId) || 0) / 10);
   const created = u.createdAt ? new Date(u.createdAt).getTime() : 0;
   if (created && now - created < 3 * DAY) s += 2;
+
+  // Уже видел(а) — ниже; чем свежее и чаще, тем ниже. Через неделю человек возвращается на своё место
+  const viewed = ctx.seen.get(u.telegramId);
+  if (viewed && now - viewed.at < 7 * DAY) {
+    const ago = now - viewed.at;
+    s -= (ago < DAY ? 6 : ago < 3 * DAY ? 4 : 2) + Math.min(3, viewed.count - 1);
+  }
 
   if (flags?.likedMe) s += 2;
   if (flags?.iLiked) s -= 10; // уже позвал(а) — ждёт ответа, вниз
@@ -120,6 +129,11 @@ export async function buildRankContext(me: any, candidateIds: number[]): Promise
   const counts = await Reaction.aggregate([{ $match: { type: 'like', toTelegramId: { $in: candidateIds } } }, { $group: { _id: '$toTelegramId', n: { $sum: 1 } } }]);
   for (const c of counts) likesIn.set(c._id, c.n);
 
+  const seen = new Map<number, { count: number; at: number }>();
+  for (const r of await PeopleSeen.find({ viewerId, userId: { $in: candidateIds } }, { userId: 1, count: 1, lastSeenAt: 1 }).lean()) {
+    seen.set(r.userId, { count: r.count, at: new Date(r.lastSeenAt).getTime() });
+  }
+
   const coords = me.locationExact?.coordinates || me.locationFuzzy?.coordinates;
   const myGoals = new Set<string>((me.goals?.length ? me.goals : me.goal ? [me.goal] : []).filter((g: string) => g !== 'other'));
   const dayKey = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10); // день по Минску
@@ -133,6 +147,7 @@ export async function buildRankContext(me: any, candidateIds: number[]): Promise
     sharedPlans,
     sameEvent,
     likesIn,
+    seen,
     dayKey
   };
 }

@@ -29,6 +29,7 @@ import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { rankEvent, distanceTo, Viewer } from './eventRanking';
 import { buildRankContext, scoreUser, whyShown, sharedKinds } from './peopleRanking';
+import { PeopleSeen } from './models/PeopleSeen';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish, notifyWishersOfMeetup, sendWithButtons, Btn, CUSTOM_WISH } from './wishes';
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
@@ -682,6 +683,21 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
   } catch (err: any) {
     console.warn('⚠️ /api/users/nearby:', err?.message || err);
     res.status(500).json({ error: 'Ошибка загрузки пользователей' });
+  }
+});
+
+// Карточки, которые человек уже посмотрел в «Людях» (больше секунды на экране): при следующей загрузке они ниже
+app.post('/api/users/seen', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const viewerId = req.telegramUser!.id;
+    const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter((n: number) => Number.isSafeInteger(n) && n !== viewerId))].slice(0, 50) as number[];
+    if (ids.length) {
+      const now = new Date();
+      await PeopleSeen.bulkWrite(ids.map((userId) => ({ updateOne: { filter: { viewerId, userId }, update: { $inc: { count: 1 }, $set: { lastSeenAt: now } }, upsert: true } })), { ordered: false });
+    }
+    res.sendStatus(204);
+  } catch {
+    res.sendStatus(500);
   }
 });
 
