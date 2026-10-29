@@ -294,6 +294,7 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     userObj.locationManual = Boolean(user.locationManual);
     userObj.photos = (user.photos || []).map(photoUrl); // ещё фото в анкете — адресами
     userObj.avatarUrl = avatarFor(user.telegramId, user.avatarUrl);
+    userObj.isAdmin = isAdmin(user.telegramId); // модератор: может удалять любые сходки
 
     res.json(userObj);
   } catch (err: any) {
@@ -1531,16 +1532,25 @@ const handleDeleteEventLogic = async (req: AuthenticatedRequest, res: Response) 
       return res.status(404).json({ error: 'Событие не найдено' });
     }
 
-    if (Number(event.creator.telegramId) !== Number(tgUser.id)) {
+    const byModerator = Number(event.creator.telegramId) !== Number(tgUser.id);
+    if (byModerator && !isAdmin(tgUser.id)) {
       return res.status(403).json({ error: 'Только создатель может удалить сходку' });
     }
 
     await Event.findByIdAndDelete(event._id);
 
+    // Удалил модератор — организатору объясняем почему, а не «сходка отменена»
+    if (byModerator) {
+      sendTelegramMessage(
+        event.creator.telegramId,
+        `🗑 <b>Модератор удалил твою сходку</b>\n\n«${escapeHtml(event.title)}», ${formatWhen(event.dateTime)}.\n\nОна нарушает правила «ГУЛЯЙ!»: сходки только для досуга, спорта и общения, без политики. Если считаешь, что это ошибка, напиши @evilman1840.`
+      );
+    }
+
     // Предупреждаем участников, если сходка ещё не прошла
     if (event.dateTime.getTime() > Date.now()) {
       for (const p of event.participants) {
-        if (p.telegramId === tgUser.id) continue;
+        if (p.telegramId === tgUser.id || p.telegramId === event.creator.telegramId) continue;
         sendTelegramMessage(
           p.telegramId,
           `😔 <b>Сходка отменена</b>\n\n«${escapeHtml(event.title)}», ${formatWhen(event.dateTime)}.\n\nЗагляни в приложение, там есть другие встречи.`,
