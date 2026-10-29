@@ -27,6 +27,7 @@ import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { rankEvent, distanceTo, Viewer } from './eventRanking';
+import { buildRankContext, scoreUser, whyShown } from './peopleRanking';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish, sendWithButtons, Btn } from './wishes';
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
@@ -664,13 +665,19 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
     const currentUser = await User.findOne({ telegramId: tgUser.id });
     const query = nearbyQuery(tgUser, currentUser, typeof req.query.goal === 'string' ? req.query.goal : undefined);
 
-    // Самые активные 300: анкеты лёгкие (фото — ссылкой), карта не перегружается
-    const users = await User.find(query).limit(300).sort({ lastActiveAt: -1 });
-    // «⚡ Свободен сейчас» — первыми в списке
-    users.sort((a, b) => Number(isAvailableNow(b)) - Number(isAvailableNow(a)));
-    const flags = await getReactionFlags(tgUser.id, users.map((u) => u.telegramId));
+    // Берём широко (все, кто подходит, по свежести), считаем очки и отдаём 300 лучших: карта не перегружается
+    const candidates = await User.find(query).sort({ lastActiveAt: -1 }).limit(3000).lean();
+    const ids = candidates.map((u) => u.telegramId);
+    const [flags, ctx] = await Promise.all([getReactionFlags(tgUser.id, ids), currentUser ? buildRankContext(currentUser, ids) : null]);
+    const users = ctx
+      ? candidates
+          .map((u) => ({ u, score: scoreUser(u, ctx, flags.get(u.telegramId)) }))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 300)
+          .map((x) => x.u)
+      : candidates.slice(0, 300);
 
-    res.json(users.map((u) => formatPublicUser(u, currentUser, flags.get(u.telegramId))));
+    res.json(users.map((u) => ({ ...formatPublicUser(u, currentUser, flags.get(u.telegramId)), ...(ctx ? { why: whyShown(u.telegramId, ctx) } : {}) })));
   } catch (err: any) {
     console.warn('⚠️ /api/users/nearby:', err?.message || err);
     res.status(500).json({ error: 'Ошибка загрузки пользователей' });

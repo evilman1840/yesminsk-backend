@@ -359,3 +359,9 @@ export const PHOTO_MOD_TEXTS = {
   noPhotos: 'Фото нет.',
   ownerNotice: '🗑 Одно из твоих фото удалено: оно нарушает правила «ГУЛЯЙ!». Загрузи, пожалуйста, другое.'
 };
+
+// «Люди»: подпись «почему показан» на карточке
+export const PEOPLE_TEXTS = {
+  sameEvent: '📅 Идёте на одну сходку',
+  samePlans: (names: string) => `🙋 Тоже хочет: ${names}`
+};
