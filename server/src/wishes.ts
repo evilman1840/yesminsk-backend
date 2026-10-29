@@ -10,6 +10,8 @@ import { escapeHtml, markCannotMessage } from './utils/telegramNotify';
 import { meetupCreatePath } from './eventTemplates';
 import { formatWhen } from './eventNotify';
 import { WISH_TEXTS as T } from './texts';
+import { checkStopWords } from './stopWords';
+import { reportStopWords, BANNED_ERROR } from './moderation';
 
 /**
  * «Хочу сходить»: желания без обязательств, группы совпадений и сообщения бота.
@@ -110,7 +112,25 @@ const phraseOf = (k: WishKind, sport?: string) => {
   return phrase;
 };
 
+/**
+ * «Своё» желание: kind = custom, а текст лежит в sport — так совпадения работают как с видом спорта.
+ * Приводим к одному виду, чтобы «Караоке!» и «в караоке» совпали
+ */
+export const CUSTOM_WISH = CUSTOM_TEMPLATE_KEY;
+export const normalizeCustomWish = (text: unknown) =>
+  String(text || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^(?:сходить|пойти|поиграть|хочу|в|во|на|по)\s+/, '')
+    .replace(/^(?:в|во|на|по)\s+/, '')
+    .slice(0, 40)
+    .trim();
+
 export async function phraseFor(kind: string, sport?: string) {
+  if (kind === CUSTOM_WISH) return sport || 'своё';
   const k = await loadKind(kind);
   return k ? phraseOf(k, sport) : kind;
 }
@@ -199,25 +219,37 @@ export async function createWish(
   input: { kind?: unknown; sport?: unknown; timeWindow?: unknown; placeId?: unknown },
   source: 'app' | 'link'
 ): Promise<{ wish?: IWish; sameCount?: number; error?: string }> {
-  const k = await loadKind(String(input.kind || ''));
-  if (!k) return { error: T.badKind };
+  const isCustom = String(input.kind || '') === CUSTOM_WISH;
+  const k = isCustom ? null : await loadKind(String(input.kind || ''));
+  if (!k && !isCustom) return { error: T.badKind };
   const timeWindow = String(input.timeWindow || '') as WishWindow;
   if (!WISH_WINDOWS.includes(timeWindow)) return { error: T.badKind };
   let sport: string | undefined;
-  if (k.subField) {
+  if (isCustom) {
+    sport = normalizeCustomWish(input.sport);
+    if (sport.replace(/[^a-zа-я]/g, '').length < 2) return { error: T.badCustom };
+    // Свой текст — та же проверка на митинги и политику, что у сходок
+    const stop = checkStopWords(sport);
+    if (stop) {
+      await reportStopWords(stop, 'wish', telegramId, [sport]);
+      if (stop.level === 'ban') return { error: BANNED_ERROR };
+    }
+  } else if (k!.subField) {
+    const subField = k!.subField;
     sport = String(input.sport || '');
-    if (!k.subField.options.some((o) => o.value === sport)) return { error: T.badKind };
+    if (!subField.options.some((o) => o.value === sport)) return { error: T.badKind };
   }
+  const kindKey = isCustom ? CUSTOM_WISH : k!.tpl.key;
   let placeId: string | undefined;
   if (input.placeId && mongoose.Types.ObjectId.isValid(String(input.placeId)) && (await Place.exists({ _id: String(input.placeId) }))) placeId = String(input.placeId);
 
   const now = new Date();
   const live = { telegramId, status: { $in: ['active', 'matched'] }, windowEnd: { $gt: now } };
-  if (await Wish.exists({ ...live, kind: k.tpl.key, sport: sport || null, timeWindow, placeId: placeId || null })) return { error: T.duplicate };
+  if (await Wish.exists({ ...live, kind: kindKey, sport: sport || null, timeWindow, placeId: placeId || null })) return { error: T.duplicate };
   if ((await Wish.countDocuments(live)) >= MAX_ACTIVE) return { error: T.tooMany(MAX_ACTIVE) };
 
   const [windowStart, windowEnd] = wishWindow(timeWindow, now);
-  const wish = await Wish.create({ telegramId, kind: k.tpl.key, sport, timeWindow, windowStart, windowEnd, placeId, source });
+  const wish = await Wish.create({ telegramId, kind: kindKey, sport, timeWindow, windowStart, windowEnd, placeId, source });
 
   // Сколько ещё людей хотят того же (для подтверждения в приложении)
   const others = await Wish.find({
@@ -254,7 +286,8 @@ export async function onMeetupFromWish(groupId: unknown, event: IEvent, creatorI
  * Группу, из которой собирали, не трогаем — ей пишет onMeetupFromWish
  */
 export async function notifyWishersOfMeetup(event: IEvent, skipGroupId?: unknown) {
-  if (!event.templateId) return;
+  // «Своя идея» — у всех разное, по шаблону совпадений нет
+  if (!event.templateId || event.templateId === CUSTOM_WISH) return;
   const wishes = await Wish.find({
     kind: event.templateId,
     status: { $in: ['active', 'matched'] },

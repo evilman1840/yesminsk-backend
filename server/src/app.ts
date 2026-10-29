@@ -30,7 +30,7 @@ import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { rankEvent, distanceTo, Viewer } from './eventRanking';
 import { buildRankContext, scoreUser, whyShown, sharedKinds } from './peopleRanking';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
-import { setupWishRoutes, startWishLoop, onMeetupFromWish, notifyWishersOfMeetup, sendWithButtons, Btn } from './wishes';
+import { setupWishRoutes, startWishLoop, onMeetupFromWish, notifyWishersOfMeetup, sendWithButtons, Btn, CUSTOM_WISH } from './wishes';
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
 import { Wish, WishGroup } from './models/Wish';
 import { startNudgeLoop } from './nudges';
@@ -718,20 +718,24 @@ app.get('/api/wishes/kind/:kind/people', telegramAuthMiddleware as any, async (r
     const kind = getParamId(req.params.kind).slice(0, 40);
     const myId = req.telegramUser!.id;
     const me = await User.findOne({ telegramId: myId });
-    const tpl = await EventTemplate.findOne({ key: kind }, { name: 1, emoji: 1 }).lean();
-    if (!tpl) return res.sendStatus(404);
-    const wishes = await Wish.find({ kind, status: { $in: ['active', 'matched'] }, telegramId: { $ne: myId } }, { telegramId: 1 }).lean();
+    // «Своё» желание — шаблона в базе нет, совпадает только тот же текст
+    const tpl = kind === CUSTOM_WISH ? null : await EventTemplate.findOne({ key: kind }, { name: 1, emoji: 1 }).lean();
+    if (!tpl && kind !== CUSTOM_WISH) return res.sendStatus(404);
+    const sport = kind === CUSTOM_WISH ? String(req.query.sport || '').slice(0, 40) : '';
+    if (kind === CUSTOM_WISH && !sport) return res.sendStatus(404);
+    const sameWish = { kind, ...(sport ? { sport } : {}), status: { $in: ['active', 'matched'] } };
+    const wishes = await Wish.find({ ...sameWish, telegramId: { $ne: myId } }, { telegramId: 1 }).lean();
     const ids = [...new Set(wishes.map((w) => w.telegramId))];
     const people = await User.find({ ...visibleUserQuery(me, 0), telegramId: { $in: ids, $nin: me?.blockedUsers || [] } })
       .sort({ lastActiveAt: -1 })
       .limit(30);
-    const mine = await Wish.findOne({ telegramId: myId, kind, status: { $in: ['active', 'matched'] } }).lean();
+    const mine = await Wish.findOne({ ...sameWish, telegramId: myId }).lean();
     const group = mine?.groupId ? await WishGroup.findById(mine.groupId, { status: 1, meetupId: 1 }).lean() : null;
     const flags = await getReactionFlags(myId, people.map((u) => u.telegramId));
     res.json({
       kind,
-      name: tpl.name,
-      emoji: tpl.emoji || '✨',
+      name: sport ? sport.replace(/^./, (c) => c.toUpperCase()) : tpl!.name,
+      emoji: tpl?.emoji || '✍️',
       people: people.map((u) => formatPublicUser(u, me, flags.get(u.telegramId))),
       wishGroupId: group?.status === 'open' ? String(group._id) : null,
       eventId: group?.meetupId || null

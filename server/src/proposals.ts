@@ -10,7 +10,7 @@ import { User } from './models/User';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { formatWhen } from './eventNotify';
 import { buildExtras } from './eventTemplates';
-import { sendWithButtons, Btn, phraseFor, proposalSlots, endsToday, groupSize, buildPath, setAfterMatch } from './wishes';
+import { sendWithButtons, Btn, phraseFor, proposalSlots, endsToday, groupSize, buildPath, setAfterMatch, CUSTOM_WISH } from './wishes';
 import { isAdmin, adminIds } from './news';
 import { PROPOSAL_FALLBACK_PLACES } from './data/wishProposals';
 import { PROPOSAL_TEXTS as T, WISH_TEXTS as W, SUGGEST_TEXTS as SG } from './texts';
@@ -133,7 +133,10 @@ async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
       return opt ? opt.say ?? opt.label : '';
     }).replace(/\s{2,}/g, ' ').trim();
   const hasAllTokens = !/\{[^}]+\}/.test(tpl?.title || '') || Boolean(group.sport);
-  const title = (hasAllTokens ? fill(tpl?.title || '') : tpl?.fallbackTitle) || (await phraseFor(group.kind, group.sport));
+  // «Своё» желание: название — сам текст («Караоке»), шаблон «Своя идея» тут не подсказчик
+  const isCustom = group.kind === CUSTOM_WISH;
+  const customText = isCustom ? (group.sport || '').replace(/^./, (c) => c.toUpperCase()) : '';
+  const title = isCustom ? customText : (hasAllTokens ? fill(tpl?.title || '') : tpl?.fallbackTitle) || (await phraseFor(group.kind, group.sport));
   const description = [fill(tpl?.description || ''), p.note].filter(Boolean).join('\n\n') || 'Сходка из «Хочу сходить»';
 
   const yesUsers = await User.find({ telegramId: { $in: option.yes } }).lean();
@@ -142,8 +145,8 @@ async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
   const event = await Event.create({
     title: title.slice(0, 100),
     description: description.slice(0, 600),
-    category: tpl?.category || 'other',
-    customCategory: tpl?.category ? '' : tpl?.name || '',
+    category: isCustom ? 'other' : tpl?.category || 'other',
+    customCategory: isCustom ? customText.slice(0, 30) : tpl?.category ? '' : tpl?.name || '',
     tags: tpl?.tags || [],
     placeId: p.placeId,
     templateId: tpl?.key,

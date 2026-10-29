@@ -93,12 +93,13 @@ function notifyAdmins(html: string, buttons: { text: string; data: string }[]) {
 
 export const BANNED_ERROR = 'Аккаунт заблокирован за нарушение правил';
 
-export type StopSource = 'event' | 'eventEdit' | 'message' | 'profile';
+export type StopSource = 'event' | 'eventEdit' | 'message' | 'profile' | 'wish';
 const STOP_SOURCES: Record<StopSource, string> = {
   event: 'новая сходка',
   eventEdit: 'изменение сходки',
   message: 'сообщение участникам сходки',
-  profile: 'анкета'
+  profile: 'анкета',
+  wish: 'своё желание в «Хочу сходить»'
 };
 
 /**

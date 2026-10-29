@@ -4,6 +4,7 @@ import { Reaction } from './models/Reaction';
 import { EventTemplate } from './models/EventTemplate';
 import { calculateDistanceMeters } from './utils/geoUtils';
 import { PEOPLE_TEXTS as T } from './texts';
+import { CUSTOM_WISH } from './wishes';
 
 /**
  * Порядок во вкладке «Люди» и на карте: по тому, что сближает (общие интересы и планы, близость, как человек ходит),
@@ -19,7 +20,7 @@ export interface RankContext {
   myCoords: [number, number] | null; // [lng, lat]
   myGoesWith?: string;
   myAge?: number;
-  sharedPlans: Map<number, { kind: string; name: string }[]>; // человек → общие «Хочу сходить»
+  sharedPlans: Map<number, { kind: string; sport?: string; name: string }[]>; // человек → общие «Хочу сходить» (у «Своего» — текст в sport)
   sameEvent: Set<number>;             // идём на одну сходку
   likesIn: Map<number, number>;       // сколько «Пообщаться» получил человек
   dayKey: string;
@@ -91,17 +92,23 @@ export const sharedKinds = (id: number, ctx: RankContext) => ctx.sharedPlans.get
  */
 export async function buildRankContext(me: any, candidateIds: number[]): Promise<RankContext> {
   const viewerId = me.telegramId;
-  const myWishes = await Wish.find({ telegramId: viewerId, status: { $in: ['active', 'matched'] } }, { kind: 1 }).lean();
+  const myWishes = await Wish.find({ telegramId: viewerId, status: { $in: ['active', 'matched'] } }, { kind: 1, sport: 1 }).lean();
   const myKinds = [...new Set(myWishes.map((w) => w.kind))];
+  // «Своё» совпадает только с тем же текстом
+  const myCustom = new Set(myWishes.filter((w) => w.kind === CUSTOM_WISH).map((w) => w.sport));
 
-  const sharedPlans = new Map<number, { kind: string; name: string }[]>();
+  const sharedPlans = new Map<number, { kind: string; sport?: string; name: string }[]>();
   if (myKinds.length) {
     const templates = await EventTemplate.find({ key: { $in: myKinds } }, { key: 1, name: 1 }).lean();
     const nameOf = new Map(templates.map((t: any) => [t.key, t.name]));
-    const theirs = await Wish.find({ kind: { $in: myKinds }, status: { $in: ['active', 'matched'] }, telegramId: { $in: candidateIds } }, { telegramId: 1, kind: 1 }).lean();
+    const theirs = await Wish.find({ kind: { $in: myKinds }, status: { $in: ['active', 'matched'] }, telegramId: { $in: candidateIds } }, { telegramId: 1, kind: 1, sport: 1 }).lean();
     for (const w of theirs) {
+      const custom = w.kind === CUSTOM_WISH;
+      if (custom && !myCustom.has(w.sport)) continue;
       const list = sharedPlans.get(w.telegramId) || [];
-      if (!list.some((p) => p.kind === w.kind)) sharedPlans.set(w.telegramId, [...list, { kind: w.kind, name: nameOf.get(w.kind) || w.kind }]);
+      if (list.some((p) => p.kind === w.kind && (!custom || p.sport === w.sport))) continue;
+      const name = custom ? (w.sport || '').replace(/^./, (c: string) => c.toUpperCase()) : nameOf.get(w.kind) || w.kind;
+      sharedPlans.set(w.telegramId, [...list, { kind: w.kind, ...(custom ? { sport: w.sport } : {}), name }]);
     }
   }
 
