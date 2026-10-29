@@ -64,6 +64,7 @@ export interface IUser extends Document {
   nudge2SentAt?: Date;       // второе, последнее (через 4 дня)
   nudgeOptedOut?: boolean;   // нажал «Не сейчас» — больше не пишем
   profileNudgeSentAt?: Date; // разовое напоминание «заполни анкету подробнее»
+  usernameNudgeSentAt?: Date; // разовое напоминание «заведи @username»
   hiddenPlaces?: string[];   // места, смахнутые «Неинтересно»
   hiddenEvents?: string[];   // сходки, смахнутые «Неинтересно»
   hiddenByReports?: boolean; // скрыт после 3 жалоб до решения модератора
@@ -140,6 +141,7 @@ const UserSchema = new Schema<IUser>(
     nudge2SentAt: { type: Date },
     nudgeOptedOut: { type: Boolean },
     profileNudgeSentAt: { type: Date },
+    usernameNudgeSentAt: { type: Date },
     hiddenPlaces: { type: [String], default: [] },
     hiddenEvents: { type: [String], default: [] },
     hiddenByReports: { type: Boolean, default: false },

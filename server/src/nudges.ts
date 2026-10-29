@@ -8,7 +8,7 @@ import { formatWhen } from './eventNotify';
 import { meetupCreatePath } from './eventTemplates';
 import { sendWithButtons, Btn } from './wishes';
 import { isAdmin } from './news';
-import { NUDGE_TEXTS as T, PROFILE_NUDGE_TEXTS as P, peopleCount } from './texts';
+import { NUDGE_TEXTS as T, PROFILE_NUDGE_TEXTS as P, USERNAME_TEXTS as U, peopleCount } from './texts';
 
 /**
  * Приветственный толчок: новичку без активности бот пишет через сутки и (последний раз) через 4 дня.
@@ -141,6 +141,7 @@ export async function runNudges(force = false) {
       await new Promise((r) => setTimeout(r, 60));
     }
     await runProfileNudges(now);
+    await runUsernameNudges(now);
   } finally {
     running = false;
   }
@@ -184,6 +185,28 @@ async function runProfileNudges(now: number) {
     const msg = profileMessage(user);
     await sendWithButtons(user.telegramId, msg.html, msg.rows);
     await NudgeLog.create({ telegramId: user.telegramId, n: 3, variant: 'profile' });
+    await new Promise((r) => setTimeout(r, 60));
+  }
+}
+
+/* ---------- Разовое напоминание «заведи @username» ---------- */
+
+// Без @username человеку не могут написать первым ни «На связи», ни организатор сходки.
+// Один раз, не раньше чем через сутки после регистрации и не в день другого напоминания
+async function runUsernameNudges(now: number) {
+  const users = await User.find({
+    hasAgreedToRules: true,
+    isBanned: { $ne: true },
+    canMessage: { $ne: false },
+    username: { $in: [null, ''] },
+    usernameNudgeSentAt: { $exists: false },
+    createdAt: { $lte: new Date(now - DAY) }
+  });
+  for (const user of users) {
+    const lastNudge = Math.max(user.nudge1SentAt?.getTime() || 0, user.nudge2SentAt?.getTime() || 0, user.profileNudgeSentAt?.getTime() || 0);
+    if (now - lastNudge < DAY) continue;
+    await User.updateOne({ _id: user._id }, { $set: { usernameNudgeSentAt: new Date() } });
+    await sendWithButtons(user.telegramId, U.nudge, [[{ text: U.nudgeBtn, path: '?tab=profile' }]]);
     await new Promise((r) => setTimeout(r, 60));
   }
 }
