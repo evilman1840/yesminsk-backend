@@ -1391,6 +1391,17 @@ app.post('/api/events/:id/leave', telegramAuthMiddleware as any, async (req: Aut
         { telegramId: tgUser.id, name: leaving.name, joinedAt: leaving.joinedAt, cancelledAt: new Date(), via: req.body?.via === 'bot' ? 'bot' : 'app' }
       ];
       await event.save();
+
+      // Организатору: кто не придёт (только если сходка ещё впереди и отменил не он сам)
+      if (event.isActive && event.dateTime.getTime() > Date.now() && leaving.telegramId !== event.creator.telegramId) {
+        const note = companyNote(leaving.guests, leaving.withKids);
+        sendTelegramMessage(
+          event.creator.telegramId,
+          `😕 <b>${escapeHtml(leaving.name)}${note ? ` (${note})` : ''} не придёт</b>${leaving.confirmedAt ? ', хотя раньше нажал(а) «Точно приду»' : ''}\n\n${eventSummaryHtml(event)}`,
+          'Открыть сходку',
+          eventAppPath(event)
+        );
+      }
     }
 
     res.json({ success: true, message: 'Вы покинули событие' });
