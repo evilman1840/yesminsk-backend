@@ -57,6 +57,9 @@ export interface IEvent extends Document {
   maxParticipants?: number;
   photosHidden?: boolean;
   stopWordsHold?: boolean; // скрыта автобаном по стоп-словам — вернётся, если модератор нажмёт «Ошибка»
+  audienceGender?: 'all' | 'female' | 'male'; // для кого: все / только девушки / только мужчины
+  ageMin?: number | null;  // возраст «от» (пусто — любой)
+  ageMax?: number | null;  // возраст «до»
   isActive: boolean;
   reminderDaySentAt?: Date;  // напоминание «завтра сходка» уже отправлено
   reminderHourSentAt?: Date; // напоминание «через час» уже отправлено
@@ -90,6 +93,9 @@ const EventSchema = new Schema<IEvent>(
     photos: { type: [String], default: [] },
     photosHidden: { type: Boolean, default: false }, // жалоба «неприличное фото» — не показываем до решения
     stopWordsHold: { type: Boolean },
+    audienceGender: { type: String, enum: ['all', 'female', 'male'], default: 'all' },
+    ageMin: { type: Number, min: 18, max: 99 },
+    ageMax: { type: Number, min: 18, max: 99 },
     isPaid: { type: Boolean, default: false },
     price: { type: Number, min: 0 },
     location: {

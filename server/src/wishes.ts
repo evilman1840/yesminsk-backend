@@ -11,6 +11,7 @@ import { meetupCreatePath } from './eventTemplates';
 import { formatWhen } from './eventNotify';
 import { WISH_TEXTS as T } from './texts';
 import { checkStopWords } from './stopWords';
+import { audienceUsersQuery } from './eventAudience';
 import { reportStopWords, BANNED_ERROR } from './moderation';
 
 /**
@@ -296,7 +297,9 @@ export async function notifyWishersOfMeetup(event: IEvent, skipGroupId?: unknown
     windowEnd: { $gte: event.dateTime },
     ...(skipGroupId && mongoose.Types.ObjectId.isValid(String(skipGroupId)) ? { groupId: { $ne: new mongoose.Types.ObjectId(String(skipGroupId)) } } : {})
   }).limit(50).lean();
-  const ids = [...new Set(wishes.map((w) => w.telegramId))].slice(0, 30);
+  // Только тем, кому сходка подходит по полу и возрасту
+  const fit = new Set((await User.find({ telegramId: { $in: wishes.map((w) => w.telegramId) }, ...audienceUsersQuery(event) }, { telegramId: 1 }).lean()).map((u) => u.telegramId));
+  const ids = [...new Set(wishes.map((w) => w.telegramId))].filter((id) => fit.has(id)).slice(0, 30);
   if (!ids.length) return;
   const what = escapeHtml(await phraseFor(event.templateId));
   const html = T.kindMeetup(what, escapeHtml(event.title), formatWhen(event.dateTime), escapeHtml(event.locationName));

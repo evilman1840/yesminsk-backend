@@ -30,6 +30,7 @@ import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { rankEvent, distanceTo, Viewer } from './eventRanking';
 import { buildRankContext, scoreUser, whyShown, sharedKinds } from './peopleRanking';
 import { PeopleSeen } from './models/PeopleSeen';
+import { cleanAudience, audienceError, audienceFeedQuery, audienceUsersQuery } from './eventAudience';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish, notifyWishersOfMeetup, sendWithButtons, Btn, CUSTOM_WISH } from './wishes';
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
@@ -1049,6 +1050,9 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     myGuests: mine?.guests || 0,
     myWithKids: Boolean(mine?.withKids),
     myConfirmed: Boolean(mine?.confirmedAt),
+    audienceGender: ev.audienceGender || 'all',
+    ageMin: ev.ageMin || null,
+    ageMax: ev.ageMax || null,
     // Кто идёт: все видят всех; Telegram участников — только организатору (чтобы написать детали)
     participants: ev.participants.map((p) => ({
       telegramId: p.telegramId,
@@ -1109,7 +1113,7 @@ async function notifyPlaceSavers(event: IEvent) {
   const place = await Place.findById(event.placeId, { name: 1 }).lean();
   if (!place) return;
   const savers = await User.find(
-    { savedPlaces: event.placeId, telegramId: { $ne: event.creator.telegramId }, isBanned: { $ne: true }, hasAgreedToRules: true },
+    { savedPlaces: event.placeId, telegramId: { $ne: event.creator.telegramId }, isBanned: { $ne: true }, hasAgreedToRules: true, ...audienceUsersQuery(event) },
     { telegramId: 1, hiddenEvents: 1 }
   ).lean();
   for (const u of savers) {
@@ -1131,7 +1135,7 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
     const category = typeof req.query.category === 'string' ? req.query.category : undefined;
 
     const now = Date.now();
-    const me = await User.findOne({ telegramId: tgUser.id }, { hiddenEvents: 1, isEmpath: 1, goals: 1, goal: 1, locationExact: 1 }).lean();
+    const me = await User.findOne({ telegramId: tgUser.id }, { hiddenEvents: 1, isEmpath: 1, goals: 1, goal: 1, locationExact: 1, gender: 1, age: 1 }).lean();
     const mineQuery = { $or: [{ 'creator.telegramId': tgUser.id }, { 'participants.telegramId': tgUser.id }] };
     const categoryQuery = category && category !== 'all' ? { category: category as EventCategory } : {};
 
@@ -1145,7 +1149,9 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
       'creator.telegramId': { $ne: tgUser.id },
       'participants.telegramId': { $ne: tgUser.id },
       ...(hiddenIds.length ? { _id: { $nin: hiddenIds } } : {}),
-      ...(me?.isEmpath ? {} : { tags: { $ne: 'empaths' } })
+      ...(me?.isEmpath ? {} : { tags: { $ne: 'empaths' } }),
+      // «Только девушки / мужчины», «25–35 лет» — кому не подходит, тот не видит
+      $and: audienceFeedQuery(me)
     };
     // Свои и куда записан — всегда, даже дальше месяца (для «⭐ Мои»); начавшиеся — ещё 4 часа
     const [feed, mine] = await Promise.all([
@@ -1229,6 +1235,8 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
 
     const tpl = await templateFields(templateId, extras);
     if ('error' in tpl) return res.status(400).json({ error: tpl.error });
+    const audience = cleanAudience(req.body, { gender: user?.gender, age: user?.age });
+    if (audience.error) return res.status(400).json({ error: audience.error });
 
     const [lat, lng] = latLng;
     // Митинги, протесты, политика: однозначные слова — сходку не показываем, автора в бан
@@ -1272,6 +1280,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
         }
       ],
       maxParticipants: seatsLimit(maxParticipants),
+      ...(audience.value || {}),
       isActive: stop?.level !== 'ban'
     });
 
@@ -1375,6 +1384,10 @@ app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: Auth
     if (!event || !event.isActive) {
       return res.status(404).json({ error: 'Событие не найдено' });
     }
+
+    // Сходка «только для девушек» или «25–35 лет» — организатора не касается
+    const notFit = event.creator.telegramId !== tgUser.id ? audienceError(event, user) : null;
+    if (notFit) return res.status(403).json({ error: notFit });
 
     // Организатор отказал — повторно записаться нельзя
     if ((event.cancellations || []).some((c) => c.via === 'host' && c.telegramId === tgUser.id)) {
@@ -1585,6 +1598,11 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       event.badges = tpl.badges;
     }
     if (durationMinutes !== undefined) event.durationMinutes = cleanDuration(durationMinutes);
+    // Для кого: пол и возраст (прислали — проверяем и меняем)
+    const host = await User.findOne({ telegramId: tgUser.id }, { gender: 1, age: 1 }).lean();
+    const audience = cleanAudience(req.body, { gender: host?.gender, age: host?.age });
+    if (audience.error) return res.status(400).json({ error: audience.error });
+    if (audience.value) Object.assign(event, audience.value);
 
     const oldTime = event.dateTime.getTime();
     const oldPlace = event.locationName;
