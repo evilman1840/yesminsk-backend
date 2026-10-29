@@ -1539,11 +1539,12 @@ const handleDeleteEventLogic = async (req: AuthenticatedRequest, res: Response) 
 
     await Event.findByIdAndDelete(event._id);
 
-    // Удалил модератор — организатору объясняем почему, а не «сходка отменена»
+    // Удалил модератор — организатору его текст, почему (а не «сходка отменена»)
     if (byModerator) {
+      const reason = cleanText(req.body?.reason, 800);
       sendTelegramMessage(
         event.creator.telegramId,
-        `🗑 <b>Модератор удалил твою сходку</b>\n\n«${escapeHtml(event.title)}», ${formatWhen(event.dateTime)}.\n\nОна нарушает правила «ГУЛЯЙ!»: сходки только для досуга, спорта и общения, без политики. Если считаешь, что это ошибка, напиши @evilman1840.`
+        `🗑 <b>Модератор удалил твою сходку</b>\n\n«${escapeHtml(event.title)}», ${formatWhen(event.dateTime)}.${reason ? `\n\n${escapeHtml(reason)}` : ''}`
       );
     }
 
