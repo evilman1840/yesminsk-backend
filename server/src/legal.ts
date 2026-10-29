@@ -6,8 +6,8 @@ import { deleteAvatar } from './avatars';
  * Обновили редакцию: поменяйте LEGAL_VERSION здесь и во фронте и сдвиньте LEGAL_GRACE_UNTIL
  * на ~2 недели вперёд — столько анкеты не принявших ещё видны другим
  */
-export const LEGAL_VERSION = '2026-10-25';
-export const LEGAL_GRACE_UNTIL = new Date('2026-11-08T00:00:00+03:00');
+export const LEGAL_VERSION = '2026-10-29';
+export const LEGAL_GRACE_UNTIL = new Date('2026-11-12T00:00:00+03:00');
 
 // Условие для показа анкеты другим: после льготного срока — только принявшие текущую редакцию
 export const legalVisibleQuery = (): Record<string, any> => (Date.now() > LEGAL_GRACE_UNTIL.getTime() ? { legalVersion: LEGAL_VERSION } : {});
