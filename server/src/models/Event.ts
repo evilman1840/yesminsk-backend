@@ -19,7 +19,8 @@ export interface IEventCancellation {
   name: string;
   joinedAt?: Date;
   cancelledAt: Date;
-  via: 'app' | 'bot'; // из приложения или по кнопке «Отменить» в сообщении бота
+  via: 'app' | 'bot' | 'host'; // сам из приложения, по кнопке «Отменить» в боте или отказал организатор
+  reason?: string;             // host: что написал организатор
 }
 
 // Пометки организатора: для кого сходка
@@ -121,7 +122,8 @@ const EventSchema = new Schema<IEvent>(
         name: { type: String, default: '' },
         joinedAt: { type: Date },
         cancelledAt: { type: Date, default: Date.now },
-        via: { type: String, enum: ['app', 'bot'], default: 'app' }
+        via: { type: String, enum: ['app', 'bot', 'host'], default: 'app' },
+        reason: { type: String, maxlength: 800 }
       }
     ],
     maxParticipants: { type: Number, default: 0 }, // 0 = без ограничений

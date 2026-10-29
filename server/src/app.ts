@@ -1225,6 +1225,9 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
 
     res.status(201).json(formatEvent(newEvent, tgUser.id));
 
+    // Организатору: по желанию свой чат для участников и приветствие через «Написать участникам»
+    sendTelegramMessage(tgUser.id, EVENT_MESSAGE_TEXTS.createdTip(eventSummaryHtml(newEvent)), 'Открыть сходку', eventAppPath(newEvent));
+
     // Сходка в место — пишем тем, у кого оно в 🔖 сохранённых
     // Собрали по «Хочу сходить» → остальным в группе «Сходку собрали»
     if (wishGroupId) onMeetupFromWish(wishGroupId, newEvent, tgUser.id).catch((err) => console.warn('⚠️ «Хочу сходить» после сходки:', err?.message || err));
@@ -1312,6 +1315,11 @@ app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: Auth
 
     if (!event || !event.isActive) {
       return res.status(404).json({ error: 'Событие не найдено' });
+    }
+
+    // Организатор отказал — повторно записаться нельзя
+    if ((event.cancellations || []).some((c) => c.via === 'host' && c.telegramId === tgUser.id)) {
+      return res.status(403).json({ error: 'Организатор отказал в участии в этой сходке' });
     }
 
     // «Только эмпаты» — записаться может тот, кто отметил «Эмпат» в анкете (организатор — всегда)
@@ -1407,6 +1415,39 @@ app.post('/api/events/:id/leave', telegramAuthMiddleware as any, async (req: Aut
     res.json({ success: true, message: 'Вы покинули событие' });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка выхода' });
+  }
+});
+
+// Организатор отказывает участнику: из списка убираем, человеку пишем (с причиной, если она есть)
+app.post('/api/events/:id/remove', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const eventId = getParamId(req.params.id);
+    const event = mongoose.Types.ObjectId.isValid(eventId) ? await Event.findById(eventId) : null;
+    if (!event || !event.isActive) return res.status(404).json({ error: 'Сходка не найдена' });
+    if (!isEventCreator(event, tgUser.id)) return res.status(403).json({ error: 'Отказать участнику может только организатор' });
+    const targetId = Number(req.body?.telegramId);
+    if (targetId === tgUser.id) return res.status(400).json({ error: 'Себе отказать нельзя' });
+    const target = event.participants.find((p) => p.telegramId === targetId);
+    if (!target) return res.status(404).json({ error: 'Этого человека уже нет в списке' });
+    const reason = cleanText(req.body?.reason, 800) || '';
+
+    event.participants = event.participants.filter((p) => p.telegramId !== targetId);
+    event.cancellations = [
+      ...(event.cancellations || []),
+      { telegramId: targetId, name: target.name, joinedAt: target.joinedAt, cancelledAt: new Date(), via: 'host', reason }
+    ];
+    await event.save();
+
+    sendTelegramMessage(
+      targetId,
+      `😔 <b>Организатор отказал в участии</b>\n\n${eventSummaryHtml(event)}${reason ? `\n\n💬 ${escapeHtml(reason)}` : ''}\n\nЗагляни в «Сходки», там есть другие встречи.`,
+      'Найти другую сходку',
+      '?tab=events'
+    );
+    res.json(formatEvent(event, tgUser.id));
+  } catch {
+    res.status(500).json({ error: 'Не получилось, попробуй ещё раз' });
   }
 });
 
