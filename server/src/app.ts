@@ -20,7 +20,8 @@ import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegr
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
 import { setupNewsRoutes, isAdmin } from './news';
 import { setupFundRoutes } from './fund';
-import { banGuard, setupModerationRoutes } from './moderation';
+import { banGuard, setupModerationRoutes, reportStopWords, BANNED_ERROR } from './moderation';
+import { checkStopWords, extrasText } from './stopWords';
 import { markInviteJoined } from './invites';
 import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
@@ -458,9 +459,19 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       }
     }
 
+    // Тексты анкеты: проверяем только изменившиеся, чтобы не писать модератору при каждом сохранении
+    const textKeys = ['firstName', 'bio', 'customGoal', 'guideAbout', 'areaName'].filter((k) => typeof updateData[k] === 'string' && updateData[k]);
+    const prevTexts: any = textKeys.length ? await User.findOne({ telegramId: tgUser.id }, Object.fromEntries(textKeys.map((k) => [k, 1]))).lean() : null;
+    const changedTexts = textKeys.filter((k) => prevTexts?.[k] !== updateData[k]).map((k) => updateData[k] as string);
+    const stop = changedTexts.length ? checkStopWords(...changedTexts) : null;
+
     // Без upsert: запись появляется только после согласия с Соглашением (agree-rules)
     const updatedUser = await User.findOneAndUpdate({ telegramId: tgUser.id }, { $set: updateData }, { new: true });
     if (!updatedUser) return res.status(400).json({ error: 'Сначала прими правила на первом экране' });
+    if (stop) {
+      await reportStopWords(stop, 'profile', tgUser.id, changedTexts);
+      if (stop.level === 'ban') return res.status(403).json({ error: BANNED_ERROR });
+    }
     // Новое фото — сразу и в сходках, где человек организатор или участник
     if (updateData.avatarUrl) syncEventAvatars(tgUser.id, updateData.avatarUrl).catch((err) => console.warn('⚠️ Фото в сходках:', err?.message || err));
 
@@ -1160,12 +1171,16 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     if ('error' in tpl) return res.status(400).json({ error: tpl.error });
 
     const [lat, lng] = latLng;
+    // Митинги, протесты, политика: однозначные слова — сходку не показываем, автора в бан
+    const cleanCustom = category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '';
+    const stopTexts = [cleanTitle, cleanDescription, cleanLocation, cleanCustom, extrasText(tpl.extras)];
+    const stop = checkStopWords(...stopTexts);
 
     const newEvent = await Event.create({
       title: cleanTitle,
       description: cleanDescription,
       category: category || 'walk',
-      customCategory: category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '',
+      customCategory: cleanCustom,
       tags: cleanTags(tags) || [],
       placeId: placeId && mongoose.Types.ObjectId.isValid(String(placeId)) ? String(placeId) : undefined,
       templateId: tpl.templateId,
@@ -1197,8 +1212,13 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
         }
       ],
       maxParticipants: seatsLimit(maxParticipants),
-      isActive: true
+      isActive: stop?.level !== 'ban'
     });
+
+    if (stop) {
+      await reportStopWords(stop, 'event', tgUser.id, stopTexts, String(newEvent._id));
+      if (stop.level === 'ban') return res.status(403).json({ error: BANNED_ERROR });
+    }
 
     res.status(201).json(formatEvent(newEvent, tgUser.id));
 
@@ -1239,6 +1259,11 @@ app.post('/api/events/:id/message', telegramAuthMiddleware as any, async (req: A
     if (!isEventCreator(event, myId)) return res.status(403).json({ error: EVENT_MESSAGE_TEXTS.onlyCreator });
     const text = String(req.body?.text || '').trim().slice(0, 800);
     if (!text) return res.status(400).json({ error: EVENT_MESSAGE_TEXTS.empty });
+    const stop = checkStopWords(text);
+    if (stop) {
+      await reportStopWords(stop, 'message', myId, [`Сходка «${event.title}»`, text], id);
+      if (stop.level === 'ban') return res.status(403).json({ error: BANNED_ERROR });
+    }
     const recipients = event.participants.filter((p) => p.telegramId !== myId);
     if (!recipients.length) return res.status(400).json({ error: EVENT_MESSAGE_TEXTS.noOne });
     const recent = (eventMessages.get(id) || []).filter((t) => Date.now() - t < 24 * 60 * 60 * 1000);
@@ -1421,6 +1446,8 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
 
     const oldTime = event.dateTime.getTime();
     const oldPlace = event.locationName;
+    const textsOf = () => [event!.title, event!.description, event!.locationName, event!.customCategory, extrasText(event!.extras)];
+    const oldTexts = textsOf().join('\n');
 
     const cleanTitle = cleanText(title, 100);
     const cleanDescription = cleanText(description, 600);
@@ -1457,7 +1484,17 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       event.reminderHourSentAt = undefined;
     }
 
+    // Тексты изменились — проверяем на митинги и политику (без изменений не дёргаем модератора повторно)
+    const newTexts = textsOf();
+    const stop = newTexts.join('\n') !== oldTexts ? checkStopWords(...newTexts) : null;
+    if (stop?.level === 'ban') event.isActive = false;
+
     await event.save();
+
+    if (stop) {
+      await reportStopWords(stop, 'eventEdit', tgUser.id, newTexts, String(event._id));
+      if (stop.level === 'ban') return res.status(403).json({ error: BANNED_ERROR });
+    }
 
     if (timeChanged || placeChanged) {
       const changes = [

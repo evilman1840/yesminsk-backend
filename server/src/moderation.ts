@@ -8,6 +8,7 @@ import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { isAdmin } from './news';
 import { formatWhen } from './eventNotify';
 import { removeUserPhotos, removeEventPhotos } from './photoModeration';
+import { StopHit } from './stopWords';
 
 /**
  * Модерация: жалобы на анкеты и сходки, автоскрытие после 3 жалоб, бан через кнопки в боте.
@@ -88,6 +89,67 @@ function notifyAdmins(html: string, buttons: { text: string; data: string }[]) {
   }
 }
 
+/* ---------- Стоп-слова: митинги, протесты, политика ---------- */
+
+export const BANNED_ERROR = 'Аккаунт заблокирован за нарушение правил';
+
+export type StopSource = 'event' | 'eventEdit' | 'message' | 'profile';
+const STOP_SOURCES: Record<StopSource, string> = {
+  event: 'новая сходка',
+  eventEdit: 'изменение сходки',
+  message: 'сообщение участникам сходки',
+  profile: 'анкета'
+};
+
+/**
+ * Нашли стоп-слова (stopWords.ts). ban — автор сразу в бан, его сходки скрыты; review — только сообщаем.
+ * В обоих случаях администратор получает текст и решает кнопкой
+ */
+export async function reportStopWords(hit: StopHit, source: StopSource, telegramId: number, texts: Array<string | undefined>, eventId?: string) {
+  const u = await User.findOne({ telegramId }, { firstName: 1, username: 1, age: 1 }).lean();
+  const who = `👤 <b>${escapeHtml(u?.firstName || '-')}</b>${u?.age ? `, ${u.age}` : ''}${u?.username ? ` · @${escapeHtml(u.username)}` : ''} · ID ${telegramId}`;
+  const quote = escapeHtml(texts.filter(Boolean).join('\n').slice(0, 1200));
+  const head = `Источник: ${STOP_SOURCES[source]}\nНашли: <b>${escapeHtml(hit.matches.join(', '))}</b>\n\n${who}\n\n📝 ${quote}`;
+
+  if (hit.level === 'ban') {
+    // Видимые сейчас сходки помечаем: если это ошибка, вернём ровно их
+    await Event.updateMany({ 'creator.telegramId': telegramId, isActive: true }, { $set: { stopWordsHold: true } });
+    if (eventId && mongoose.Types.ObjectId.isValid(eventId)) await Event.updateOne({ _id: eventId }, { $set: { stopWordsHold: true, isActive: false } });
+    await banUser(telegramId);
+    sendTelegramMessage(
+      telegramId,
+      '🚫 Аккаунт в «ГУЛЯЙ!» заблокирован: в тексте нашлись слова о митингах, протестах или политике, а это запрещено правилами. Если это ошибка, модератор проверит и снимет блокировку.'
+    );
+    notifyAdmins(`🚨 <b>Стоп-слова: автобан</b>\n${head}\n\n🙈 Человек забанен, его сходки скрыты. Реши сам.`, [
+      { text: '✅ Ошибка, вернуть', data: `swok:${telegramId}` },
+      { text: '🚫 Бан оставить', data: `swban:${telegramId}` }
+    ]);
+    return;
+  }
+
+  const isEvent = Boolean(eventId) && (source === 'event' || source === 'eventEdit' || source === 'message');
+  notifyAdmins(
+    `👀 <b>Стоп-слова: проверь</b>\n${head}\n\nНичего не скрыто, слова двусмысленные.`,
+    isEvent
+      ? [
+          { text: '🗑 Скрыть сходку', data: `delev:${eventId}` },
+          { text: '🚫 Забанить', data: `ban:${telegramId}` },
+          { text: '✅ Всё в порядке', data: `okev:${eventId}` }
+        ]
+      : [
+          { text: '🚫 Забанить', data: `ban:${telegramId}` },
+          { text: '✅ Всё в порядке', data: `okuser:${telegramId}` }
+        ]
+  );
+}
+
+// «Ошибка, вернуть»: снимаем бан и возвращаем сходки, скрытые автобаном
+async function undoStopWordsBan(telegramId: number) {
+  await User.updateOne({ telegramId }, { $set: { isBanned: false, hiddenByReports: false } });
+  await Event.updateMany({ 'creator.telegramId': telegramId, stopWordsHold: true }, { $set: { isActive: true }, $unset: { stopWordsHold: 1 } });
+  sendTelegramMessage(telegramId, '✅ Модератор проверил: всё в порядке, блокировка снята, сходки снова видны. Извини за неудобство!', 'Открыть «ГУЛЯЙ!»');
+}
+
 /* ---------- Действия модератора ---------- */
 
 export async function banUser(telegramId: number) {
@@ -120,7 +182,7 @@ async function clearEvent(eventId: string) {
 export async function handleModerationCallback(query: any): Promise<boolean> {
   const data: string = query.data || '';
   const [action, id] = data.split(':');
-  if (!['ban', 'okuser', 'delev', 'okev', 'delphu', 'delphe', 'okphu', 'okphe'].includes(action)) return false;
+  if (!['ban', 'okuser', 'delev', 'okev', 'delphu', 'delphe', 'okphu', 'okphe', 'swok', 'swban'].includes(action)) return false;
 
   if (!isAdmin(query.from?.id)) {
     callBot('answerCallbackQuery', { callback_query_id: query.id, text: 'Только для администратора' });
@@ -131,6 +193,12 @@ export async function handleModerationCallback(query: any): Promise<boolean> {
   if (action === 'ban') {
     await banUser(Number(id));
     result = '🚫 Пользователь забанен';
+  } else if (action === 'swok') {
+    await undoStopWordsBan(Number(id));
+    result = '✅ Бан снят, сходки вернулись';
+  } else if (action === 'swban') {
+    await Event.updateMany({ 'creator.telegramId': Number(id), stopWordsHold: true }, { $unset: { stopWordsHold: 1 } });
+    result = '🚫 Бан оставлен';
   } else if (action === 'okuser') {
     await clearUser(Number(id));
     result = '✅ Жалобы отклонены, анкета снова видна';
@@ -192,7 +260,7 @@ export function banGuard(req: Request, res: Response, next: NextFunction) {
   telegramAuthMiddleware(req as AuthenticatedRequest, res, async () => {
     try {
       const me = await User.findOne({ telegramId: (req as AuthenticatedRequest).telegramUser!.id }, { isBanned: 1 }).lean();
-      if (me?.isBanned) return res.status(403).json({ error: 'Аккаунт заблокирован за нарушение правил' });
+      if (me?.isBanned) return res.status(403).json({ error: BANNED_ERROR });
       next();
     } catch {
       next();
