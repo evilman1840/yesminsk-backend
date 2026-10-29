@@ -72,7 +72,10 @@ export interface IWishGroup extends Document {
     note?: string;
     no: number[]; // «Не смогу» ни в один вариант
     createdAt: Date;
+    remindedAt?: Date;  // молчащим напомнили
+    soloAskedAt?: Date; // единственного «Пойду» спросили, опубликовать ли сходку
   };
+  proposalRounds?: number; // сколько раз предлагали новое время, потому что прежние варианты прошли
   noPlaceNotifiedAt?: Date; // автору уже написали, что нет подходящего места
   askPlaceAt?: Date;        // места нет — спросили группу, ждём ссылку
   createdAt: Date;
@@ -90,7 +93,8 @@ const WishGroupSchema = new Schema<IWishGroup>(
     reminderSentAt: { type: Date },
     proposal: { type: Schema.Types.Mixed },
     noPlaceNotifiedAt: { type: Date },
-    askPlaceAt: { type: Date }
+    askPlaceAt: { type: Date },
+    proposalRounds: { type: Number, default: 0 }
   },
   { timestamps: true }
 );

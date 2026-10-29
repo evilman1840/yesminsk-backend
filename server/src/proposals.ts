@@ -107,7 +107,7 @@ async function offerMessage(group: IWishGroup) {
   const p = group.proposal!;
   const what = await phraseFor(group.kind, group.sport);
   return {
-    html: T.offer(await groupSize(group._id), escapeHtml(what), escapeHtml(p.placeName), p.note, p.options.map((o) => formatWhen(o.at)), CONFIRM_MIN()),
+    html: (group.proposalRounds ? `${T.reofferLead}\n\n` : '') + T.offer(await groupSize(group._id), escapeHtml(what), escapeHtml(p.placeName), p.note, p.options.map((o) => formatWhen(o.at)), CONFIRM_MIN()),
     rows: [
       ...p.options.map((o, i) => [{ text: T.optionBtn(shortWhen(o.at)), data: `prp:yes:${group._id}:${i}` }]),
       [{ text: T.noBtn, data: `prp:no:${group._id}` }],
@@ -180,6 +180,8 @@ async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
 
 const REMIND_AFTER = 4 * HOUR;   // не ответил на предложение — один раз напоминаем
 const WINNER_AFTER = 12 * HOUR;  // голоса разошлись — собираем на варианте, где больше всего «Пойду» (от двух)
+const SOLO_AFTER = 12 * HOUR;    // «Пойду» только у одного — спрашиваем его, опубликовать ли сходку
+const MAX_ROUNDS = 2;            // сколько раз предлагаем новое время, если прежние варианты прошли
 
 // Вариант с наибольшим числом «Пойду» среди тех, что ещё впереди (с запасом в 2 часа)
 const bestOption = (g: IWishGroup) => {
@@ -200,14 +202,35 @@ export async function followUpProposals() {
     const p = g.proposal!;
     const age = Date.now() - new Date(p.createdAt || Date.now()).getTime();
     const { best, yes } = bestOption(g);
+
+    // Все варианты прошли, а окно группы ещё открыто — предлагаем новое время (не больше MAX_ROUNDS раз)
+    if (best < 0 && !p.options.some((o) => new Date(o.at).getTime() > Date.now() + 2 * HOUR) && (g.proposalRounds || 0) < MAX_ROUNDS) {
+      const reset = await WishGroup.findOneAndUpdate(
+        { _id: g._id, status: 'open', 'proposal.createdAt': p.createdAt },
+        { $unset: { proposal: 1 }, $inc: { proposalRounds: 1 } },
+        { new: true }
+      );
+      if (reset) await proposeForGroup(reset, true); // отправит runProposals через pending: 'proposal'
+      continue;
+    }
     // Порог набран (например, после снижения CONFIRM_MIN) или время вышло и есть хотя бы двое — собираем
     if (best >= 0 && (yes >= CONFIRM_MIN() || (age > WINNER_AFTER && yes >= 2))) {
       const claimed = await WishGroup.findOneAndUpdate({ _id: g._id, status: 'open' }, { $set: { status: 'fulfilled' } }, { new: true });
       if (claimed) await createEventFromProposal(claimed, best);
       continue;
     }
+    // «Пойду» только у одного: спрашиваем его, опубликовать ли сходку — остальные увидят и присоединятся
+    if (best >= 0 && yes === 1 && age > SOLO_AFTER && !p.soloAskedAt) {
+      await WishGroup.updateOne({ _id: g._id }, { $set: { 'proposal.soloAskedAt': new Date() } });
+      const option = p.options[best];
+      await sendWithButtons(option.yes[0], T.soloAsk(escapeHtml(await phraseFor(g.kind, g.sport)), formatWhen(option.at), escapeHtml(p.placeName), await groupSize(g._id)), [
+        [{ text: T.soloYesBtn, data: `prp:solo:${g._id}:${best}` }],
+        [{ text: T.soloWaitBtn, data: `prp:wait:${g._id}` }]
+      ]);
+      continue;
+    }
     // Один раз напоминаем тем, кто не нажал ни одного варианта
-    if (age > REMIND_AFTER && !(p as any).remindedAt) {
+    if (age > REMIND_AFTER && !p.remindedAt) {
       await WishGroup.updateOne({ _id: g._id }, { $set: { 'proposal.remindedAt': new Date() } });
       const answered = new Set([...p.no, ...p.options.flatMap((o) => o.yes)]);
       const silent = (await Wish.find({ groupId: g._id, status: 'matched' }, { telegramId: 1 }).lean()).map((w) => w.telegramId).filter((id) => !answered.has(id));
@@ -331,6 +354,19 @@ export async function handleProposalCallback(query: any): Promise<boolean> {
     return true;
   }
   if (g.status !== 'open') return answer(T.gone), true;
+
+  // Ответ единственного «Пойду»: опубликовать сходку сейчас или подождать
+  if (action === 'wait') return answer(T.soloWaitOk), true;
+  if (action === 'solo') {
+    const picked = g.proposal.options[idx];
+    // Публиковать может только тот, кто нажал «Пойду» на это время, и пока до него больше часа
+    if (!picked?.yes.includes(fromId) || new Date(picked.at).getTime() < Date.now() + HOUR) return answer(T.gone), true;
+    const claimed = await WishGroup.findOneAndUpdate({ _id: g._id, status: 'open' }, { $set: { status: 'fulfilled' } }, { new: true });
+    if (!claimed) return answer(T.gone), true;
+    answer(T.soloDone);
+    await createEventFromProposal(claimed, idx);
+    return true;
+  }
 
   if (action === 'no') {
     // «Не смогу ни в один»: снимаем все мои «Пойду»
