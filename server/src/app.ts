@@ -745,7 +745,7 @@ app.get('/api/wishes/kind/:kind/people', telegramAuthMiddleware as any, async (r
     if (!tpl && kind !== CUSTOM_WISH) return res.sendStatus(404);
     const sport = kind === CUSTOM_WISH ? String(req.query.sport || '').slice(0, 40) : '';
     if (kind === CUSTOM_WISH && !sport) return res.sendStatus(404);
-    const sameWish = { kind, ...(sport ? { sport } : {}), status: { $in: ['active', 'matched'] } };
+    const sameWish = { kind, ...(sport ? { sport } : {}), status: { $in: ['active', 'matched'] }, windowEnd: { $gt: new Date() } };
     // Из счётчика «76 человек хотят на кофе на неделе» — только это окно (и место, если оно у желания есть)
     const win = String(req.query.window || '');
     const placeId = String(req.query.placeId || '').slice(0, 60);

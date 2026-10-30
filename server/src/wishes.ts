@@ -13,6 +13,7 @@ import { WISH_TEXTS as T } from './texts';
 import { checkStopWords } from './stopWords';
 import { audienceUsersQuery } from './eventAudience';
 import { theirPreferencesAllow } from './preferences';
+import { legalVisibleQuery } from './legal';
 import { reportStopWords, BANNED_ERROR } from './moderation';
 
 /**
@@ -550,10 +551,33 @@ export function setupWishRoutes(app: Express) {
       const me = req.telegramUser!.id;
       const mine = await Wish.find({ telegramId: me, status: { $in: ['active', 'matched'] }, windowEnd: { $gt: new Date() } }).sort({ createdAt: -1 });
       const summary = await wishSummary();
+      // Считаем только тех, кого я увижу в списке «Тоже хотят»: видимая анкета, не заблокировали друг друга
+      // и их настройки «с кем хочу общаться» (пол, возраст) допускают меня. Себя — считаем
+      const meUser = await User.findOne({ telegramId: me }, { gender: 1, age: 1, blockedUsers: 1 }).lean();
+      const allIds = [...new Set(summary.flatMap((s) => s.userIds))].filter((id) => id !== me);
+      const seen = new Set(
+        (
+          await User.find(
+            {
+              telegramId: { $in: allIds, $nin: meUser?.blockedUsers || [] },
+              hasAgreedToRules: true,
+              profileCompleted: true,
+              isBanned: { $ne: true },
+              hiddenByReports: { $ne: true },
+              blockedUsers: { $ne: me },
+              ...legalVisibleQuery(),
+              $and: theirPreferencesAllow(meUser)
+            },
+            { telegramId: 1 }
+          ).lean()
+        ).map((u) => u.telegramId)
+      );
       res.json({
         mine: await Promise.all(mine.map(formatWish)),
         // Без списка людей: только сколько и есть ли среди них я
-        summary: summary.map(({ userIds, ...s }) => ({ ...s, includesMe: userIds.includes(me) })),
+        summary: summary
+          .map(({ userIds, ...s }) => ({ ...s, count: userIds.filter((id) => id === me || seen.has(id)).length, includesMe: userIds.includes(me) }))
+          .filter((s) => s.count > 0),
         maxActive: MAX_ACTIVE
       });
     } catch {
