@@ -2,6 +2,7 @@ import { USERNAME_TEXTS as U } from './texts';
 import { IUser } from './models/User';
 import { Reaction } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
+import { preferencesAllow } from './preferences';
 
 /**
  * 👋 «Пообщаться» от одного человека другому. Если в ответ уже было 👋 — оба «На связи», бот пишет обоим.
@@ -11,6 +12,8 @@ import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegr
 export async function sendLike(me: IUser, target: IUser, context = ''): Promise<{ isMatch: boolean; isNewLike: boolean } | null> {
   if (me.telegramId === target.telegramId) return null;
   if ((me.blockedUsers || []).includes(target.telegramId) || (target.blockedUsers || []).includes(me.telegramId)) return null;
+  // Его настройки «с кем хочу общаться» меня не допускают — привет не передаём (если он сам передал мне 👋 — можно ответить)
+  if (!preferencesAllow(target, me) && !(await Reaction.exists({ fromTelegramId: target.telegramId, toTelegramId: me.telegramId, type: 'like' }))) return null;
 
   const previous = await Reaction.findOne({ fromTelegramId: me.telegramId, toTelegramId: target.telegramId });
   await Reaction.findOneAndUpdate(

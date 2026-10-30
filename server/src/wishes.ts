@@ -12,6 +12,7 @@ import { formatWhen } from './eventNotify';
 import { WISH_TEXTS as T } from './texts';
 import { checkStopWords } from './stopWords';
 import { audienceUsersQuery } from './eventAudience';
+import { theirPreferencesAllow } from './preferences';
 import { reportStopWords, BANNED_ERROR } from './moderation';
 
 /**
@@ -324,7 +325,8 @@ export async function inviteToMeetup(event: IEvent, ids: number[], inviter: any)
       telegramId: { $in: [...wishers].filter((id) => id !== myId && !(inviter?.blockedUsers || []).includes(id)) },
       blockedUsers: { $ne: myId },
       isBanned: { $ne: true },
-      ...audienceUsersQuery(event)
+      ...audienceUsersQuery(event),
+      $and: theirPreferencesAllow(inviter) // не зовём тех, кто не хочет общаться с моим полом или возрастом
     },
     { telegramId: 1 }
   ).lean();

@@ -35,6 +35,7 @@ import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish, notifyWishersOfMeetup, inviteToMeetup, INVITE_MAX, sendWithButtons, Btn, CUSTOM_WISH } from './wishes';
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
 import { Wish, WishGroup, WISH_WINDOWS, WishWindow } from './models/Wish';
+import { theirPreferencesAllow } from './preferences';
 import { startNudgeLoop } from './nudges';
 import { startProposalLoop, setupProposalRoutes, fixAutoMeetupHosts } from './proposals';
 import { setupAccountRoutes } from './account';
@@ -751,7 +752,8 @@ app.get('/api/wishes/kind/:kind/people', telegramAuthMiddleware as any, async (r
     const exact = { ...(WISH_WINDOWS.includes(win as WishWindow) ? { timeWindow: win } : {}), ...(placeId ? { placeId } : {}) };
     const wishes = await Wish.find({ ...sameWish, ...exact, telegramId: { $ne: myId } }, { telegramId: 1 }).lean();
     const ids = [...new Set(wishes.map((w) => w.telegramId))];
-    const people = await User.find({ ...visibleUserQuery(me, 0), telegramId: { $in: ids, $nin: me?.blockedUsers || [] } })
+    // Только те, чьи настройки «с кем хочу общаться» (пол, возраст) допускают меня
+    const people = await User.find({ ...visibleUserQuery(me, 0), telegramId: { $in: ids, $nin: me?.blockedUsers || [] }, $and: theirPreferencesAllow(me) })
       .sort({ lastActiveAt: -1 })
       .limit(100);
     const mine = await Wish.findOne({ ...sameWish, telegramId: myId }).lean();
@@ -780,7 +782,7 @@ app.get('/api/wishes/groups/:id/members', telegramAuthMiddleware as any, async (
     if (!group || !(await Wish.exists({ groupId: group._id, telegramId: myId }))) return res.sendStatus(404);
     const ids = (await Wish.find({ groupId: group._id, status: { $in: ['matched', 'fulfilled'] }, telegramId: { $ne: myId } }).lean()).map((w) => w.telegramId);
     const me = await User.findOne({ telegramId: myId });
-    const others = await User.find({ ...visibleUserQuery(me, 0), telegramId: { $in: ids, $nin: me?.blockedUsers || [] } });
+    const others = await User.find({ ...visibleUserQuery(me, 0), telegramId: { $in: ids, $nin: me?.blockedUsers || [] }, $and: theirPreferencesAllow(me) });
     const flags = await getReactionFlags(myId, others.map((u) => u.telegramId));
     res.json({
       kind: group.kind,
@@ -870,30 +872,6 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     guideAbout: u.isGuide && !u.isTourist ? u.guideAbout || '' : undefined,
     photos: u.photosHidden ? [] : (u.photos || []).map(photoUrl)
   };
-}
-
-// Раньше анкета по умолчанию сохраняла «возраст компании 18–45» — такие значения считаем «не указано»
-const LEGACY_DEFAULT_AGE = { min: 18, max: 45 };
-
-/**
- * Условия «их предпочтения допускают меня»: пол и возраст компании, которые человек указал в анкете
- */
-function theirPreferencesAllow(me: any): any[] {
-  const myGender = me?.gender;
-  const myAge = Number(me?.age) || 25;
-  return [
-    {
-      preferredGender:
-        myGender === 'male' ? { $in: ['all', 'male', null] } : myGender === 'female' ? { $in: ['all', 'female', null] } : { $in: ['all', null] }
-    },
-    {
-      $or: [
-        { preferredAgeRange: { $exists: false } },
-        { 'preferredAgeRange.min': LEGACY_DEFAULT_AGE.min, 'preferredAgeRange.max': LEGACY_DEFAULT_AGE.max },
-        { 'preferredAgeRange.min': { $lte: myAge }, 'preferredAgeRange.max': { $gte: myAge } }
-      ]
-    }
-  ];
 }
 
 const HOUR = 60 * 60 * 1000;
