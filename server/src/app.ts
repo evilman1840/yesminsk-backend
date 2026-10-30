@@ -28,7 +28,7 @@ import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { rankEvent, distanceTo, Viewer } from './eventRanking';
-import { buildRankContext, scoreUser, whyShown, sharedKinds } from './peopleRanking';
+import { buildRankContext, scoreUser, whyShown, sharedKinds, orderForFeed } from './peopleRanking';
 import { PeopleSeen } from './models/PeopleSeen';
 import { cleanAudience, audienceError, audienceFeedQuery, audienceUsersQuery } from './eventAudience';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
@@ -668,16 +668,19 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
     const currentUser = await User.findOne({ telegramId: tgUser.id });
     const query = nearbyQuery(tgUser, currentUser, typeof req.query.goal === 'string' ? req.query.goal : undefined);
 
-    // Берём широко (все, кто подходит, по свежести), считаем очки и отдаём 300 лучших: карта не перегружается
+    // Берём широко (все, кто подходит, по свежести), считаем очки и отдаём 300 лучших: карта не перегружается.
+    // Внутри — сначала новые для меня лица, виденные за 3 дня в конце
     const candidates = await User.find(query).sort({ lastActiveAt: -1 }).limit(3000).lean();
     const ids = candidates.map((u) => u.telegramId);
     const [flags, ctx] = await Promise.all([getReactionFlags(tgUser.id, ids), currentUser ? buildRankContext(currentUser, ids) : null]);
     const users = ctx
-      ? candidates
-          .map((u) => ({ u, score: scoreUser(u, ctx, flags.get(u.telegramId)) }))
-          .sort((a, b) => b.score - a.score)
-          .slice(0, 300)
-          .map((x) => x.u)
+      ? orderForFeed(
+          candidates
+            .map((u) => ({ u, score: scoreUser(u, ctx, flags.get(u.telegramId)) }))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 300),
+          ctx
+        ).map((x) => x.u)
       : candidates.slice(0, 300);
 
     res.json(users.map((u) => ({ ...formatPublicUser(u, currentUser, flags.get(u.telegramId)), ...(ctx ? { why: whyShown(u.telegramId, ctx), wishKinds: sharedKinds(u.telegramId, ctx) } : {}) })));

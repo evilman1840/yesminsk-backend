@@ -71,17 +71,38 @@ export function scoreUser(u: any, ctx: RankContext, flags?: { iLiked: boolean; l
   const created = u.createdAt ? new Date(u.createdAt).getTime() : 0;
   if (created && now - created < 3 * DAY) s += 2;
 
-  // Уже видел(а) — ниже; чем свежее и чаще, тем ниже. Через неделю человек возвращается на своё место
+  // Уже видел(а) — заметно ниже, чтобы в 300 лучших попадали новые лица. Через неделю человек возвращается на своё место
   const viewed = ctx.seen.get(u.telegramId);
   if (viewed && now - viewed.at < 7 * DAY) {
     const ago = now - viewed.at;
-    s -= (ago < DAY ? 6 : ago < 3 * DAY ? 4 : 2) + Math.min(3, viewed.count - 1);
+    s -= (ago < DAY ? 15 : ago < 3 * DAY ? 10 : 5) + Math.min(5, viewed.count - 1);
   }
 
   if (flags?.likedMe) s += 2;
   if (flags?.iLiked) s -= 10; // уже позвал(а) — ждёт ответа, вниз
 
   return s + jitter(ctx.viewerId, u.telegramId, ctx.dayKey) * 2;
+}
+
+const FRESH_AFTER = 3 * DAY;
+
+/**
+ * Порядок в ленте: сначала те, кого я не видел(а) последние 3 дня (по очкам), потом уже виденные —
+ * давно и редко виденные раньше. Очки одни на всех не поднимут знакомое лицо выше нового
+ */
+export function orderForFeed<T extends { u: any; score: number }>(list: T[], ctx: RankContext, now = Date.now()): T[] {
+  const viewed = (x: T) => {
+    const v = ctx.seen.get(x.u.telegramId);
+    return v && now - v.at < FRESH_AFTER ? v : null;
+  };
+  return [...list].sort((a, b) => {
+    const va = viewed(a);
+    const vb = viewed(b);
+    if (!va !== !vb) return va ? 1 : -1;
+    if (va && vb && va.count !== vb.count) return va.count - vb.count;
+    if (va && vb) return va.at - vb.at;
+    return b.score - a.score;
+  });
 }
 
 // «Почему показан»: общие планы и сходки (общие интересы карточка подсвечивает сама)
