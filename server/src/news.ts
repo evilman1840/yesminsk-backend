@@ -1,5 +1,6 @@
 import { Express, Request, Response } from 'express';
 import { News } from './models/News';
+import { Tip } from './models/Tip';
 import { sendTelegramMessage } from './utils/telegramNotify';
 import { sendTelegramPhoto } from './utils/telegramFile';
 
@@ -11,6 +12,9 @@ import { sendTelegramPhoto } from './utils/telegramFile';
  *   фото с подписью /news Текст  — пост с фото
  *   альбом, у первого фото подпись /news Текст — пост с несколькими фото
  *   /delnews                     — удалить последний пост
+ *   /tip Короткий текст          — запись в строке подсказок у всех (до 80 символов, сутки или до следующей)
+ *   /tip                         — что висит сейчас и правила
+ *   /deltip                      — убрать запись
  * Любой человек может узнать свой ID командой /myid
  */
 
@@ -23,6 +27,43 @@ export const adminIds = () =>
 export const isAdmin = (telegramId?: number) => Boolean(telegramId && adminIds().includes(telegramId));
 
 const NEWS_CMD = /^\/news(@\w+)?\s*/i;
+const TIP_CMD = /^\/tip(@\w+)?(\s+|$)/i;
+export const TIP_MAX = 80; // две строки карточки на телефоне
+const TIP_HOURS = 24;
+
+// /tip и /deltip — короткая запись в строке подсказок
+async function handleTipCommand(chatId: number, text: string) {
+  if (/^\/deltip\b/i.test(text)) {
+    const r = await Tip.deleteMany({});
+    sendTelegramMessage(chatId, r.deletedCount ? '🗑 Запись убрана из строки подсказок.' : 'Сейчас записи нет.');
+    return;
+  }
+  const body = text.replace(TIP_CMD, '').trim();
+  const length = [...body].length; // эмодзи — как один символ
+  if (!body) {
+    const now = await Tip.findOne({ expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 }).lean();
+    sendTelegramMessage(
+      chatId,
+      [
+        now ? `Сейчас висит:\n«${now.text}»` : 'Сейчас записи нет.',
+        '',
+        `<b>Как писать:</b> <code>/tip текст</code>`,
+        `• до ${TIP_MAX} символов (эмодзи — один символ): это две строки карточки`,
+        `• видна всем первой карточкой над меню ${TIP_HOURS} часа или до следующей /tip`,
+        '• человек может закрыть её крестиком',
+        '• /deltip — убрать раньше'
+      ].join('\n')
+    );
+    return;
+  }
+  if (length > TIP_MAX) {
+    sendTelegramMessage(chatId, `Длинновато: ${length} символов из ${TIP_MAX}. Сократи на ${length - TIP_MAX}, и пришли снова.`);
+    return;
+  }
+  await Tip.deleteMany({});
+  await Tip.create({ text: body, expiresAt: new Date(Date.now() + TIP_HOURS * 60 * 60 * 1000) });
+  sendTelegramMessage(chatId, `✅ В строке подсказок у всех на ${TIP_HOURS} часа (${length}/${TIP_MAX} символов).`);
+}
 
 // Возвращает true, если сообщение было командой новостей и обработано
 export async function handleNewsMessage(message: any): Promise<boolean> {
@@ -35,13 +76,19 @@ export async function handleNewsMessage(message: any): Promise<boolean> {
     return true;
   }
 
-  const isNewsCommand = NEWS_CMD.test(text) || /^\/delnews\b/i.test(text);
+  const isTipCommand = TIP_CMD.test(text) || /^\/deltip\b/i.test(text);
+  const isNewsCommand = NEWS_CMD.test(text) || /^\/delnews\b/i.test(text) || isTipCommand;
   const isAlbumPart = Boolean(message.media_group_id && message.photo);
   if (!isNewsCommand && !isAlbumPart) return false;
 
   if (!isAdmin(fromId)) {
     if (isNewsCommand) sendTelegramMessage(chatId, 'Публиковать новости может только автор проекта 🙂');
     return isNewsCommand;
+  }
+
+  if (isTipCommand) {
+    await handleTipCommand(chatId, text);
+    return true;
   }
 
   if (/^\/delnews\b/i.test(text)) {
@@ -90,6 +137,16 @@ export function setupNewsRoutes(app: Express) {
       );
     } catch (err) {
       res.status(500).json({ error: 'Ошибка загрузки новостей' });
+    }
+  });
+
+  // Запись автора для строки подсказок (или null)
+  app.get('/api/tip', async (_req: Request, res: Response) => {
+    try {
+      const tip = await Tip.findOne({ expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 }).lean();
+      res.json(tip ? { id: tip._id.toString(), text: tip.text } : null);
+    } catch {
+      res.status(500).json({ error: 'Ошибка загрузки записи' });
     }
   });
 

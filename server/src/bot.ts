@@ -97,7 +97,7 @@ async function handleMessage(message: any, chatId: number) {
   // Добавление мест (/place …) — раньше новостей, чтобы фото места не попали в новости
   if (await handleSuggestionEditMessage(message)) return;
   if (await handlePlaceMessage(message)) return;
-  // Новости проекта (/news, /delnews, /myid) — в том числе фото и альбомы
+  // Новости проекта (/news, /delnews, /tip, /deltip, /myid) — в том числе фото и альбомы
   if (await handleNewsMessage(message)) return;
   if (await handleModerationCommand(message)) return;
   if (await handlePhotosCommand(message)) return;
@@ -217,6 +217,8 @@ async function registerBotCommands(botToken: string) {
     { command: 'fund', description: 'Шкала донатов: /fund всего котёл' },
     { command: 'placeedit', description: 'Поправить место: /placeedit номер' },
     { command: 'delnews', description: 'Удалить последнюю новость' },
+    { command: 'tip', description: 'Запись в строке подсказок: /tip текст (до 80 символов)' },
+    { command: 'deltip', description: 'Убрать запись из строки подсказок' },
     { command: 'unban', description: 'Разбанить: /unban ID' },
     { command: 'myid', description: 'Мой Telegram ID' },
     { command: 'start', description: 'Открыть «ГУЛЯЙ!»' }
