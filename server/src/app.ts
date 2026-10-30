@@ -276,8 +276,9 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
       await User.updateOne({ _id: user._id }, { $set: set });
       if (set.avatarUrl) syncEventAvatars(user.telegramId, set.avatarUrl).catch(() => {});
     }
-    // Telegram сообщает, разрешил ли человек боту писать
-    if (!isDraft && tgUser.allows_write_to_pm && user.canMessage !== true) {
+    // Telegram сообщает, разрешил ли человек боту писать. Если бот уже упёрся в блокировку (false) — не верим:
+    // разрешение остаётся и после «Остановить бота», а вернёт его «Перезапустить» в чате (/start)
+    if (!isDraft && tgUser.allows_write_to_pm && user.canMessage === undefined) {
       user.canMessage = true;
       user.botBlockedAt = undefined;
       await User.updateOne({ _id: user._id }, { $set: { canMessage: true }, $unset: { botBlockedAt: 1 } });

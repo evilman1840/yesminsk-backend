@@ -16,6 +16,10 @@ import { NUDGE_TEXTS as T, PROFILE_NUDGE_TEXTS as P, USERNAME_TEXTS as U, people
  * Время: будни 18:00, выходные 12:00 по Минску
  */
 
+// Выключено 30.10.2026: толчки, «заполни анкету» и «заведи @username» давали ~1% отклика, а люди блокировали бота.
+// Те же подсказки теперь — строкой в самом приложении. Превью /nudge и статистика остаются
+const NUDGES_ENABLED = false;
+
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 const MINSK = 3 * HOUR;
@@ -212,6 +216,7 @@ async function runUsernameNudges(now: number) {
 }
 
 export function startNudgeLoop() {
+  if (!NUDGES_ENABLED) return;
   const run = () => runNudges().catch((err) => console.warn('⚠️ Приветственный толчок:', err?.message || err));
   setTimeout(run, 3 * 60 * 1000);
   setInterval(run, 20 * 60 * 1000); // в нужный час проверка успеет пройти несколько раз, отправка — один
