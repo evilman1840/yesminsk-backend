@@ -1036,6 +1036,8 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     myGuests: mine?.guests || 0,
     myWithKids: Boolean(mine?.withKids),
     myConfirmed: Boolean(mine?.confirmedAt),
+    byRequest: Boolean(ev.byRequest),
+    myApproved: Boolean(ev.byRequest && mine?.approvedAt),
     audienceGender: ev.audienceGender || 'all',
     ageMin: ev.ageMin || null,
     ageMax: ev.ageMax || null,
@@ -1047,6 +1049,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
       guests: p.guests || 0,
       withKids: Boolean(p.withKids),
       confirmed: Boolean(p.confirmedAt), // «✅ Точно приду» — значок у аватарки
+      approved: Boolean(ev.byRequest && p.approvedAt), // «По записи»: организатор подтвердил
       ...(isEventCreator(ev, viewerId) && p.username ? { username: p.username } : {})
     })),
     placeId: ev.placeId ? String(ev.placeId) : undefined, // сходка в месте из «Мест» — покажем её в карточке места
@@ -1244,6 +1247,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       photos: cleanPhotoIds(photos) || [],
       isPaid: Boolean(isPaid),
       price: isPaid ? cleanPrice(price) : undefined,
+      byRequest: Boolean(req.body?.byRequest),
       locationName: cleanLocation,
       location: {
         type: 'Point',
@@ -1262,7 +1266,8 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
           name: user?.firstName || tgUser.first_name,
           username: user?.username || tgUser.username,
           avatarUrl: user?.avatarUrl || tgUser.photo_url || '',
-          joinedAt: new Date()
+          joinedAt: new Date(),
+          approvedAt: new Date()
         }
       ],
       maxParticipants: seatsLimit(maxParticipants),
@@ -1405,6 +1410,10 @@ app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: Auth
     }
 
     const changed = !mine || (mine.guests || 0) !== guests || Boolean(mine.withKids) !== withKids;
+    // «По записи»: подтверждённую запись меняет только организатор
+    if (event.byRequest && mine?.approvedAt && changed && !isEventCreator(event, tgUser.id)) {
+      return res.status(403).json({ error: BY_REQUEST_LOCKED(event) });
+    }
     if (mine) {
       mine.guests = guests;
       mine.withKids = withKids;
@@ -1426,9 +1435,12 @@ app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: Auth
     if (changed && event.creator.telegramId !== tgUser.id) {
       const name = escapeHtml(user?.firstName || tgUser.first_name);
       const note = companyNote(guests, withKids);
+      const contact = user?.username || tgUser.username ? ` · @${escapeHtml(user?.username || tgUser.username || '')}` : '';
       sendTelegramMessage(
         event.creator.telegramId,
-        `${mine ? '✏️' : '🙌'} <b>${name}</b> ${mine ? 'теперь идёт' : 'идёт на твою сходку'}${note ? ` (${escapeHtml(note)})` : ''}!\n\n${eventSummaryHtml(event)}`,
+        event.byRequest
+          ? `📝 <b>${name}</b>${contact} ${mine ? 'изменил(а) заявку' : 'хочет записаться'}${note ? ` (${escapeHtml(note)})` : ''}.\n\nПодтверди запись в приложении: там же можно поменять, сколько человек, или убрать.\n\n${eventSummaryHtml(event)}`
+          : `${mine ? '✏️' : '🙌'} <b>${name}</b> ${mine ? 'теперь идёт' : 'идёт на твою сходку'}${note ? ` (${escapeHtml(note)})` : ''}!\n\n${eventSummaryHtml(event)}`,
         'Открыть сходку',
         eventAppPath(event)
       );
@@ -1453,6 +1465,10 @@ app.post('/api/events/:id/leave', telegramAuthMiddleware as any, async (req: Aut
 
     // Из списка убираем, но в базе оставляем пометку, что человек отменил
     const leaving = event.participants.find((p) => p.telegramId === tgUser.id);
+    // «По записи»: подтверждённую запись снимает только организатор
+    if (leaving && event.byRequest && leaving.approvedAt && !isEventCreator(event, tgUser.id) && event.dateTime.getTime() > Date.now()) {
+      return res.status(403).json({ error: BY_REQUEST_LOCKED(event) });
+    }
     if (leaving) {
       event.participants = event.participants.filter((p) => p.telegramId !== tgUser.id);
       event.cancellations = [
@@ -1506,6 +1522,44 @@ app.post('/api/events/:id/remove', telegramAuthMiddleware as any, async (req: Au
       'Найти другую сходку',
       '?tab=events'
     );
+    res.json(formatEvent(event, tgUser.id));
+  } catch {
+    res.status(500).json({ error: 'Не получилось, попробуй ещё раз' });
+  }
+});
+
+// «По записи»: подтверждённую запись меняет и отменяет только организатор
+const BY_REQUEST_LOCKED = (ev: IEvent) =>
+  `Запись подтверждена организатором. Чтобы отменить или изменить её, напиши ${ev.creator.username ? `@${ev.creator.username}` : 'организатору'}`;
+
+// Организатор: подтвердить запись и/или поменять, сколько человек (вместе с детьми)
+app.post('/api/events/:id/participant', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const eventId = getParamId(req.params.id);
+    const event = mongoose.Types.ObjectId.isValid(eventId) ? await Event.findById(eventId) : null;
+    if (!event || !event.isActive) return res.status(404).json({ error: 'Сходка не найдена' });
+    if (!isEventCreator(event, tgUser.id)) return res.status(403).json({ error: 'Это может только организатор' });
+    const target = event.participants.find((p) => p.telegramId === Number(req.body?.telegramId));
+    if (!target) return res.status(404).json({ error: 'Этого человека уже нет в списке' });
+
+    const notes: string[] = [];
+    if (req.body?.people !== undefined) {
+      const people = Math.min(50, Math.max(1, Math.floor(Number(req.body.people) || 1)));
+      if (people - 1 !== (target.guests || 0)) {
+        target.guests = people - 1;
+        notes.push(`Организатор отметил: вас ${people}.`);
+      }
+    }
+    if (req.body?.approve && !target.approvedAt) {
+      target.approvedAt = new Date();
+      notes.unshift('✅ <b>Организатор подтвердил твою запись!</b>');
+    }
+    await event.save();
+
+    if (notes.length && target.telegramId !== tgUser.id) {
+      sendTelegramMessage(target.telegramId, `${notes.join('\n')}\n\n${eventSummaryHtml(event)}`, 'Открыть сходку', eventAppPath(event));
+    }
     res.json(formatEvent(event, tgUser.id));
   } catch {
     res.status(500).json({ error: 'Не получилось, попробуй ещё раз' });
@@ -1577,6 +1631,12 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
     if (isPaid !== undefined) {
       event.isPaid = Boolean(isPaid);
       event.price = event.isPaid ? cleanPrice(price) : undefined;
+    }
+    // Включили «По записи» в уже созданной сходке: кто уже записался — подтверждён
+    if (req.body?.byRequest !== undefined) {
+      const on = Boolean(req.body.byRequest);
+      if (on && !event.byRequest) for (const p of event.participants) if (!p.approvedAt) p.approvedAt = new Date();
+      event.byRequest = on;
     }
     if (cleanPhotoIds(photos)) event.photos = cleanPhotoIds(photos);
     // Доп. поля шаблона (вид спорта, уровень…) — пересобираем метки

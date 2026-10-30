@@ -11,6 +11,7 @@ export interface IEventParticipant {
   guests?: number;     // сколько человек ведёт с собой (+1, +2…)
   withKids?: boolean;  // идёт с детьми
   confirmedAt?: Date;  // нажал «Точно приду» (из напоминания или в приложении)
+  approvedAt?: Date;   // «По записи»: организатор подтвердил запись (после этого отменить можно только через него)
 }
 
 // Отменил участие: из списка убираем, а здесь остаётся след (кто, когда, откуда)
@@ -41,6 +42,7 @@ export interface IEvent extends Document {
   photos?: string[];        // до 5 фото (file_id в Telegram)
   isPaid?: boolean;         // платная сходка (по умолчанию бесплатная)
   price?: number;           // примерно сколько, BYN с человека
+  byRequest?: boolean;      // «По записи»: организатор подтверждает каждого и меняет, сколько человек; сам отменить подтверждённую запись нельзя
   location: {
     type: 'Point';
     coordinates: [number, number]; // [lng, lat]
@@ -98,6 +100,7 @@ const EventSchema = new Schema<IEvent>(
     ageMax: { type: Number, min: 18, max: 99 },
     isPaid: { type: Boolean, default: false },
     price: { type: Number, min: 0 },
+    byRequest: { type: Boolean, default: false },
     location: {
       type: { type: String, enum: ['Point'], default: 'Point' },
       coordinates: { type: [Number], required: true } // [lng, lat]
@@ -119,7 +122,8 @@ const EventSchema = new Schema<IEvent>(
         joinedAt: { type: Date, default: Date.now },
         guests: { type: Number, default: 0, min: 0 },
         withKids: { type: Boolean, default: false },
-        confirmedAt: { type: Date }
+        confirmedAt: { type: Date },
+        approvedAt: { type: Date }
       }
     ],
     cancellations: [
