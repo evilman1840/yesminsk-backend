@@ -1050,6 +1050,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
       withKids: Boolean(p.withKids),
       confirmed: Boolean(p.confirmedAt), // «✅ Точно приду» — значок у аватарки
       approved: Boolean(ev.byRequest && p.approvedAt), // «По записи»: организатор подтвердил
+      ...(isEventCreator(ev, viewerId) && p.noShowAt ? { noShow: true } : {}), // «Не пришёл(ла)» — видит только организатор
       ...(isEventCreator(ev, viewerId) && p.username ? { username: p.username } : {})
     })),
     placeId: ev.placeId ? String(ev.placeId) : undefined, // сходка в месте из «Мест» — покажем её в карточке места
@@ -1142,10 +1143,20 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
       // «Только девушки / мужчины», «25–35 лет» — кому не подходит, тот не видит
       $and: audienceFeedQuery(me)
     };
-    // Свои и куда записан — всегда, даже дальше месяца (для «⭐ Мои»); начавшиеся — ещё 4 часа
+    // Свои и куда записан — всегда, даже дальше месяца (для «⭐ Мои»); начавшиеся — ещё 4 часа.
+    // Свои прошедшие организатор видит ещё NO_SHOW_DAYS — чтобы отметить, кто не пришёл
     const [feed, mine] = await Promise.all([
       Event.find(feedQuery).sort({ dateTime: 1 }).limit(200),
-      Event.find({ isActive: true, ...categoryQuery, ...mineQuery, dateTime: { $gte: new Date(now - 4 * HOUR) } }).sort({ dateTime: 1 }).limit(100)
+      Event.find({
+        isActive: true,
+        ...categoryQuery,
+        $or: [
+          { 'participants.telegramId': tgUser.id, dateTime: { $gte: new Date(now - 4 * HOUR) } },
+          { 'creator.telegramId': tgUser.id, dateTime: { $gte: new Date(now - NO_SHOW_DAYS * DAY) } }
+        ]
+      })
+        .sort({ dateTime: 1 })
+        .limit(100)
     ]);
 
     // Кто у меня «На связи»: я нажал 👋 и мне нажали
@@ -1559,6 +1570,36 @@ app.post('/api/events/:id/participant', telegramAuthMiddleware as any, async (re
 
     if (notes.length && target.telegramId !== tgUser.id) {
       sendTelegramMessage(target.telegramId, `${notes.join('\n')}\n\n${eventSummaryHtml(event)}`, 'Открыть сходку', eventAppPath(event));
+    }
+    res.json(formatEvent(event, tgUser.id));
+  } catch {
+    res.status(500).json({ error: 'Не получилось, попробуй ещё раз' });
+  }
+});
+
+// Сколько дней после начала организатор может отмечать «Не пришёл(ла)»
+const NO_SHOW_DAYS = 3;
+
+// Организатор отмечает, кто не пришёл: копится внутренний рейтинг (User.noShowCount). Человеку не сообщаем
+app.post('/api/events/:id/noshow', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const eventId = getParamId(req.params.id);
+    const event = mongoose.Types.ObjectId.isValid(eventId) ? await Event.findById(eventId) : null;
+    if (!event || !event.isActive) return res.status(404).json({ error: 'Сходка не найдена' });
+    if (!isEventCreator(event, tgUser.id)) return res.status(403).json({ error: 'Это может только организатор' });
+    const started = event.dateTime.getTime();
+    if (started > Date.now()) return res.status(400).json({ error: 'Отметить можно, когда сходка уже началась' });
+    if (started < Date.now() - NO_SHOW_DAYS * DAY) return res.status(400).json({ error: 'Отметить можно в течение трёх дней после сходки' });
+    const targetId = Number(req.body?.telegramId);
+    const target = event.participants.find((p) => p.telegramId === targetId);
+    if (!target || targetId === tgUser.id) return res.status(404).json({ error: 'Этого человека нет в списке' });
+
+    const noShow = Boolean(req.body?.noShow);
+    if (noShow !== Boolean(target.noShowAt)) {
+      target.noShowAt = noShow ? new Date() : undefined;
+      await event.save();
+      await User.updateOne({ telegramId: targetId }, { $inc: { noShowCount: noShow ? 1 : -1 } });
     }
     res.json(formatEvent(event, tgUser.id));
   } catch {

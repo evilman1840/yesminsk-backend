@@ -35,7 +35,7 @@ async function callBot(method: string, body: any) {
   return res.json().catch(() => ({}));
 }
 
-const say = (chatId: number, html: string, keyboard?: { text: string; callback_data: string }[][]) =>
+const say = (chatId: number, html: string, keyboard?: ({ text: string; callback_data: string } | { text: string; web_app: { url: string } })[][]) =>
   callBot('sendMessage', {
     chat_id: chatId,
     text: html,
@@ -64,9 +64,16 @@ async function askParticipants(event: IEvent) {
 async function askHost(event: IEvent) {
   const hostId = event.creator.telegramId;
   if (!event.participants.some((p) => p.telegramId !== hostId)) return;
-  await say(hostId, `👋 Как прошла твоя сходка «<b>${escapeHtml(event.title)}</b>»?`, [
-    [3, 2, 1].map((score) => ({ text: `${SCORES[score].emoji} ${SCORES[score].label}`, callback_data: `fb:${event._id}:${score}` }))
-  ]);
+  // Кнопка в приложение — отметить, кто не пришёл (видно только организатору, человеку не сообщаем)
+  const appUrl = (process.env.MINI_APP_URL || '').replace(/\/+$/, '');
+  await say(
+    hostId,
+    `👋 Как прошла твоя сходка «<b>${escapeHtml(event.title)}</b>»?\n\nЕсли кто-то записался, но не пришёл, отметь это в сходке: так в будущем будет понятнее, на кого можно рассчитывать.`,
+    [
+      [3, 2, 1].map((score) => ({ text: `${SCORES[score].emoji} ${SCORES[score].label}`, callback_data: `fb:${event._id}:${score}` })),
+      ...(appUrl ? [[{ text: '🚫 Отметить, кто не пришёл', web_app: { url: `${appUrl}/?event=${event._id}` } }]] : [])
+    ]
+  );
 }
 
 async function sendSummary(event: IEvent) {

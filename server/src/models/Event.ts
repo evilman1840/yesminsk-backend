@@ -12,6 +12,7 @@ export interface IEventParticipant {
   withKids?: boolean;  // идёт с детьми
   confirmedAt?: Date;  // нажал «Точно приду» (из напоминания или в приложении)
   approvedAt?: Date;   // «По записи»: организатор подтвердил запись (после этого отменить можно только через него)
+  noShowAt?: Date;     // организатор отметил «Не пришёл(ла)» (внутренний рейтинг, человеку не сообщаем)
 }
 
 // Отменил участие: из списка убираем, а здесь остаётся след (кто, когда, откуда)
@@ -123,7 +124,8 @@ const EventSchema = new Schema<IEvent>(
         guests: { type: Number, default: 0, min: 0 },
         withKids: { type: Boolean, default: false },
         confirmedAt: { type: Date },
-        approvedAt: { type: Date }
+        approvedAt: { type: Date },
+        noShowAt: { type: Date }
       }
     ],
     cancellations: [
