@@ -32,9 +32,9 @@ import { buildRankContext, scoreUser, whyShown, sharedKinds, orderForFeed } from
 import { PeopleSeen } from './models/PeopleSeen';
 import { cleanAudience, audienceError, audienceFeedQuery, audienceUsersQuery } from './eventAudience';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
-import { setupWishRoutes, startWishLoop, onMeetupFromWish, notifyWishersOfMeetup, sendWithButtons, Btn, CUSTOM_WISH } from './wishes';
+import { setupWishRoutes, startWishLoop, onMeetupFromWish, notifyWishersOfMeetup, inviteToMeetup, INVITE_MAX, sendWithButtons, Btn, CUSTOM_WISH } from './wishes';
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
-import { Wish, WishGroup } from './models/Wish';
+import { Wish, WishGroup, WISH_WINDOWS, WishWindow } from './models/Wish';
 import { startNudgeLoop } from './nudges';
 import { startProposalLoop, setupProposalRoutes, fixAutoMeetupHosts } from './proposals';
 import { setupAccountRoutes } from './account';
@@ -745,11 +745,15 @@ app.get('/api/wishes/kind/:kind/people', telegramAuthMiddleware as any, async (r
     const sport = kind === CUSTOM_WISH ? String(req.query.sport || '').slice(0, 40) : '';
     if (kind === CUSTOM_WISH && !sport) return res.sendStatus(404);
     const sameWish = { kind, ...(sport ? { sport } : {}), status: { $in: ['active', 'matched'] } };
-    const wishes = await Wish.find({ ...sameWish, telegramId: { $ne: myId } }, { telegramId: 1 }).lean();
+    // Из счётчика «76 человек хотят на кофе на неделе» — только это окно (и место, если оно у желания есть)
+    const win = String(req.query.window || '');
+    const placeId = String(req.query.placeId || '').slice(0, 60);
+    const exact = { ...(WISH_WINDOWS.includes(win as WishWindow) ? { timeWindow: win } : {}), ...(placeId ? { placeId } : {}) };
+    const wishes = await Wish.find({ ...sameWish, ...exact, telegramId: { $ne: myId } }, { telegramId: 1 }).lean();
     const ids = [...new Set(wishes.map((w) => w.telegramId))];
     const people = await User.find({ ...visibleUserQuery(me, 0), telegramId: { $in: ids, $nin: me?.blockedUsers || [] } })
       .sort({ lastActiveAt: -1 })
-      .limit(30);
+      .limit(100);
     const mine = await Wish.findOne({ ...sameWish, telegramId: myId }).lean();
     const group = mine?.groupId ? await WishGroup.findById(mine.groupId, { status: 1, meetupId: 1 }).lean() : null;
     const flags = await getReactionFlags(myId, people.map((u) => u.telegramId));
@@ -1302,7 +1306,10 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     // Собрали по «Хочу сходить» → остальным в группе «Сходку собрали»
     if (wishGroupId) onMeetupFromWish(wishGroupId, newEvent, tgUser.id).catch((err) => console.warn('⚠️ «Хочу сходить» после сходки:', err?.message || err));
     // Собрали из «Тоже хотят» — пишем всем, кто хотел того же на это время
-    if (req.body?.notifyWishers) notifyWishersOfMeetup(newEvent, wishGroupId).catch((err) => console.warn('⚠️ «Тоже хотят» после сходки:', err?.message || err));
+    // «Позвать в компанию»: отмеченным в «Тоже хотят» — личное приглашение от организатора (им общее «собрали сходку» не шлём)
+    const inviteIds: number[] = Array.isArray(req.body?.inviteIds) ? [...new Set<number>(req.body.inviteIds.map(Number).filter(Number.isFinite))].slice(0, INVITE_MAX) : [];
+    if (inviteIds.length) inviteToMeetup(newEvent, inviteIds, user).catch((err) => console.warn('⚠️ «Позвать в компанию»:', err?.message || err));
+    if (req.body?.notifyWishers) notifyWishersOfMeetup(newEvent, wishGroupId, inviteIds).catch((err) => console.warn('⚠️ «Тоже хотят» после сходки:', err?.message || err));
     if (newEvent.placeId) notifyPlaceSavers(newEvent).catch((err) => console.warn('⚠️ Уведомление сохранившим место:', err?.message || err));
   } catch (err: any) {
     console.warn('⚠️ Создание сходки:', err?.message || err);

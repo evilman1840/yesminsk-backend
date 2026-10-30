@@ -286,13 +286,13 @@ export async function onMeetupFromWish(groupId: unknown, event: IEvent, creatorI
  * Сходку собрали из шторки «Тоже хотят»: пишем тем, у кого такое же желание и время сходки попадает в их окно.
  * Группу, из которой собирали, не трогаем — ей пишет onMeetupFromWish
  */
-export async function notifyWishersOfMeetup(event: IEvent, skipGroupId?: unknown) {
+export async function notifyWishersOfMeetup(event: IEvent, skipGroupId?: unknown, skipIds: number[] = []) {
   // «Своя идея» — у всех разное, по шаблону совпадений нет
   if (!event.templateId || event.templateId === CUSTOM_WISH) return;
   const wishes = await Wish.find({
     kind: event.templateId,
     status: { $in: ['active', 'matched'] },
-    telegramId: { $ne: event.creator.telegramId },
+    telegramId: { $nin: [event.creator.telegramId, ...skipIds] },
     windowStart: { $lte: event.dateTime },
     windowEnd: { $gte: event.dateTime },
     ...(skipGroupId && mongoose.Types.ObjectId.isValid(String(skipGroupId)) ? { groupId: { $ne: new mongoose.Types.ObjectId(String(skipGroupId)) } } : {})
@@ -305,6 +305,33 @@ export async function notifyWishersOfMeetup(event: IEvent, skipGroupId?: unknown
   const html = T.kindMeetup(what, escapeHtml(event.title), formatWhen(event.dateTime), escapeHtml(event.locationName));
   for (const id of ids) {
     await sendWithButtons(id, html, [[{ text: T.kindMeetupBtn, path: `?event=${event._id}` }]]);
+    await new Promise((r) => setTimeout(r, 60));
+  }
+}
+
+// Сколько человек можно позвать в компанию за одну сходку
+export const INVITE_MAX = 10;
+
+/**
+ * «Позвать в компанию» из «Тоже хотят»: личное приглашение от организатора.
+ * Только тем, у кого есть желание «Хочу сходить» (они сами согласились, что их зовут), кто не заблокировал и подходит по полу и возрасту
+ */
+export async function inviteToMeetup(event: IEvent, ids: number[], inviter: any) {
+  const myId = event.creator.telegramId;
+  const wishers = new Set((await Wish.find({ telegramId: { $in: ids }, status: { $in: ['active', 'matched'] } }, { telegramId: 1 }).lean()).map((w) => w.telegramId));
+  const fit = await User.find(
+    {
+      telegramId: { $in: [...wishers].filter((id) => id !== myId && !(inviter?.blockedUsers || []).includes(id)) },
+      blockedUsers: { $ne: myId },
+      isBanned: { $ne: true },
+      ...audienceUsersQuery(event)
+    },
+    { telegramId: 1 }
+  ).lean();
+  if (!fit.length) return;
+  const html = T.invite(escapeHtml(inviter?.firstName || event.creator.name || 'Кто-то'), escapeHtml(event.title), formatWhen(event.dateTime), escapeHtml(event.locationName));
+  for (const u of fit) {
+    await sendWithButtons(u.telegramId, html, [[{ text: T.inviteBtn, path: `?event=${event._id}` }]]);
     await new Promise((r) => setTimeout(r, 60));
   }
 }

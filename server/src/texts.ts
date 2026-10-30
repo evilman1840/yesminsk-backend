@@ -100,6 +100,10 @@ export const WISH_TEXTS = {
   kindMeetup: (what: string, title: string, when: string, where: string) =>
     `🙋 Ты хотел(а) ${what}, и как раз собрали сходку!\n\n<b>${title}</b>\n🕒 ${when}\n📍 ${where}\n\nЗагляни: если подходит, запишись 🙂`,
   kindMeetupBtn: 'Открыть сходку',
+  // «Позвать в компанию»: организатор отметил тебя в «Тоже хотят»
+  invite: (name: string, title: string, when: string, where: string) =>
+    `👋 ${name} зовёт тебя в компанию: вы оба хотели сходить, и ${name} собрал(а) сходку!\n\n<b>${title}</b>\n🕒 ${when}\n📍 ${where}\n\nЕсли подходит, запишись 🙂`,
+  inviteBtn: 'Посмотреть и записаться',
   when: { today: 'сегодня', tomorrow: 'завтра', weekend: 'на выходных', week: 'на неделе' } as Record<string, string>,
   // Сообщение о совпадении (одно или несколько желаний сразу)
   matchOne: (n: number, what: string, when: string) =>
