@@ -13,6 +13,8 @@ const CATEGORY_EMOJI: Record<string, string> = {
   trip_outdoors: '🌲',
   boardgames: '🎲',
   sport: '🚴',
+  relax: '🧖',
+  learn: '🧭',
   talk: '🤗',
   support: '🫂',
   other: '✨'

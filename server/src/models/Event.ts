@@ -1,6 +1,6 @@
 import { Schema, model, Document } from 'mongoose';
 
-export type EventCategory = 'walk' | 'cafe_bar' | 'expo_cinema' | 'trip_outdoors' | 'boardgames' | 'sport' | 'talk' | 'support' | 'other';
+export type EventCategory = 'walk' | 'cafe_bar' | 'expo_cinema' | 'trip_outdoors' | 'boardgames' | 'sport' | 'relax' | 'learn' | 'talk' | 'support' | 'other';
 
 export interface IEventParticipant {
   telegramId: number;
@@ -82,7 +82,7 @@ const EventSchema = new Schema<IEvent>(
     description: { type: String, required: true, trim: true, maxlength: 600 },
     category: {
       type: String,
-      enum: ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'talk', 'support', 'other'],
+      enum: ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'relax', 'learn', 'talk', 'support', 'other'],
       default: 'walk',
       required: true
     },

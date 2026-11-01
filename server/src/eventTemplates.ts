@@ -159,6 +159,8 @@ const CATEGORY_LABELS: Record<EventCategory, string> = {
   trip_outdoors: 'За город',
   boardgames: 'Настолки',
   sport: 'Спорт/вело',
+  relax: 'Релакс',
+  learn: 'Просвещение',
   talk: 'Разговор',
   support: 'Поныть',
   other: 'Своя идея'

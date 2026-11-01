@@ -1091,7 +1091,7 @@ const cleanPrice = (v: unknown) => {
 
 const cleanDuration = (v: unknown) => Math.min(24 * 60, Math.max(0, Math.round(Number(v) || 0)));
 
-const EVENT_CATEGORIES = ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'talk', 'support', 'other'];
+const EVENT_CATEGORIES = ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'relax', 'learn', 'talk', 'support', 'other'];
 
 // Дата сходки: настоящая дата не дальше чем через год
 const cleanEventDate = (v: unknown) => {

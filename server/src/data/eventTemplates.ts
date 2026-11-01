@@ -150,6 +150,64 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
     ]
   },
   {
+    key: 'relax',
+    wishPhrase: 'расслабиться',
+    order: 80,
+    emoji: '🧖',
+    name: 'Релакс',
+    category: 'relax',
+    title: '{куда}: кто со мной?',
+    fallbackTitle: 'Расслабимся вместе',
+    description: 'Отдыхаем без спешки и разговоров о работе. Каждый платит за себя.',
+    seats: 4,
+    durationMinutes: 150,
+    placeTypes: [],
+    paid: true,
+    fields: [
+      {
+        key: 'kind',
+        token: 'куда',
+        label: 'Куда идём?',
+        type: 'select',
+        required: true,
+        allowCustom: true,
+        customLabel: 'Куда именно?',
+        options: [
+          { value: 'banya', label: 'Баня', emoji: '🧖', badge: '🧖 Баня' },
+          { value: 'aqua', label: 'Аквацентр', emoji: '🌊', badge: '🌊 Аквацентр' },
+          { value: 'pool', label: 'Бассейн', emoji: '🏊', badge: '🏊 Бассейн' },
+          { value: 'meditation', label: 'Медитация', emoji: '🧘', badge: '🧘 Медитация' },
+          { value: 'other', label: 'Другое', emoji: '🌿', badge: '🌿' }
+        ]
+      },
+      {
+        key: 'bring',
+        label: 'Что взять?',
+        type: 'text',
+        placeholder: 'Например: полотенце, тапочки, шапку для бани',
+        badge: '🎒 {value}'
+      }
+    ]
+  },
+  {
+    key: 'learn',
+    wishPhrase: 'на экскурсию',
+    order: 90,
+    emoji: '🧭',
+    name: 'Просвещение',
+    category: 'learn',
+    title: 'Экскурсия: {куда}',
+    fallbackTitle: 'Экскурсия с гидом',
+    description: 'Идём узнавать новое: интересное место или производство изнутри. Рассказывает гид или кто-то из нас, кто в теме.',
+    seats: 8,
+    durationMinutes: 120,
+    placeTypes: ['Музей', 'Достопримечательность', 'Исторический', 'Архитектура'],
+    fields: [
+      { key: 'spot', token: 'куда', label: 'Куда идём?', type: 'text', placeholder: 'Например: пивоварня, обсерватория, старый город' },
+      { key: 'guide', label: 'Кто рассказывает?', type: 'text', placeholder: 'Например: гид музея или я сам(а), работаю там', badge: '🎤 {value}' }
+    ]
+  },
+  {
     key: 'custom',
     order: 999,
     emoji: '✏️',
