@@ -645,6 +645,14 @@ function nearbyQuery(tgUser: { id: number }, currentUser: any, goal: any) {
   return query;
 }
 
+// Только то, что нужно ленте (formatPublicUser и ранжированию). Без skipped/hidden*/blockedUsers:
+// у активных там сотни записей, и 3000 полных анкет на запрос переполняли память сервера (OOM 01.11)
+const FEED_USER_FIELDS = {
+  telegramId: 1, firstName: 1, username: 1, avatarUrl: 1, photos: 1, photosHidden: 1, age: 1, gender: 1, goal: 1, goals: 1,
+  customGoal: 1, goesWith: 1, isEmpath: 1, ventUntil: 1, bio: 1, areaName: 1, isTourist: 1, isGuide: 1, guideAbout: 1,
+  availableUntil: 1, lastActiveAt: 1, createdAt: 1, locationExact: 1, locationFuzzy: 1
+};
+
 // Сколько всего людей в приложении (прошли приветствие, не забанены). Считаем раз в 5 минут
 let appUsersCache = { at: 0, n: 0 };
 async function appUsersCount() {
@@ -672,7 +680,7 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
 
     // Берём широко (все, кто подходит, по свежести), считаем очки и отдаём 300 лучших: карта не перегружается.
     // Внутри — сначала новые для меня лица, виденные за 3 дня в конце
-    const candidates = await User.find(query).sort({ lastActiveAt: -1 }).limit(3000).lean();
+    const candidates = await User.find(query, FEED_USER_FIELDS).sort({ lastActiveAt: -1 }).limit(3000).lean();
     const ids = candidates.map((u) => u.telegramId);
     const [flags, ctx] = await Promise.all([getReactionFlags(tgUser.id, ids), currentUser ? buildRankContext(currentUser, ids) : null]);
     const users = ctx
