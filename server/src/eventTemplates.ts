@@ -28,6 +28,12 @@ export async function seedEventTemplates() {
     await EventTemplate.updateOne({ key: 'cinema', paid: { $exists: false } }, { $set: { paid: true } });
     // Кофе: сначала кофейни, кафе — если кофеен нет (порядок типов = приоритет)
     await EventTemplate.updateOne({ key: 'coffee', placeTypes: ['Кафе', 'Кофейня'] }, { $set: { placeTypes: ['Кофейня', 'Кафе'] } });
+    // «Релакс»: первые название и фраза желания читались как флирт — меняем, если автор их ещё не правил
+    await EventTemplate.updateOne(
+      { key: 'relax', fallbackTitle: 'Расслабимся вместе' },
+      { $set: { title: '{куда}: собираем компанию', fallbackTitle: 'Отдых компанией: баня, бассейн, медитация' } }
+    );
+    await EventTemplate.updateOne({ key: 'relax', wishPhrase: 'расслабиться' }, { $set: { wishPhrase: 'в баню или бассейн' } });
     // «Хочу сходить»: фраза желания у шаблонов, созданных до неё
     for (const t of DEFAULT_TEMPLATES.filter((d) => d.wishPhrase)) {
       await EventTemplate.updateOne({ key: t.key, wishPhrase: { $exists: false } }, { $set: { wishPhrase: t.wishPhrase } });
