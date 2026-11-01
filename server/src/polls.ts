@@ -11,7 +11,8 @@ import { POLL_TEXTS as T } from './texts';
  * Опрос автора: один на всех, подпись в шапке карты зовёт голосовать, в шторке — варианты и итоги.
  *
  * Боту (только автор):
- *   /poll Вопрос | 🐾 Вариант | ☕ Вариант | Свой вариант   — новый опрос (прошлый закрывается)
+ *   /poll Вопрос | 🐾 Вариант = коротко | ☕ Вариант | Свой вариант   — новый опрос (прошлый закрывается)
+ *     «= коротко» — имя варианта для строки в шапке после голоса: «Донаты → 🐾 приют»
  *     вторая строка вопроса — пояснение под ним; «Свой вариант» — поле для своей идеи
  *   /poll       — что идёт сейчас и сколько голосов
  *   /pollend    — закрыть опрос и прислать итоги с таблицей
@@ -22,6 +23,7 @@ interface PollOption {
   key: string;
   label: string;
   emoji: string;
+  short: string;
 }
 
 const Poll = model(
@@ -30,7 +32,7 @@ const Poll = model(
     {
       question: { type: String, required: true, maxlength: 140 },
       note: { type: String, default: '', maxlength: 300 },
-      options: { type: [{ key: String, label: String, emoji: String, _id: false }], default: [] },
+      options: { type: [{ key: String, label: String, emoji: String, short: String, _id: false }], default: [] },
       allowCustom: { type: Boolean, default: false },
       active: { type: Boolean, default: true, index: true },
       closedAt: Date
@@ -58,10 +60,13 @@ export const POLL_CUSTOM_MAX = 200;
 const MAX_OPTIONS = 6;
 const LEADING_EMOJI = /^(\p{Extended_Pictographic}(️|‍\p{Extended_Pictographic})*)\s*/u;
 
-// «🐾 Приют для животных» → значок и подпись
+// «🐾 Приют для животных = приют» → значок, подпись и короткое имя (без «=» — первое слово)
 const parseOption = (raw: string, i: number): PollOption => {
-  const m = raw.match(LEADING_EMOJI);
-  return { key: `o${i + 1}`, emoji: m ? m[1] : '', label: raw.replace(LEADING_EMOJI, '').trim() };
+  const [main, shortRaw = ''] = raw.split('=').map((s) => s.trim());
+  const m = main.match(LEADING_EMOJI);
+  const label = main.replace(LEADING_EMOJI, '').trim();
+  const short = (shortRaw || label.split(/\s+/)[0] || '').slice(0, 30);
+  return { key: `o${i + 1}`, emoji: m ? m[1] : '', label, short: short.charAt(0).toLowerCase() + short.slice(1) };
 };
 
 async function counts(pollId: Types.ObjectId) {
@@ -175,7 +180,7 @@ export async function handlePollCommand(message: any): Promise<boolean> {
   const [question, ...noteLines] = head.split('\n').map((s) => s.trim());
   const allowCustom = rawOptions.some((o) => /^(✏️\s*)?свой вариант$/i.test(o));
   const options = rawOptions.filter((o) => !/^(✏️\s*)?свой вариант$/i.test(o)).slice(0, MAX_OPTIONS).map(parseOption);
-  if (!question || question.length > 140 || options.length + Number(allowCustom) < 2 || options.some((o) => !o.label || o.label.length > 60)) {
+  if (!question || question.length > 140 || options.length + Number(allowCustom) < 2 || options.some((o) => !o.label || o.label.length > 60 || !o.short)) {
     sendWithButtons(chatId, T.bad + T.usage, []);
     return true;
   }
