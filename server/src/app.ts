@@ -21,6 +21,7 @@ import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegr
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
 import { setupNewsRoutes, isAdmin } from './news';
 import { setupFundRoutes } from './fund';
+import { setupPollRoutes } from './polls';
 import { banGuard, setupModerationRoutes, reportStopWords, BANNED_ERROR } from './moderation';
 import { checkStopWords, extrasText } from './stopWords';
 import { markInviteJoined } from './invites';
@@ -2008,6 +2009,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
 // Новости проекта
 setupNewsRoutes(app);
 setupFundRoutes(app);
+setupPollRoutes(app);
 
 // Жалобы и модерация
 setupModerationRoutes(app);
