@@ -124,7 +124,7 @@ export async function runNudges(force = false) {
       nudgeOptedOut: { $ne: true },
       nudge2SentAt: { $exists: false },
       createdAt: { $gte: new Date(now - MAX_AGE), $lte: new Date(now - FIRST_AFTER) }
-    });
+    }).select('-skipped');
     for (const user of users) {
       if (await hasActivity(user.telegramId)) continue;
       const age = now - new Date((user as any).createdAt).getTime();
@@ -180,7 +180,7 @@ async function runProfileNudges(now: number) {
     profileNudgeSentAt: { $exists: false },
     createdAt: { $lte: new Date(now - 3 * DAY) },
     $or: [{ avatarUrl: { $regex: 'images\\.unsplash\\.com' } }, { avatarUrl: { $in: ['', null] } }, { bio: { $in: ['', null] } }, { bio: { $regex: '^.{0,9}$', $options: 's' } }]
-  });
+  }).select('-skipped');
   for (const user of users) {
     const lastNudge = Math.max(user.nudge1SentAt?.getTime() || 0, user.nudge2SentAt?.getTime() || 0);
     if (now - lastNudge < DAY) continue; // в один день с приветственным не пишем
@@ -205,7 +205,7 @@ async function runUsernameNudges(now: number) {
     username: { $in: [null, ''] },
     usernameNudgeSentAt: { $exists: false },
     createdAt: { $lte: new Date(now - DAY) }
-  });
+  }).select('-skipped');
   for (const user of users) {
     const lastNudge = Math.max(user.nudge1SentAt?.getTime() || 0, user.nudge2SentAt?.getTime() || 0, user.profileNudgeSentAt?.getTime() || 0);
     if (now - lastNudge < DAY) continue;

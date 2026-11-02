@@ -166,9 +166,13 @@ async function sendDueDigests() {
         isBanned: { $ne: true },
         ...(freq === 'weekend' ? { $or: [{ digest: 'weekend' }, { digest: { $exists: false } }] } : { digest: freq }),
         $and: [{ $or: [{ lastDigestAt: { $exists: false } }, { lastDigestAt: { $lt: new Date(slot.start) } }] }]
-      });
+      })
+        .select('-skipped') // до 500 записей на анкету, подборке не нужны
+        .cursor(); // по одной анкете, а не всех сразу: держим память сервера в рамках
       let sent = 0;
-      for (const user of users) {
+      let total = 0;
+      for await (const user of users) {
+        total++;
         try {
           const digest = await buildDigest(user, freq, now);
           // Отмечаем в любом случае — чтобы не пытаться повторно в этом окне
@@ -179,7 +183,7 @@ async function sendDueDigests() {
         }
         await new Promise((r) => setTimeout(r, 60)); // Telegram: не больше ~30 сообщений в секунду
       }
-      if (users.length) console.log(`📬 Подборки «${freq}»: отправлено ${sent} из ${users.length}`);
+      if (total) console.log(`📬 Подборки «${freq}»: отправлено ${sent} из ${total}`);
     }
   } finally {
     isRunning = false;
