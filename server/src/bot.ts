@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { handleTemplatesCommand, handleTemplatesCallback } from './eventTemplates';
 import { handleWishCallback, handleWishStart } from './wishes';
 import { handleNudgeCallback, handleNudgeCommand } from './nudges';
-import { handleProposalCallback, handleWishesCommand, handleGroupPlaceReply } from './proposals';
+import { handleProposalCallback, handleWishesCommand, handleGroupPlaceReply, handleOwnTimeReply } from './proposals';
 import { handleSuggestionCallback, handleSuggestionEditMessage } from './placeSuggestions';
 import { Express, Request, Response } from 'express';
 import mongoose from 'mongoose';
@@ -91,6 +91,8 @@ export function setupTelegramBot(app: Express) {
 async function handleMessage(message: any, chatId: number) {
   // Человек написал боту (в том числе «Старт») — теперь бот может ему писать
   markCanMessage(chatId);
+  // Ответ на «Предложить своё время» — раньше остальных текстов: человек только что нажал кнопку
+  if (await handleOwnTimeReply(message)) return;
   // Пара слов организатору после «Как прошло?»
   if (await handleFeedbackText(message)) return;
   // Таблицы (CSV-файл) и шаблоны (/template) — раньше мест, чтобы файл не попал в черновик места

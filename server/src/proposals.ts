@@ -15,6 +15,7 @@ import { isAdmin, adminIds } from './news';
 import { PROPOSAL_FALLBACK_PLACES } from './data/wishProposals';
 import { PROPOSAL_TEXTS as T, WISH_TEXTS as W, SUGGEST_TEXTS as SG } from './texts';
 import { parsePlaceText, suggestPlace } from './placeSuggestions';
+import { parseRuTime } from './utils/parseRuTime';
 
 /**
  * «Хочу сходить» без организатора: когда в группе набирается PROPOSE_AT человек, бот сам предлагает
@@ -109,6 +110,7 @@ async function offerMessage(group: IWishGroup) {
     html: (group.proposalRounds ? `${T.reofferLead}\n\n` : '') + T.offer(await groupSize(group._id), escapeHtml(what), escapeHtml(p.placeName), p.note, p.options.map((o) => formatWhen(o.at)), CONFIRM_MIN()),
     rows: [
       ...p.options.map((o, i) => [{ text: T.optionBtn(shortWhen(o.at)), data: `prp:yes:${group._id}:${i}` }]),
+      [{ text: T.ownBtn, data: `prp:own:${group._id}` }],
       [{ text: T.noBtn, data: `prp:no:${group._id}` }],
       [{ text: T.whoBtn, path: `?wishGroup=${group._id}` }]
     ] as Btn[][]
@@ -285,6 +287,28 @@ export async function runProposals() {
       await new Promise((r) => setTimeout(r, 60));
     }
 
+    // Своё время от человека из группы — остальным (кроме автора и уже записавшихся на это время)
+    for (const g of await WishGroup.find({ status: 'open', 'proposal.notify.0': { $exists: true } })) {
+      const p = g.proposal!;
+      await WishGroup.updateOne({ _id: g._id }, { $set: { 'proposal.notify': [] } });
+      const what = escapeHtml(await phraseFor(g.kind, g.sport));
+      const members = (await Wish.find({ groupId: g._id, status: 'matched' }, { telegramId: 1 }).lean()).map((w) => w.telegramId);
+      for (const idx of p.notify || []) {
+        const o = p.options[idx];
+        if (!o || new Date(o.at).getTime() < Date.now() + HOUR) continue;
+        const author = o.by ? await User.findOne({ telegramId: o.by }, { firstName: 1 }).lean() : null;
+        const when = shortWhen(new Date(o.at));
+        for (const id of members.filter((m) => m !== o.by && !o.yes.includes(m))) {
+          await sendWithButtons(id, T.ownNotify(escapeHtml(author?.firstName || 'Кто-то из группы'), what, formatWhen(new Date(o.at)), escapeHtml(p.placeName)), [
+            [{ text: T.ownGoBtn(when), data: `prp:yes:${g._id}:${idx}` }],
+            [{ text: T.ownBtn, data: `prp:own:${g._id}` }],
+            [{ text: T.whoBtn, path: `?wishGroup=${g._id}` }]
+          ]);
+          await new Promise((r) => setTimeout(r, 60));
+        }
+      }
+    }
+
     for (const w of await Wish.find({ pending: 'proposal', status: 'matched' })) {
       const g = await WishGroup.findById(w.groupId);
       w.pending = null;
@@ -357,6 +381,16 @@ export async function handleProposalCallback(query: any): Promise<boolean> {
   }
   if (g.status !== 'open') return answer(T.gone), true;
 
+  // «Предложить своё время»: ждём ответ текстом (handleOwnTimeReply)
+  if (action === 'own') {
+    if (g.proposal.options.length >= OWN_MAX_OPTIONS) return answer(T.ownTooMany), true;
+    if (g.proposal.options.filter((o) => o.by === fromId).length >= OWN_PER_PERSON) return answer(T.ownLimit), true;
+    await WishGroup.updateOne({ _id: g._id }, { $set: { [`proposal.timeAsk.${fromId}`]: new Date() } });
+    answer();
+    await sendWithButtons(fromId, T.ownAsk(escapeHtml(await phraseFor(g.kind, g.sport))), []);
+    return true;
+  }
+
   // Ответ единственного «Пойду»: опубликовать сходку сейчас или подождать
   if (action === 'wait') return answer(T.soloWaitOk), true;
   if (action === 'solo') {
@@ -374,7 +408,11 @@ export async function handleProposalCallback(query: any): Promise<boolean> {
     // «Не смогу ни в один»: снимаем все мои «Пойду»
     const pulls = Object.fromEntries(g.proposal.options.map((_, i) => [`proposal.options.${i}.yes`, fromId]));
     await WishGroup.updateOne({ _id: g._id, status: 'open' }, { $addToSet: { 'proposal.no': fromId }, $pull: pulls });
-    answer(T.noOk);
+    answer(T.noAck);
+    await sendWithButtons(fromId, T.noOk, [
+      [{ text: T.ownBtn, data: `prp:own:${g._id}` }],
+      [{ text: T.wishBtn, path: '?want=1' }]
+    ]);
     return true;
   }
 
@@ -391,6 +429,59 @@ export async function handleProposalCallback(query: any): Promise<boolean> {
     const claimed = await WishGroup.findOneAndUpdate({ _id: g._id, status: 'open' }, { $set: { status: 'fulfilled' } }, { new: true });
     if (claimed) await createEventFromProposal(claimed, idx);
   }
+  return true;
+}
+
+/* ---------- Своё время от человека из группы ---------- */
+
+const OWN_MAX_OPTIONS = 6;          // 3 от бота и до 3 от людей
+const OWN_PER_PERSON = 2;           // один человек — не больше двух своих вариантов
+const OWN_ASK_TTL = HOUR;           // сколько ждём ответ после «Предложить своё время»
+const OWN_MIN_LEAD = 2 * HOUR;      // чтобы остальные успели ответить
+const OWN_MAX_AHEAD = 21 * 24 * HOUR;
+
+// Ответ на «Предложить своё время»: «пятница 19:00» → новый вариант с моим «Пойду», остальным — днём
+export async function handleOwnTimeReply(message: any): Promise<boolean> {
+  const text: string = (message.text || '').trim();
+  const fromId: number = message.from?.id;
+  if (!text || text.startsWith('/') || !fromId) return false;
+  const askKey = `proposal.timeAsk.${fromId}`;
+  const g = await WishGroup.findOne({ status: 'open', [askKey]: { $gte: new Date(Date.now() - OWN_ASK_TTL) } }).sort({ [askKey]: -1 });
+  if (!g?.proposal) return false;
+  const reply = (html: string) => sendWithButtons(message.chat.id, html, []);
+
+  if (/^(отмена|отменить|не надо|передумал)/i.test(text)) {
+    await WishGroup.updateOne({ _id: g._id }, { $unset: { [askKey]: 1 } });
+    await reply(T.ownCancelled);
+    return true;
+  }
+  // Не разобрали или время не подходит — ждём следующий ответ
+  const parsed = parseRuTime(text);
+  if ('error' in parsed) return await reply(parsed.error === 'noTime' ? T.ownNoTime : T.ownBad), true;
+  const at = parsed.at;
+  if (at.getTime() < Date.now() + OWN_MIN_LEAD) return await reply(T.ownTooSoon), true;
+  if (at.getTime() > Date.now() + OWN_MAX_AHEAD) return await reply(T.ownTooFar), true;
+
+  // Такое время уже есть — просто «Пойду» на него
+  const same = g.proposal.options.findIndex((o) => new Date(o.at).getTime() === at.getTime());
+  if (same >= 0) {
+    await WishGroup.updateOne({ _id: g._id }, { $addToSet: { [`proposal.options.${same}.yes`]: fromId }, $pull: { 'proposal.no': fromId }, $unset: { [askKey]: 1 } });
+    await reply(T.ownExists(shortWhen(at)));
+    return true;
+  }
+  const updated = await WishGroup.findOneAndUpdate(
+    { _id: g._id, status: 'open', [`proposal.options.${OWN_MAX_OPTIONS - 1}`]: { $exists: false } },
+    { $push: { 'proposal.options': { at, yes: [fromId], by: fromId } }, $pull: { 'proposal.no': fromId }, $unset: { [askKey]: 1 } },
+    { new: true }
+  );
+  if (!updated?.proposal) {
+    await WishGroup.updateOne({ _id: g._id }, { $unset: { [askKey]: 1 } });
+    await reply(T.ownTooMany);
+    return true;
+  }
+  await WishGroup.updateOne({ _id: g._id }, { $addToSet: { 'proposal.notify': updated.proposal.options.length - 1 } });
+  await reply(T.ownAdded(shortWhen(at), CONFIRM_MIN()));
+  runProposals().catch(() => {});
   return true;
 }
 

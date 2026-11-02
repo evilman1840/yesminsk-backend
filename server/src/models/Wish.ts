@@ -65,7 +65,7 @@ export interface IWishGroup extends Document {
   reminderSentAt?: Date;
   // Предложение бота: место и 2–3 варианта времени; на какое время первым наберётся 3 «Пойду» — та сходка и создаётся
   proposal?: {
-    options: { at: Date; yes: number[] }[];
+    options: { at: Date; yes: number[]; by?: number }[]; // by — время предложил человек из группы, а не бот
     placeId?: string;
     placeName: string;
     coords: [number, number]; // [lat, lng]
@@ -74,6 +74,8 @@ export interface IWishGroup extends Document {
     createdAt: Date;
     remindedAt?: Date;  // молчащим напомнили
     soloAskedAt?: Date; // единственного «Пойду» спросили, опубликовать ли сходку
+    timeAsk?: Record<string, Date>; // «Предложить своё время»: кого ждём с ответом (id → когда спросили)
+    notify?: number[];              // новые варианты от людей — разослать остальным днём
   };
   proposalRounds?: number; // сколько раз предлагали новое время, потому что прежние варианты прошли
   noPlaceNotifiedAt?: Date; // автору уже написали, что нет подходящего места
