@@ -26,7 +26,7 @@ import { getMeetupStats } from './meetupStats';
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 const MINSK = 3 * HOUR; // Минск: UTC+3 круглый год
-const MAX_ACTIVE = 3;
+const MAX_ACTIVE = 5;
 const REMIND_AFTER = DAY;
 const matchThreshold = () => Math.max(2, Number(process.env.MATCH_THRESHOLD) || 2);
 // Сколько человек в группе, чтобы бот сам предложил время и место (proposals.ts); приложение показывает «вас 2 из 3»
@@ -224,7 +224,7 @@ export async function createWish(
   telegramId: number,
   input: { kind?: unknown; sport?: unknown; timeWindow?: unknown; placeId?: unknown },
   source: 'app' | 'link'
-): Promise<{ wish?: IWish; sameCount?: number; error?: string }> {
+): Promise<{ wish?: IWish; sameCount?: number; error?: string; atLimit?: boolean }> {
   const isCustom = String(input.kind || '') === CUSTOM_WISH;
   const k = isCustom ? null : await loadKind(String(input.kind || ''));
   if (!k && !isCustom) return { error: T.badKind };
@@ -252,7 +252,7 @@ export async function createWish(
   const now = new Date();
   const live = { telegramId, status: { $in: ['active', 'matched'] }, windowEnd: { $gt: now } };
   if (await Wish.exists({ ...live, kind: kindKey, sport: sport || null, timeWindow, placeId: placeId || null })) return { error: T.duplicate };
-  if ((await Wish.countDocuments(live)) >= MAX_ACTIVE) return { error: T.tooMany(MAX_ACTIVE) };
+  if ((await Wish.countDocuments(live)) >= MAX_ACTIVE) return { error: T.tooMany(MAX_ACTIVE), atLimit: true };
 
   const [windowStart, windowEnd] = wishWindow(timeWindow, now);
   const wish = await Wish.create({ telegramId, kind: kindKey, sport, timeWindow, windowStart, windowEnd, placeId, source });
@@ -593,7 +593,8 @@ export function setupWishRoutes(app: Express) {
   app.post('/api/wishes', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const result = await createWish(req.telegramUser!.id, req.body || {}, 'app');
-      if (result.error) return res.status(400).json({ error: result.error });
+      // Упёрлись в лимит — 409: приложение предложит открыть «Мои желания»
+      if (result.error) return res.status(result.atLimit ? 409 : 400).json({ error: result.error });
       res.status(201).json({ wish: await formatWish(result.wish!), sameCount: result.sameCount || 0 });
     } catch {
       res.status(500).json({ error: 'Не удалось сохранить желание' });
