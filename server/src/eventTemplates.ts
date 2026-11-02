@@ -34,6 +34,20 @@ export async function seedEventTemplates() {
       { $set: { title: '{куда}: собираем компанию', fallbackTitle: 'Отдых компанией: баня, бассейн, медитация' } }
     );
     await EventTemplate.updateOne({ key: 'relax', wishPhrase: 'расслабиться' }, { $set: { wishPhrase: 'в баню или бассейн' } });
+    // «Поиграем?»: виды спорта, добавленные в стартовый набор позже, докладываем перед «Другим»; правки автора не трогаем
+    const sportSeed = DEFAULT_TEMPLATES.find((d) => d.key === 'sport')?.fields?.find((f) => f.key === 'sport')?.options || [];
+    const sportTpl = await EventTemplate.findOne({ key: 'sport' });
+    const sportField = sportTpl?.fields?.find((f) => f.key === 'sport');
+    if (sportTpl && sportField?.options) {
+      const missing = sportSeed.filter((o) => !sportField.options!.some((x) => x.value === o.value));
+      if (missing.length) {
+        const at = sportField.options.findIndex((o) => o.value === 'other');
+        sportField.options.splice(at < 0 ? sportField.options.length : at, 0, ...missing);
+        sportTpl.markModified('fields');
+        await sportTpl.save();
+        console.log(`🧩 «Поиграем?»: добавлены виды спорта: ${missing.map((o) => o.label).join(', ')}`);
+      }
+    }
     // «Хочу сходить»: фраза желания у шаблонов, созданных до неё
     for (const t of DEFAULT_TEMPLATES.filter((d) => d.wishPhrase)) {
       await EventTemplate.updateOne({ key: t.key, wishPhrase: { $exists: false } }, { $set: { wishPhrase: t.wishPhrase } });

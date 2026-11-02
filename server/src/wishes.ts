@@ -28,6 +28,8 @@ const MINSK = 3 * HOUR; // Минск: UTC+3 круглый год
 const MAX_ACTIVE = 3;
 const REMIND_AFTER = DAY;
 const matchThreshold = () => Math.max(2, Number(process.env.MATCH_THRESHOLD) || 2);
+// Сколько человек в группе, чтобы бот сам предложил время и место (proposals.ts); приложение показывает «вас 2 из 3»
+export const proposeAt = () => Math.max(2, Number(process.env.PROPOSE_AT) || 3);
 
 /* ---------- Время по Минску ---------- */
 
@@ -578,7 +580,8 @@ export function setupWishRoutes(app: Express) {
         summary: summary
           .map(({ userIds, ...s }) => ({ ...s, count: userIds.filter((id) => id === me || seen.has(id)).length, includesMe: userIds.includes(me) }))
           .filter((s) => s.count > 0),
-        maxActive: MAX_ACTIVE
+        maxActive: MAX_ACTIVE,
+        proposeAt: proposeAt()
       });
     } catch {
       res.status(500).json({ error: 'Не удалось загрузить желания' });

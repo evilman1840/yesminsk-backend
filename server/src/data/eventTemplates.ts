@@ -123,6 +123,7 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
           { value: 'padel', label: 'Падел', emoji: '🎾', badge: '🎾 Падел' },
           { value: 'volleyball', label: 'Волейбол', emoji: '🏐', badge: '🏐 Волейбол' },
           { value: 'bowling', label: 'Боулинг', emoji: '🎳', badge: '🎳 Боулинг' },
+          { value: 'billiards', label: 'Бильярд', emoji: '🎱', badge: '🎱 Бильярд', seatsHint: true },
           { value: 'other', label: 'Другое', emoji: '🏅', badge: '🏅' }
         ]
       },

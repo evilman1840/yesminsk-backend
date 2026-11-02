@@ -10,7 +10,7 @@ import { User } from './models/User';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { formatWhen } from './eventNotify';
 import { buildExtras } from './eventTemplates';
-import { sendWithButtons, Btn, phraseFor, proposalSlots, endsToday, groupSize, buildPath, setAfterMatch, CUSTOM_WISH } from './wishes';
+import { sendWithButtons, Btn, phraseFor, proposalSlots, endsToday, groupSize, buildPath, setAfterMatch, CUSTOM_WISH, proposeAt } from './wishes';
 import { isAdmin, adminIds } from './news';
 import { PROPOSAL_FALLBACK_PLACES } from './data/wishProposals';
 import { PROPOSAL_TEXTS as T, WISH_TEXTS as W, SUGGEST_TEXTS as SG } from './texts';
@@ -23,7 +23,6 @@ import { parsePlaceText, suggestPlace } from './placeSuggestions';
 
 const HOUR = 60 * 60 * 1000;
 const MINSK = 3 * HOUR;
-const PROPOSE_AT = () => Math.max(2, Number(process.env.PROPOSE_AT) || 3);
 const CONFIRM_MIN = () => Math.max(2, Number(process.env.CONFIRM_MIN) || 3);
 // Не раньше чем через 20 часов (почти сутки), если только люди не хотели «сегодня» — тогда через 4 часа
 const leadHoursFor = (g: IWishGroup) => (endsToday(g) ? 4 : 20);
@@ -77,7 +76,7 @@ type ProposalPlace = { placeId?: string; placeName: string; coords: [number, num
 
 export async function proposeForGroup(group: IWishGroup, force = false, override?: ProposalPlace): Promise<boolean> {
   if (group.status !== 'open' || group.proposal) return false;
-  if (!force && (await groupSize(group._id)) < PROPOSE_AT()) return false;
+  if (!force && (await groupSize(group._id)) < proposeAt()) return false;
   const times = proposalSlots(group, leadHoursFor(group), 3);
   if (!times.length) return false;
   const place = override || (await placeFor(group));
