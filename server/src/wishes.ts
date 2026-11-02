@@ -15,6 +15,7 @@ import { audienceUsersQuery } from './eventAudience';
 import { theirPreferencesAllow } from './preferences';
 import { legalVisibleQuery } from './legal';
 import { reportStopWords, BANNED_ERROR } from './moderation';
+import { getMeetupStats } from './meetupStats';
 
 /**
  * «Хочу сходить»: желания без обязательств, группы совпадений и сообщения бота.
@@ -581,7 +582,8 @@ export function setupWishRoutes(app: Express) {
           .map(({ userIds, ...s }) => ({ ...s, count: userIds.filter((id) => id === me || seen.has(id)).length, includesMe: userIds.includes(me) }))
           .filter((s) => s.count > 0),
         maxActive: MAX_ACTIVE,
-        proposeAt: proposeAt()
+        proposeAt: proposeAt(),
+        stats: await getMeetupStats() // для подбадривания в карточках: только то, где данных достаточно
       });
     } catch {
       res.status(500).json({ error: 'Не удалось загрузить желания' });
