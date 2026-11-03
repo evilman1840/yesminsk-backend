@@ -395,6 +395,17 @@ export const POLL_TEXTS = {
   emptyCustom: 'Напиши свой вариант'
 };
 
+// Розыгрыш кофе организаторам (/coffee)
+export const COFFEE_TEXTS = {
+  usage: '\n\n/coffee — розыгрыш за прошлую неделю (пн–вс)\n/coffee ещё — ещё один победитель этой недели',
+  report: (period: string, hosts: number, list: string, won: string) =>
+    `☕ <b>Кофе за неделю ${period}</b>\n\nОрганизаторов: ${hosts}\n${list}\n\n🏆 Победители:\n${won}`,
+  drawn: '🎉 Разыграл! Напиши победителю и угости кофе.\n\n',
+  already: 'Эту неделю уже разыграли.\n\n',
+  noHosts: (min: number) => `На прошлой неделе не было сходок, куда записались хотя бы ${min} человека кроме организатора.`,
+  noneLeft: 'Все организаторы этой недели уже выиграли.'
+};
+
 // Модерация фото (кнопки под фото в приватном канале)
 export const PHOTO_MOD_TEXTS = {
   caption: (who: string) => `📷 Фото от ${who}`,

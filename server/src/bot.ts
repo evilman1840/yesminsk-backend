@@ -15,6 +15,7 @@ import { handlePhotoModerationCallback, handlePhotosCommand } from './photoModer
 import { handleStatsCommand } from './stats';
 import { handleFundCommand } from './fund';
 import { handlePollCommand } from './polls';
+import { handleCoffeeCommand } from './coffee';
 import { handleIdeasCommand } from './ideas';
 import { handleDigestCommand } from './digest';
 import { handleInviteStart } from './invites';
@@ -107,6 +108,7 @@ async function handleMessage(message: any, chatId: number) {
   if (await handleStatsCommand(message)) return;
   if (await handleFundCommand(message)) return;
   if (await handlePollCommand(message)) return;
+  if (await handleCoffeeCommand(message)) return;
   if (await handleIdeasCommand(message)) return;
   if (await handleDigestCommand(message)) return;
   if (await handleFeedbackCommand(message)) return;
@@ -222,6 +224,7 @@ async function registerBotCommands(botToken: string) {
     { command: 'poll', description: 'Опрос в шапке карты: /poll вопрос | вариант | вариант' },
     { command: 'pollend', description: 'Закрыть опрос и прислать итоги' },
     { command: 'pollcsv', description: 'Таблица голосов и идей' },
+    { command: 'coffee', description: 'Розыгрыш кофе организаторам прошлой недели' },
     { command: 'placeedit', description: 'Поправить место: /placeedit номер' },
     { command: 'delnews', description: 'Удалить последнюю новость' },
     { command: 'tip', description: 'Запись в подсказках, в конце: /tip текст (до 80 символов)' },
