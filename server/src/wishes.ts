@@ -581,6 +581,14 @@ export function setupWishRoutes(app: Express) {
         summary: summary
           .map(({ userIds, ...s }) => ({ ...s, count: userIds.filter((id) => id === me || seen.has(id)).length, includesMe: userIds.includes(me) }))
           .filter((s) => s.count > 0),
+        // Пилюли видов в «Сходках»: сколько разных людей (кроме меня) хотят этого в любое время и в любом месте.
+        // Сумма по summary считала бы дважды того, кто хочет на кофе и «на неделе», и «в выходные»
+        kindCounts: Object.fromEntries(
+          [...new Set(summary.map((s) => s.kind))].map((kind) => [
+            kind,
+            new Set(summary.filter((s) => s.kind === kind).flatMap((s) => s.userIds.filter((id) => seen.has(id)))).size
+          ])
+        ),
         maxActive: MAX_ACTIVE,
         proposeAt: proposeAt(),
         stats: await getMeetupStats() // для подбадривания в карточках: только то, где данных достаточно
