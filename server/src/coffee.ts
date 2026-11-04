@@ -27,6 +27,12 @@ const CoffeeDraw = model(
   })
 );
 
+// Сколько всего кофе разыграли организаторам — для окна доната
+export async function countCoffee(): Promise<number> {
+  const [r] = await CoffeeDraw.aggregate([{ $group: { _id: null, n: { $sum: { $size: { $ifNull: ['$winners', []] } } } } }]);
+  return r?.n || 0;
+}
+
 // Понедельник 00:00 по Минску прошлой недели и следующий понедельник
 function lastWeek(now = new Date()) {
   const minsk = new Date(now.getTime() + MINSK_OFFSET_MS);

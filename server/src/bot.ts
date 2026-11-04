@@ -221,6 +221,8 @@ async function registerBotCommands(botToken: string) {
     { command: 'cancel', description: 'Отменить добавление места' },
     { command: 'news', description: 'Опубликовать новость: /news текст' },
     { command: 'fund', description: 'Шкала донатов: /fund всего котёл' },
+    { command: 'sent', description: 'Перевод приюту: /sent 15 Приют «Хвостики»' },
+    { command: 'delsent', description: 'Удалить последний перевод приюту' },
     { command: 'poll', description: 'Опрос в шапке карты: /poll вопрос | вариант | вариант' },
     { command: 'pollend', description: 'Закрыть опрос и прислать итоги' },
     { command: 'pollcsv', description: 'Таблица голосов и идей' },
