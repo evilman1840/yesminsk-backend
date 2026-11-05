@@ -1,4 +1,4 @@
-import { Express, Response } from 'express';
+import { Express, Request, Response } from 'express';
 import { Schema, model, Types } from 'mongoose';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import { User } from './models/User';
@@ -12,7 +12,7 @@ import { isAdmin } from './news';
  * Мини-игры: «Пять в ряд» (крестики-нолики на поле 10×10).
  *
  * Как играют:
- *   • с ботом — целиком в приложении, сервер не нужен;
+ *   • с ботом — целиком в приложении, сервер только считает партии для /stats;
  *   • со случайным игроком — партия «вживую»: оба на экране, ходы по очереди. Подбор — по анкете
  *     (кого человек готов видеть в «С кем хочу общаться», общие интересы, район). Инкогнито — без подбора
  *     по анкете, и соперник не видит ни имени, ни фото;
@@ -20,18 +20,31 @@ import { isAdmin } from './news';
  *
  * Общение в игре — только готовые эмодзи и фразы, без свободного чата.
  * Не инкогнито — соперник может открыть анкету и нажать 👋 «Пообщаться», как обычно.
+ *
+ * Нагрузка: приложение спрашивает о партии «долгим опросом» — сервер держит вопрос до 25 секунд и отвечает,
+ * как только в партии что-то поменялось (у партии номер версии v). Ожидающие — в памяти этого сервера:
+ * сервер один. Если когда-нибудь их станет несколько, ничего не сломается — ответ просто придёт по таймеру
  */
 
 export const BOARD = 10;
 const CELLS = BOARD * BOARD;
 const WIN = 5;
 
-const SEARCH_STALE_MS = 15 * 1000;      // ищущий не спрашивал о партии 15 секунд — закрыл приложение
+const MIN = 60 * 1000;
+const DAY = 24 * 60 * MIN;
+const SEARCH_STALE_MS = 20 * 1000;      // ищущий не спрашивал о партии 20 секунд — закрыл приложение
 const LIVE_LEFT_MS = 45 * 1000;         // случайный соперник пропал на 45 секунд — ушёл, победа за тобой
-const INVITE_EXPIRE_MS = 3 * 24 * 60 * 60 * 1000; // партия со знакомым: 3 дня без ходов — закрываем
-const INVITE_WAIT_MS = 24 * 60 * 60 * 1000;       // приглашение никто не принял за сутки — закрываем
+const ONLINE_MS = 35 * 1000;            // «на месте» для значка в партии
+const INVITE_EXPIRE_MS = 3 * DAY;       // партия со знакомым: 3 дня без ходов — закрываем
+const INVITE_WAIT_MS = DAY;             // приглашение никто не принял за сутки — закрываем
 const NOTIFY_AWAY_MS = 30 * 1000;       // «Твой ход» от бота — если человек не заглядывал в партию 30 секунд
-const REMATCH_MS = 60 * 1000;           // «Ещё партию» ждём минуту
+const REMATCH_MS = MIN;                 // «Ещё партию» ждём минуту
+const LONG_POLL_MS = 25 * 1000;         // сколько сервер держит вопрос «что нового»
+const SEARCH_POLL_MS = 6 * 1000;        // в поиске — короче: заодно ещё раз пробуем подобрать пару
+
+// Сколько хранить партии в базе (удаляет сама база по полю expireAt)
+const KEEP: Record<string, number> = { searching: DAY, cancelled: DAY, waiting: 2 * DAY, active: 4 * DAY, finished: 30 * DAY };
+const expireAt = (status: string) => new Date(Date.now() + (KEEP[status] || 30 * DAY));
 
 // Ключ — что присылает приложение, значение — что увидит соперник
 export const GAME_EMOJIS: Record<string, string> = {
@@ -47,6 +60,7 @@ export const GAME_PHRASES: Record<string, string> = {
   onemore: 'Ещё одну и спать',
   nice: 'Хороший ход!'
 };
+const own = (o: Record<string, string>, k: string) => Object.prototype.hasOwnProperty.call(o, k);
 
 // Ник в инкогнито: зверёк, один на партию
 const INCOGNITO_NICKS = [
@@ -101,6 +115,8 @@ const GameMatch = model(
       finishedAt: { type: Date },
       say: { from: Number, text: String, at: Date },
       nextId: { type: Schema.Types.ObjectId }, // «Ещё партию»: куда перейти
+      v: { type: Number, default: 0 },          // версия: растёт с каждым изменением, кроме «я на месте»
+      expireAt: { type: Date, default: () => expireAt('searching') },
       // Подбор по анкете: что о ищущем знаем заранее, чтобы не грузить анкеты на каждый опрос
       seek: {
         gender: String,
@@ -113,7 +129,22 @@ const GameMatch = model(
       }
     },
     { timestamps: true }
-  ).index({ status: 1, mode: 1, createdAt: 1 }).index({ 'players.telegramId': 1, status: 1 })
+  )
+    .index({ status: 1, mode: 1, createdAt: 1 })
+    .index({ 'players.telegramId': 1, status: 1 })
+    .index({ expireAt: 1 }, { expireAfterSeconds: 0 }) // база сама удаляет старые партии и поиски
+);
+
+// Сводка по дням для /stats: партии с ботом (считаются на телефоне) и пик игроков одновременно
+const GameDay = model(
+  'GameDay',
+  new Schema({
+    day: { type: String, unique: true }, // '2026-11-05' по Минску
+    botGames: { type: Number, default: 0 },
+    botPlayers: { type: [Number], default: [] },
+    peak: { type: Number, default: 0 },
+    peakAt: { type: Date }
+  })
 );
 
 // ---------- Правила ----------
@@ -138,6 +169,70 @@ export function winLineAt(board: string, cell: number): number[] | null {
     if (line.length >= WIN) return line.sort((a, b) => a - b);
   }
   return null;
+}
+
+// Ход закончил партию? Крестики — у игрока 0, нолики — у игрока 1
+function finishIfOver(board: string, cell: number): any {
+  const line = winLineAt(board, cell);
+  if (line) return { status: 'finished', winner: board[cell] === 'x' ? 0 : 1, winLine: line, reason: 'win', finishedAt: new Date(), expireAt: expireAt('finished') };
+  if (!board.includes('.')) return { status: 'finished', winner: -1, reason: 'draw', finishedAt: new Date(), expireAt: expireAt('finished') };
+  return null;
+}
+
+// ---------- Долгий опрос: кто ждёт новостей по партии ----------
+
+const waiters = new Map<string, Set<() => void>>();
+
+// В партии что-то поменялось — будим всех, кто ждёт
+function changed(id: any) {
+  const key = String(id);
+  const set = waiters.get(key);
+  if (!set) return;
+  waiters.delete(key);
+  set.forEach((wake) => wake());
+}
+
+// Подписаться на изменения партии заранее, до чтения из базы: так не пропустим ход, сделанный между чтением и ожиданием.
+// wait(ms) — ждать не дольше ms; false — человек закрыл приложение и ответ не нужен. cancel() — не ждать.
+// Смотрим на закрытие ответа (res), а не запроса: у запроса «close» в Node приходит сразу после чтения
+function listen(id: string, res: Response) {
+  let set = waiters.get(id);
+  if (!set) waiters.set(id, (set = new Set()));
+  let fired = false;
+  let gone = false;
+  let resolver: ((stillThere: boolean) => void) | null = null;
+  let timer: NodeJS.Timeout | null = null;
+  const off = () => {
+    set!.delete(wake);
+    if (!set!.size && waiters.get(id) === set) waiters.delete(id);
+    res.off('close', onClose);
+    if (timer) clearTimeout(timer);
+  };
+  const finish = () => {
+    off();
+    const r = resolver;
+    resolver = null;
+    r?.(!gone);
+  };
+  function wake() {
+    fired = true;
+    finish();
+  }
+  function onClose() {
+    if (!res.writableEnded) gone = true;
+    wake();
+  }
+  set.add(wake);
+  res.on('close', onClose);
+  return {
+    wait: (ms: number) =>
+      new Promise<boolean>((resolve) => {
+        if (fired) return resolve(!gone);
+        resolver = resolve;
+        timer = setTimeout(finish, ms);
+      }),
+    cancel: off
+  };
 }
 
 // ---------- Вспомогательное ----------
@@ -171,6 +266,7 @@ function view(m: any, telegramId: number) {
     game: m.game,
     mode: m.mode,
     status: m.status,
+    v: m.v || 0,
     inviteCode: m.status === 'waiting' && me === 0 ? m.inviteCode : undefined,
     board: m.board,
     size: BOARD,
@@ -192,7 +288,7 @@ function view(m: any, telegramId: number) {
         avatar: p.incognito ? '' : p.avatar,
         emoji: p.incognito ? p.nickEmoji : '',
         rematch: Boolean(p.rematch),
-        online: Date.now() - new Date(p.seenAt).getTime() < 20 * 1000
+        online: Date.now() - new Date(p.seenAt).getTime() < ONLINE_MS
       };
     }),
     updatedAt: m.updatedAt
@@ -216,23 +312,35 @@ function closeness(a: any, b: any): number {
   return shared * 2 + (a.areaName && a.areaName === b.areaName && a.areaName !== 'Минск' ? 3 : 0);
 }
 
+// Изменить партию: версия +1, срок хранения по новому статусу, разбудить ждущих
+async function update(filter: any, set: any, extra: any = {}): Promise<any> {
+  const status = set.status;
+  const next: any = await GameMatch.findOneAndUpdate(
+    filter,
+    { ...extra, $set: { ...set, ...(status ? { expireAt: set.expireAt || expireAt(status) } : {}) }, $inc: { ...(extra.$inc || {}), v: 1 } },
+    { new: true }
+  ).lean();
+  if (next) changed(next._id);
+  return next;
+}
+
 // Партия устарела: соперник ушёл, приглашение никто не принял и т.п. Закрываем при чтении
 async function settle(m: any): Promise<any> {
   const now = Date.now();
-  let update: any = null;
+  let set: any = null;
   if (m.status === 'searching' && now - new Date(m.players[0].seenAt).getTime() > SEARCH_STALE_MS) {
-    update = { status: 'cancelled' };
+    set = { status: 'cancelled' };
   } else if (m.status === 'waiting' && now - new Date(m.createdAt).getTime() > INVITE_WAIT_MS) {
-    update = { status: 'cancelled' };
+    set = { status: 'cancelled' };
   } else if (m.status === 'active' && m.mode === 'random') {
     const gone = m.players.findIndex((p: any) => now - new Date(p.seenAt).getTime() > LIVE_LEFT_MS);
-    if (gone >= 0) update = { status: 'finished', winner: 1 - gone, reason: 'left', finishedAt: new Date() };
+    if (gone >= 0) set = { status: 'finished', winner: 1 - gone, reason: 'left', finishedAt: new Date() };
   } else if (m.status === 'active' && m.mode === 'invite') {
     const last = new Date(m.lastMoveAt || m.updatedAt).getTime();
-    if (now - last > INVITE_EXPIRE_MS) update = { status: 'finished', winner: m.moves ? 1 - m.turn : -1, reason: 'expired', finishedAt: new Date() };
+    if (now - last > INVITE_EXPIRE_MS) set = { status: 'finished', winner: m.moves ? 1 - m.turn : -1, reason: 'expired', finishedAt: new Date() };
   }
-  if (!update) return m;
-  return (await GameMatch.findOneAndUpdate({ _id: m._id, status: m.status }, { $set: update }, { new: true }).lean()) || (await GameMatch.findById(m._id).lean());
+  if (!set) return m;
+  return (await update({ _id: m._id, status: m.status }, set)) || (await GameMatch.findById(m._id).lean());
 }
 
 const seekProfile = (u: any) => ({
@@ -246,7 +354,7 @@ const seekProfile = (u: any) => ({
 });
 
 /**
- * Подбор: ищем самого подходящего среди тех, кто уже ждёт. Нашли — садимся к нему (он ходит первым или нет — случайно).
+ * Подбор: ищем самого подходящего среди тех, кто уже ждёт. Нашли — садимся к нему (кто ходит первым — случайно).
  * Не нашли — ждём сами. Повторяем на каждом опросе: двое могли встать в очередь одновременно и не увидеть друг друга
  */
 async function tryPair(mine: any): Promise<any | null> {
@@ -270,22 +378,18 @@ async function tryPair(mine: any): Promise<any | null> {
   if (!fits.length) return null;
 
   // Сначала снимаем свою заявку: если её уже кто-то занял — играем там
-  const released = await GameMatch.findOneAndUpdate({ _id: mine._id, status: 'searching' }, { $set: { status: 'cancelled' } });
+  const released = await GameMatch.findOneAndUpdate({ _id: mine._id, status: 'searching' }, { $set: { status: 'cancelled', expireAt: expireAt('cancelled') } });
   if (!released) return GameMatch.findById(mine._id).lean();
 
   for (const { o } of fits) {
     const guest = { ...me, seenAt: new Date() };
     if (guest.incognito && guest.nick === o.players[0].nick) [guest.nickEmoji, guest.nick] = randomNick(o.players[0].nick);
     const players = Math.random() < 0.5 ? [o.players[0], guest] : [guest, o.players[0]];
-    const taken = await GameMatch.findOneAndUpdate(
-      { _id: o._id, status: 'searching' },
-      { $set: { status: 'active', players, turn: 0, lastMoveAt: new Date() } },
-      { new: true }
-    ).lean();
+    const taken = await update({ _id: o._id, status: 'searching' }, { status: 'active', players, turn: 0, lastMoveAt: new Date() });
     if (taken) return taken;
   }
   // Пока перебирали, всех разобрали — встаём в очередь снова
-  await GameMatch.updateOne({ _id: mine._id }, { $set: { status: 'searching', 'players.0.seenAt': new Date() } });
+  await GameMatch.updateOne({ _id: mine._id }, { $set: { status: 'searching', expireAt: expireAt('searching'), 'players.0.seenAt': new Date() } });
   return null;
 }
 
@@ -298,30 +402,87 @@ async function notifyTurn(m: any) {
   if (p.notifiedAt && new Date(p.notifiedAt).getTime() > new Date(p.seenAt).getTime()) return; // уже писали, человек ещё не заходил
   const u: any = await User.findOne({ telegramId: p.telegramId }, { canMessage: 1 }).lean();
   if (u?.canMessage === false) return;
-  await GameMatch.updateOne({ _id: m._id }, { $set: { [`players.${m.turn}.notifiedAt`]: new Date() } });
+  await GameMatch.updateOne({ _id: m._id }, { $set: { [`players.${m.turn}.notifiedAt`]: new Date() } }, { timestamps: false });
   const name = other.incognito ? `${other.nickEmoji} ${other.nick}` : other.firstName;
   sendWithButtons(p.telegramId, `🎲 Твой ход в «Пять в ряд»! <b>${escapeHtml(name)}</b> ждёт`, [[{ text: '🎲 Сходить', path: `?game=${m._id}` }]]).catch(() => {});
 }
 
-// Ход закончил партию? Крестики — у игрока 0, нолики — у игрока 1
-function finishIfOver(board: string, cell: number): any {
-  const line = winLineAt(board, cell);
-  if (line) return { status: 'finished', winner: board[cell] === 'x' ? 0 : 1, winLine: line, reason: 'win', finishedAt: new Date() };
-  if (!board.includes('.')) return { status: 'finished', winner: -1, reason: 'draw', finishedAt: new Date() };
-  return null;
-}
+const inviteCode = () => Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
 
 // Пока игры проверяет автор: искать соперника и звать знакомых могут только админы.
 // По ссылке-приглашению от админа сыграть может любой. Открыть всем — GAMES_OPEN=1 на сервере
 const canStart = (telegramId: number) => process.env.GAMES_OPEN === '1' || isAdmin(telegramId);
 const CLOSED = 'Игры скоро появятся 🎲';
 
-const inviteCode = () => Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
+// «Я на месте» и сама партия — одним запросом к базе
+const touch = (id: string, telegramId: number) =>
+  GameMatch.findOneAndUpdate({ _id: id, 'players.telegramId': telegramId }, { $set: { 'players.$.seenAt': new Date() } }, { new: true, timestamps: false }).lean();
+
+// ---------- Статистика ----------
+
+const MINSK_OFFSET = 3 * 60 * 60 * 1000;
+const minskDay = (t = Date.now()) => new Date(t + MINSK_OFFSET).toISOString().slice(0, 10);
+const startOfMinskDay = () => {
+  const now = Date.now();
+  return new Date(now - ((now + MINSK_OFFSET) % DAY));
+};
+
+// Сколько человек сейчас в игре с людьми (ищут или играют, заглядывали за последние 40 секунд)
+async function livePlayers(): Promise<number> {
+  const since = new Date(Date.now() - 40 * 1000);
+  const r = await GameMatch.aggregate([
+    { $match: { status: { $in: ['searching', 'active'] }, updatedAt: { $gte: new Date(Date.now() - DAY) } } },
+    { $unwind: '$players' },
+    { $match: { 'players.seenAt': { $gte: since } } },
+    { $group: { _id: '$players.telegramId' } },
+    { $count: 'n' }
+  ]);
+  return r[0]?.n || 0;
+}
+
+// Раз в минуту запоминаем пик за день. Заодно старым партиям без срока хранения — срок
+export function startGameStatsLoop() {
+  GameMatch.updateMany({ expireAt: { $exists: false } }, { $set: { expireAt: expireAt('finished') } }, { timestamps: false }).catch(() => {});
+  const tick = async () => {
+    try {
+      const n = await livePlayers();
+      if (!n) return;
+      const day = minskDay();
+      const doc: any = await GameDay.findOne({ day }, { peak: 1 }).lean();
+      if (n > (doc?.peak || 0)) await GameDay.updateOne({ day }, { $set: { peak: n, peakAt: new Date() } }, { upsert: true });
+    } catch (err: any) {
+      console.warn('⚠️ Игры, пик игроков:', err?.message || err);
+    }
+  };
+  setInterval(tick, MIN).unref();
+}
+
+export async function gameStatsLines(): Promise<string[]> {
+  const today = startOfMinskDay();
+  const [humanToday, randomToday, inviteToday, playersToday, liveNow, day, week] = await Promise.all([
+    GameMatch.countDocuments({ status: { $in: ['active', 'finished'] }, createdAt: { $gte: today } }),
+    GameMatch.countDocuments({ mode: 'random', status: { $in: ['active', 'finished'] }, createdAt: { $gte: today } }),
+    GameMatch.countDocuments({ mode: 'invite', status: { $in: ['active', 'finished'] }, createdAt: { $gte: today } }),
+    GameMatch.distinct('players.telegramId', { status: { $in: ['active', 'finished'] }, createdAt: { $gte: today } }),
+    livePlayers(),
+    GameDay.findOne({ day: minskDay() }).lean() as any,
+    GameDay.find({ day: { $gte: minskDay(Date.now() - 6 * DAY) } }, { peak: 1 }).lean()
+  ]);
+  const peakWeek = Math.max(0, ...week.map((d: any) => d.peak || 0));
+  const peakAt = day?.peakAt ? new Date(day.peakAt).toLocaleTimeString('ru-RU', { timeZone: 'Europe/Minsk', hour: '2-digit', minute: '2-digit' }) : '';
+  return [
+    `🎲 <b>Игры сегодня</b>`,
+    `С людьми: партий ${humanToday} (случайный соперник ${randomToday}, знакомые ${inviteToday}), играли ${playersToday.length} чел.`,
+    `С ботом: партий ${day?.botGames || 0}, играли ${day?.botPlayers?.length || 0} чел.`,
+    `Сейчас с людьми: ${liveNow} · пик сегодня ${day?.peak || 0}${peakAt ? ` (в ${peakAt})` : ''} · пик за 7 дней ${peakWeek}`
+  ];
+}
 
 // ---------- Маршруты ----------
 
 export function setupGameRoutes(app: Express) {
   const auth = telegramAuthMiddleware as any;
+  const validId = (req: Request) => Types.ObjectId.isValid(String(req.params.id));
 
   // Встать в поиск случайного соперника. incognito — без подбора по анкете и без имени/фото
   app.post('/api/games/search', auth, async (req: AuthenticatedRequest, res: Response) => {
@@ -334,12 +495,12 @@ export function setupGameRoutes(app: Express) {
       if (live) {
         const s = await settle(live);
         if (s.status === 'active') return res.json(view(s, myId));
-        if (s.status === 'searching') await GameMatch.updateOne({ _id: s._id }, { $set: { status: 'cancelled' } });
+        if (s.status === 'searching') await update({ _id: s._id, status: 'searching' }, { status: 'cancelled' });
       }
       const u: any = await User.findOne({ telegramId: myId }, { gender: 1, age: 1, preferredGender: 1, preferredAgeRange: 1, goals: 1, goal: 1, areaName: 1, blockedUsers: 1, hasAgreedToRules: 1 }).lean();
       if (!u?.hasAgreedToRules) return res.status(403).json({ error: 'Сначала прими правила «ГУЛЯЙ!»' });
       const me = await makePlayer(myId, incognito);
-      const mine: any = (await GameMatch.create({ mode: 'random', status: 'searching', players: [me], seek: seekProfile(u) })).toObject();
+      const mine: any = (await GameMatch.create({ mode: 'random', status: 'searching', players: [me], seek: seekProfile(u), expireAt: expireAt('searching') })).toObject();
       const paired = await tryPair(mine);
       res.json(view(paired || mine, myId));
     } catch (err: any) {
@@ -356,7 +517,7 @@ export function setupGameRoutes(app: Express) {
       const waiting = await GameMatch.countDocuments({ mode: 'invite', status: 'waiting', 'players.0.telegramId': myId });
       if (waiting >= 5) return res.status(429).json({ error: 'У тебя уже 5 приглашений ждут ответа. Отмени старые или подожди, пока примут' });
       const me = await makePlayer(myId, Boolean(req.body?.incognito));
-      const m: any = (await GameMatch.create({ mode: 'invite', status: 'waiting', inviteCode: inviteCode(), players: [me] })).toObject();
+      const m: any = (await GameMatch.create({ mode: 'invite', status: 'waiting', inviteCode: inviteCode(), players: [me], expireAt: expireAt('waiting') })).toObject();
       res.json(view(m, myId));
     } catch (err: any) {
       console.warn('⚠️ Игры, приглашение:', err?.message || err);
@@ -378,7 +539,7 @@ export function setupGameRoutes(app: Express) {
       if (host?.blockedUsers?.includes(myId) || meUser?.blockedUsers?.includes(m.players[0].telegramId)) return res.status(404).json({ error: 'Приглашение не найдено' });
       const guest = await makePlayer(myId, Boolean(req.body?.incognito), m.players[0].nick);
       const players = Math.random() < 0.5 ? [m.players[0], guest] : [guest, m.players[0]];
-      const started: any = await GameMatch.findOneAndUpdate({ _id: m._id, status: 'waiting' }, { $set: { status: 'active', players, lastMoveAt: new Date() } }, { new: true }).lean();
+      const started: any = await update({ _id: m._id, status: 'waiting' }, { status: 'active', players, lastMoveAt: new Date() });
       if (!started) return res.status(410).json({ error: 'Эту партию уже начали' });
       notifyTurn(started).catch(() => {}); // хозяин ходит первым и ушёл из приложения — бот позовёт
       res.json(view(started, myId));
@@ -400,20 +561,51 @@ export function setupGameRoutes(app: Express) {
     }
   });
 
-  // Состояние партии. Заодно — «я на месте» и повторная попытка подобрать соперника
+  // Сыграли с ботом — только для /stats
+  app.post('/api/games/bot-played', auth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      await GameDay.updateOne({ day: minskDay() }, { $inc: { botGames: 1 }, $addToSet: { botPlayers: req.telegramUser!.id } }, { upsert: true });
+    } catch {
+      /* статистика не важнее игры */
+    }
+    res.json({ ok: true });
+  });
+
+  /**
+   * Состояние партии. Заодно — «я на месте» и повторная попытка подобрать соперника.
+   * ?since=<v>&wait=1 — долгий опрос: если нового нет, ждём изменения до 25 секунд (в поиске — до 6)
+   */
   app.get('/api/games/:id', auth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const myId = req.telegramUser!.id;
-      if (!Types.ObjectId.isValid(String(req.params.id))) return res.sendStatus(404);
-      const i = await GameMatch.findOne({ _id: String(req.params.id), 'players.telegramId': myId }, { players: 1 }).lean().then((m: any) => (m ? meIndex(m, myId) : -1));
-      if (i < 0) return res.status(404).json({ error: 'Партия не найдена' });
-      let m: any = await GameMatch.findOneAndUpdate({ _id: String(req.params.id) }, { $set: { [`players.${i}.seenAt`]: new Date() } }, { new: true, timestamps: false }).lean();
-      m = await settle(m);
-      if (m.status === 'searching') m = (await tryPair(m)) || m;
+      const id = String(req.params.id);
+      if (!validId(req)) return res.sendStatus(404);
+      const load = async () => {
+        let m: any = await touch(id, myId);
+        if (!m) return null;
+        m = await settle(m);
+        if (m.status === 'searching') m = (await tryPair(m)) || m;
+        return m;
+      };
+      const since = Number(req.query.since);
+      const longPoll = req.query.wait === '1' && Number.isFinite(since);
+      const sub = longPoll ? listen(id, res) : null; // подписка до чтения: ход соперника не проскочит
+      let m = await load();
+      if (!m) {
+        sub?.cancel();
+        return res.status(404).json({ error: 'Партия не найдена' });
+      }
+      const sameGame = String(m._id) === id;
+      const waitable = ['searching', 'waiting', 'active', 'finished'].includes(m.status) && !m.nextId;
+      if (sub && sameGame && waitable && (m.v || 0) <= since) {
+        const stillThere = await sub.wait(m.status === 'searching' ? SEARCH_POLL_MS : LONG_POLL_MS);
+        if (!stillThere) return; // человек закрыл приложение — отвечать некому
+        m = (await load()) || m;
+      } else sub?.cancel();
       res.json(view(m, myId));
     } catch (err: any) {
       console.warn('⚠️ Игры, партия:', err?.message || err);
-      res.status(500).json({ error: 'Не получилось загрузить партию' });
+      if (!res.headersSent) res.status(500).json({ error: 'Не получилось загрузить партию' });
     }
   });
 
@@ -422,7 +614,7 @@ export function setupGameRoutes(app: Express) {
     try {
       const myId = req.telegramUser!.id;
       const cell = Number(req.body?.cell);
-      if (!Types.ObjectId.isValid(String(req.params.id)) || !Number.isInteger(cell) || cell < 0 || cell >= CELLS) return res.status(400).json({ error: 'Такой клетки нет' });
+      if (!validId(req) || !Number.isInteger(cell) || cell < 0 || cell >= CELLS) return res.status(400).json({ error: 'Такой клетки нет' });
       let m: any = await GameMatch.findOne({ _id: String(req.params.id), 'players.telegramId': myId }).lean();
       if (!m) return res.status(404).json({ error: 'Партия не найдена' });
       m = await settle(m);
@@ -433,9 +625,9 @@ export function setupGameRoutes(app: Express) {
 
       const board = m.board.slice(0, cell) + (i === 0 ? 'x' : 'o') + m.board.slice(cell + 1);
       const end = finishIfOver(board, cell);
-      const set: any = { board, lastMove: cell, lastMoveAt: new Date(), turn: 1 - i, [`players.${i}.seenAt`]: new Date(), ...(end || {}) };
+      const set: any = { board, lastMove: cell, lastMoveAt: new Date(), turn: 1 - i, [`players.${i}.seenAt`]: new Date(), expireAt: expireAt('active'), ...(end || {}) };
       // Защита от двойного нажатия: ход засчитываем, только если доска не поменялась
-      const next: any = await GameMatch.findOneAndUpdate({ _id: m._id, status: 'active', board: m.board, turn: i }, { $set: set, $inc: { moves: 1 } }, { new: true }).lean();
+      const next: any = await update({ _id: m._id, status: 'active', board: m.board, turn: i }, set, { $inc: { moves: 1 } });
       if (!next) return res.status(409).json({ error: 'Ход уже сделан', game: view((await GameMatch.findById(m._id).lean()) as any, myId) });
       notifyTurn(next).catch(() => {});
       res.json(view(next, myId));
@@ -450,12 +642,11 @@ export function setupGameRoutes(app: Express) {
     try {
       const myId = req.telegramUser!.id;
       const key = String(req.body?.say || '');
-      const text = Object.prototype.hasOwnProperty.call(GAME_EMOJIS, key) ? GAME_EMOJIS[key] : Object.prototype.hasOwnProperty.call(GAME_PHRASES, key) ? GAME_PHRASES[key] : '';
-      if (!text || !Types.ObjectId.isValid(String(req.params.id))) return res.status(400).json({ error: 'Такой фразы нет' });
+      const text = own(GAME_EMOJIS, key) ? GAME_EMOJIS[key] : own(GAME_PHRASES, key) ? GAME_PHRASES[key] : '';
+      if (!text || !validId(req)) return res.status(400).json({ error: 'Такой фразы нет' });
       const m: any = await GameMatch.findOne({ _id: String(req.params.id), 'players.telegramId': myId }, { players: 1 }).lean();
       if (!m) return res.status(404).json({ error: 'Партия не найдена' });
-      const i = meIndex(m, myId);
-      const next: any = await GameMatch.findOneAndUpdate({ _id: m._id }, { $set: { say: { from: i, text, at: new Date() } } }, { new: true, timestamps: false }).lean();
+      const next: any = await update({ _id: m._id }, { say: { from: meIndex(m, myId), text, at: new Date() } });
       res.json(view(next, myId));
     } catch {
       res.status(500).json({ error: 'Не получилось отправить' });
@@ -466,14 +657,14 @@ export function setupGameRoutes(app: Express) {
   app.post('/api/games/:id/leave', auth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const myId = req.telegramUser!.id;
-      if (!Types.ObjectId.isValid(String(req.params.id))) return res.sendStatus(404);
+      if (!validId(req)) return res.sendStatus(404);
       const m: any = await GameMatch.findOne({ _id: String(req.params.id), 'players.telegramId': myId }).lean();
       if (!m) return res.status(404).json({ error: 'Партия не найдена' });
       const i = meIndex(m, myId);
       let set: any = null;
       if (m.status === 'searching' || m.status === 'waiting') set = { status: 'cancelled' };
       else if (m.status === 'active') set = { status: 'finished', winner: 1 - i, reason: 'resign', finishedAt: new Date() };
-      const next: any = set ? await GameMatch.findOneAndUpdate({ _id: m._id, status: m.status }, { $set: set }, { new: true }).lean() : m;
+      const next: any = set ? await update({ _id: m._id, status: m.status }, set) : m;
       res.json(view(next || m, myId));
     } catch {
       res.status(500).json({ error: 'Не получилось выйти из партии' });
@@ -484,12 +675,12 @@ export function setupGameRoutes(app: Express) {
   app.post('/api/games/:id/block', auth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const myId = req.telegramUser!.id;
-      if (!Types.ObjectId.isValid(String(req.params.id))) return res.sendStatus(404);
+      if (!validId(req)) return res.sendStatus(404);
       const m: any = await GameMatch.findOne({ _id: String(req.params.id), 'players.telegramId': myId }, { players: 1, status: 1 }).lean();
       const other = m?.players.find((p: any) => p.telegramId !== myId);
       if (!other) return res.status(404).json({ error: 'Партия не найдена' });
       await User.updateOne({ telegramId: myId }, { $addToSet: { blockedUsers: other.telegramId } });
-      if (m.status === 'active') await GameMatch.updateOne({ _id: m._id, status: 'active' }, { $set: { status: 'finished', winner: meIndex(m, myId), reason: 'left', finishedAt: new Date() } });
+      if (m.status === 'active') await update({ _id: m._id, status: 'active' }, { status: 'finished', winner: meIndex(m, myId), reason: 'left', finishedAt: new Date() });
       res.json({ ok: true });
     } catch {
       res.status(500).json({ error: 'Не получилось' });
@@ -500,7 +691,7 @@ export function setupGameRoutes(app: Express) {
   app.post('/api/games/:id/rematch', auth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const myId = req.telegramUser!.id;
-      if (!Types.ObjectId.isValid(String(req.params.id))) return res.sendStatus(404);
+      if (!validId(req)) return res.sendStatus(404);
       let m: any = await GameMatch.findOne({ _id: String(req.params.id), 'players.telegramId': myId }).lean();
       if (!m) return res.status(404).json({ error: 'Партия не найдена' });
       const i = meIndex(m, myId);
@@ -509,11 +700,11 @@ export function setupGameRoutes(app: Express) {
       if (m.mode === 'random' && Date.now() - new Date(m.finishedAt || m.updatedAt).getTime() > REMATCH_MS) {
         return res.status(410).json({ error: 'Соперник уже ушёл. Найдём другого?' });
       }
-      m = await GameMatch.findOneAndUpdate({ _id: m._id }, { $set: { [`players.${i}.rematch`]: true, [`players.${i}.seenAt`]: new Date() } }, { new: true }).lean();
+      m = await update({ _id: m._id }, { [`players.${i}.rematch`]: true, [`players.${i}.seenAt`]: new Date() });
       if (m.players.every((p: any) => p.rematch) && !m.nextId) {
         const players = [m.players[1], m.players[0]].map((p: any) => ({ ...p, rematch: undefined, notifiedAt: undefined, seenAt: new Date() }));
-        const created: any = await GameMatch.create({ game: m.game, mode: m.mode, status: 'active', players, lastMoveAt: new Date() });
-        const linked = await GameMatch.findOneAndUpdate({ _id: m._id, nextId: { $exists: false } }, { $set: { nextId: created._id } }, { new: true }).lean();
+        const created: any = await GameMatch.create({ game: m.game, mode: m.mode, status: 'active', players, lastMoveAt: new Date(), expireAt: expireAt('active') });
+        const linked = await update({ _id: m._id, nextId: { $exists: false } }, { nextId: created._id });
         if (!linked) await GameMatch.deleteOne({ _id: created._id }); // второй успел первым
         else notifyTurn(created.toObject()).catch(() => {});
         m = await GameMatch.findById(m._id).lean();

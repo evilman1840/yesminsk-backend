@@ -44,7 +44,7 @@ import { setupAccountRoutes } from './account';
 import { setupPlaceSuggestionRoutes, backfillPlaceAuthors } from './placeSuggestions';
 import { runPlaceImports } from './placesImport';
 import { setupAfishaRoutes, startAfishaLoop } from './afisha';
-import { setupGameRoutes } from './games';
+import { setupGameRoutes, startGameStatsLoop } from './games';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote, rsvpButtons } from './eventNotify';
 
 dotenv.config();
@@ -2111,4 +2111,5 @@ app.listen(PORT, () => {
   startNudgeLoop();
   startProposalLoop();
   startAfishaLoop();
+  startGameStatsLoop();
 });

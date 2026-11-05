@@ -11,6 +11,7 @@ import { meetupStatsLines } from './meetupMetrics';
 import { BOT_ACCESS_TEXTS, USERNAME_TEXTS } from './texts';
 import { wishStatsLines } from './wishes';
 import { nudgeStatsLines } from './nudges';
+import { gameStatsLines } from './games';
 
 /**
  * /stats — сводка по приложению для автора (только ADMIN_TELEGRAM_IDS)
@@ -117,6 +118,7 @@ export async function buildStats(): Promise<string> {
   ]);
   const wishLines = await wishStatsLines(ago(30));
   const nudgeLines = await nudgeStatsLines(ago(30));
+  const gameLines = await gameStatsLines().catch(() => [] as string[]);
 
   const date = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 
@@ -148,6 +150,8 @@ export async function buildStats(): Promise<string> {
     ...wishLines,
     ``,
     ...nudgeLines,
+    ``,
+    ...gameLines,
     ``,
     `💛 <b>Донаты звёздами</b>: ${donations.length} шт., всего ⭐ ${starsTotal} (за 30 дней ⭐ ${stars30})`,
     ``,
