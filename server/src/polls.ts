@@ -9,6 +9,7 @@ import { POLL_TEXTS as T } from './texts';
 
 /**
  * Опрос автора: один на всех, подпись в шапке карты зовёт голосовать, в шторке — варианты и итоги.
+ * Отметить можно несколько вариантов; процент — доля проголосовавших, выбравших вариант (в сумме бывает больше 100).
  *
  * Боту (только автор):
  *   /poll Вопрос | 🐾 Вариант = коротко | ☕ Вариант | Свой вариант   — новый опрос (прошлый закрывается)
@@ -41,14 +42,15 @@ const Poll = model(
   )
 );
 
-// Один голос на человека: переголосовать можно, пока опрос идёт
+// Один голос на человека (с одним или несколькими вариантами): переголосовать можно, пока опрос идёт
 const PollVote = model(
   'PollVote',
   new Schema(
     {
       pollId: { type: Schema.Types.ObjectId, required: true, index: true },
       telegramId: { type: Number, required: true },
-      option: { type: String, required: true }, // ключ варианта или 'custom'
+      options: { type: [String], default: [] }, // ключи вариантов и/или 'custom'
+      option: { type: String, default: '' },    // старые голоса: один вариант
       custom: { type: String, default: '', maxlength: 200 }
     },
     { timestamps: true }
@@ -69,11 +71,15 @@ const parseOption = (raw: string, i: number): PollOption => {
   return { key: `o${i + 1}`, emoji: m ? m[1] : '', label, short: short.charAt(0).toLowerCase() + short.slice(1) };
 };
 
+// Варианты голоса: новые — списком, старые — одним полем
+const optionsOf = (v: any): string[] => (v?.options?.length ? v.options : v?.option ? [v.option] : []);
+
+// map — сколько человек отметили вариант, total — сколько человек проголосовало
 async function counts(pollId: Types.ObjectId) {
-  const rows: { _id: string; n: number }[] = await PollVote.aggregate([{ $match: { pollId } }, { $group: { _id: '$option', n: { $sum: 1 } } }]);
-  const map = new Map(rows.map((r) => [r._id, r.n]));
-  const total = rows.reduce((s, r) => s + r.n, 0);
-  return { map, total };
+  const votes = await PollVote.find({ pollId }, { options: 1, option: 1 }).lean();
+  const map = new Map<string, number>();
+  for (const v of votes) for (const k of new Set(optionsOf(v))) map.set(k, (map.get(k) || 0) + 1);
+  return { map, total: votes.length };
 }
 
 // Для приложения: итоги видны только после своего голоса, чтобы чужой выбор не подталкивал
@@ -90,7 +96,7 @@ async function pollForUser(telegramId: number) {
     options: poll.options,
     allowCustom: Boolean(poll.allowCustom),
     total,
-    myVote: mine ? { option: mine.option, custom: mine.custom || '' } : null,
+    myVote: mine ? { options: optionsOf(mine), custom: mine.custom || '' } : null,
     results: mine ? keys.map((key, i) => ({ key, percent: percents[i] })) : null
   };
 }
@@ -106,17 +112,21 @@ export function setupPollRoutes(app: Express) {
 
   app.post('/api/poll/vote', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { pollId, option } = req.body || {};
+      // { options: ['o1', 'custom'], custom } — несколько вариантов; { option } — старое приложение, один
+      const { pollId } = req.body || {};
+      const raw = Array.isArray(req.body?.options) ? req.body.options : [req.body?.option];
+      const options = [...new Set(raw.map(String))].slice(0, MAX_OPTIONS + 1) as string[];
       const custom = String(req.body?.custom || '').trim().slice(0, POLL_CUSTOM_MAX);
       if (!Types.ObjectId.isValid(String(pollId))) return res.status(400).json({ error: T.closed });
       const poll: any = await Poll.findOne({ _id: pollId, active: true }).lean();
       if (!poll) return res.status(410).json({ error: T.closed });
-      const isCustom = option === CUSTOM;
-      if (isCustom ? !poll.allowCustom || !custom : !poll.options.some((o: PollOption) => o.key === option)) {
-        return res.status(400).json({ error: isCustom ? T.emptyCustom : T.badOption });
+      const hasCustom = options.includes(CUSTOM);
+      if (hasCustom && (!poll.allowCustom || !custom)) return res.status(400).json({ error: T.emptyCustom });
+      if (!options.length || options.some((k) => k !== CUSTOM && !poll.options.some((o: PollOption) => o.key === k))) {
+        return res.status(400).json({ error: T.badOption });
       }
       const telegramId = req.telegramUser!.id;
-      await PollVote.updateOne({ pollId: poll._id, telegramId }, { $set: { option, custom: isCustom ? custom : '' } }, { upsert: true });
+      await PollVote.updateOne({ pollId: poll._id, telegramId }, { $set: { options, option: '', custom: hasCustom ? custom : '' } }, { upsert: true });
       res.json(await pollForUser(telegramId));
     } catch {
       res.status(500).json({ error: T.voteError });
@@ -134,14 +144,14 @@ async function resultsText(poll: any) {
   return `🗳 <b>${escapeHtml(poll.question)}</b>\n\n${lines.join('\n')}\n\n${T.total(total)}`;
 }
 
-// Таблица без имён: вариант, своя идея, когда
+// Таблица без имён: варианты, своя идея, когда
 async function sendCsv(chatId: number, poll: any) {
   const votes = await PollVote.find({ pollId: poll._id }).sort({ createdAt: 1 }).lean();
   const label = new Map<string, string>(poll.options.map((o: PollOption) => [o.key, o.label]));
   label.set(CUSTOM, 'Свой вариант');
   const rows = [
-    ['Вариант', 'Своя идея', 'Когда'],
-    ...votes.map((v: any) => [label.get(v.option) || v.option, v.custom || '', new Date(v.updatedAt).toLocaleString('ru-RU', { timeZone: 'Europe/Minsk' })])
+    ['Варианты', 'Своя идея', 'Когда'],
+    ...votes.map((v: any) => [optionsOf(v).map((k) => label.get(k) || k).join('; '), v.custom || '', new Date(v.updatedAt).toLocaleString('ru-RU', { timeZone: 'Europe/Minsk' })])
   ];
   const form = new FormData();
   form.append('chat_id', String(chatId));
