@@ -110,6 +110,11 @@ export async function buildStats(): Promise<string> {
   // «Не указали пол»: сами выбрали «не указывать» или ещё не ответили (не спрашивали / «Позже»)
   const genderSkipped = await User.countDocuments({ ...real, genderConfirmed: true, gender: { $nin: ['male', 'female'] } });
   const [canMessage, blocked] = await Promise.all([User.countDocuments({ ...real, canMessage: true }), User.countDocuments({ ...real, canMessage: false })]);
+  // Из тех, кто заходил за неделю, бот не может писать: остановили бота или не разрешали. Им — плашка в приложении
+  const [activeBlocked, activeNeverAllowed] = await Promise.all([
+    User.countDocuments({ ...real, lastActiveAt: { $gte: ago(7) }, canMessage: false }),
+    User.countDocuments({ ...real, lastActiveAt: { $gte: ago(7) }, canMessage: { $exists: false } })
+  ]);
   const wishLines = await wishStatsLines(ago(30));
   const nudgeLines = await nudgeStatsLines(ago(30));
 
@@ -126,6 +131,7 @@ export async function buildStats(): Promise<string> {
     `🧭 Гиды ${guides} · 🧳 туристы ${tourists} · ⚡ «Хочу сейчас» ${availableNow}`,
     `🙈 В невидимке ${invisible} · 💌 пришли по приглашениям ${invitedJoined}`,
     BOT_ACCESS_TEXTS.statsLine(canMessage, usersTotal, blocked),
+    BOT_ACCESS_TEXTS.statsActiveLine(activeBlocked, activeNeverAllowed, active7),
     USERNAME_TEXTS.statsLine(noUsername, usersTotal, usernameNudged, usernameFixed),
     ``,
     `👋 <b>Знакомства</b>`,

@@ -354,7 +354,10 @@ export const EVENT_MESSAGE_TEXTS = {
 export const BOT_ACCESS_TEXTS = {
   welcome:
     '🔔 Готово! Теперь сюда будут приходить напоминания о сходках, совпадения по «Хочу сходить» и приветы 👋. Если надоест, можно выключить подборки в анкете.',
-  statsLine: (can: number, total: number, blocked: number) => `🔔 Бот может писать: ${can} из ${total}${blocked ? ` · не доходит: ${blocked}` : ''}`
+  statsLine: (can: number, total: number, blocked: number) => `🔔 Бот может писать: ${can} из ${total}${blocked ? ` · не доходит: ${blocked}` : ''}`,
+  // Те, кто пользуется приложением, но пропускает совпадения и напоминания: их и стоит вернуть плашкой
+  statsActiveLine: (blocked: number, never: number, active: number) =>
+    `🔕 Заходили за 7 дней, но бот не пишет: ${blocked + never} из ${active} (остановили ${blocked} · не разрешали ${never})`
 };
 
 // Нет @username в Telegram: написать не получится — просим завести

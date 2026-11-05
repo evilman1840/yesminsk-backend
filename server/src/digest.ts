@@ -15,6 +15,7 @@ import { audienceError } from './eventAudience';
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 const MINSK = 3 * HOUR; // Минск: UTC+3 круглый год
+const DIGEST_INACTIVE_DAYS = 21; // не заходил дольше — подборки не шлём, вернётся — снова начнут приходить
 const MAX_EVENTS = 5;
 
 // Полночь сегодняшнего дня по Минску (в UTC) и день недели (0 — воскресенье)
@@ -167,10 +168,14 @@ async function sendDueDigests() {
     for (const freq of ['daily', 'weekend', 'weekly'] as DigestFrequency[]) {
       const slot = currentSlot(freq, now);
       if (!slot) continue;
-      // «На выходные» — и для тех, кто ещё не выбирал (так по умолчанию)
+      // «На выходные» — и для тех, кто ещё не выбирал (так по умолчанию).
+      // Не пишем тем, до кого бот не доходит, и тем, кто давно не заходил: подборка им не нужна,
+      // а каждая такая рассылка — повод остановить бота (29.10 после массовой рассылки отвалилось 433 человека)
       const users = await User.find({
         hasAgreedToRules: true,
         isBanned: { $ne: true },
+        canMessage: { $ne: false },
+        lastActiveAt: { $gte: new Date(now - DIGEST_INACTIVE_DAYS * DAY) },
         ...(freq === 'weekend' ? { $or: [{ digest: 'weekend' }, { digest: { $exists: false } }] } : { digest: freq }),
         $and: [{ $or: [{ lastDigestAt: { $exists: false } }, { lastDigestAt: { $lt: new Date(slot.start) } }] }]
       })
