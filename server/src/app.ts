@@ -15,6 +15,7 @@ import { Event, EventCategory, IEvent, EVENT_TAGS } from './models/Event';
 import { Place } from './models/Place';
 import { EventTemplate } from './models/EventTemplate';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
+import { metersBetween, realPoint, shownPoint } from './utils/userLocation';
 import { Reaction, ReactionType } from './models/Reaction';
 import { sendLike } from './social';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
@@ -288,17 +289,12 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     }
 
     const userObj: any = user.toObject ? user.toObject() : { ...user };
-    const exact = user.locationExact?.coordinates;
-    const fuzzy = user.locationFuzzy?.coordinates;
-    if (exact && exact.length === 2) {
-      userObj.coordinates = [exact[1], exact[0]]; // [lat, lng]
-    } else if (fuzzy && fuzzy.length === 2) {
-      userObj.coordinates = [fuzzy[1], fuzzy[0]];
-    } else {
-      userObj.coordinates = [53.9045, 27.5615];
-    }
+    // Точку не ставил — центр района из анкеты, а не центр Минска по умолчанию
+    const real = realPoint(user);
+    userObj.coordinates = real ? [real[1], real[0]] : [53.9045, 27.5615]; // [lat, lng]
     // Где тебя видят другие: смещённая метка или та, что поставил сам
-    if (fuzzy && fuzzy.length === 2) userObj.shownCoordinates = [fuzzy[1], fuzzy[0]];
+    const shown = shownPoint(user);
+    if (shown) userObj.shownCoordinates = [shown[1], shown[0]];
     userObj.locationManual = Boolean(user.locationManual);
     userObj.photos = (user.photos || []).map(photoUrl); // ещё фото в анкете — адресами
     userObj.avatarUrl = avatarFor(user.telegramId, user.avatarUrl);
@@ -647,6 +643,37 @@ function nearbyQuery(tgUser: { id: number }, currentUser: any, goal: any) {
   return query;
 }
 
+/**
+ * Фильтры «Людей» и карты — на сервере, до отбора лучших. Раньше приложение фильтровало уже присланные 300:
+ * «50+» находил 4 человека из 50, «мужчины 26–35» — 49 из 482.
+ * Параметры те же, что в шторке фильтров: gender, ages (через запятую), maxKm, who, available, recent, goesWith, myPrefs
+ */
+const AGE_BUCKETS: Record<string, [number, number]> = { '18-25': [0, 25], '26-35': [26, 35], '36-50': [36, 50], '50+': [51, 200] };
+function peopleFilters(q: any, me: any): { and: any[]; maxKm: number } {
+  const and: any[] = [];
+  const str = (v: any) => (typeof v === 'string' ? v : '');
+  if (['male', 'female'].includes(str(q.gender))) and.push({ gender: q.gender });
+  const ages = str(q.ages).split(',').filter((a) => AGE_BUCKETS[a]);
+  if (ages.length) and.push({ $or: ages.map((a) => ({ age: { $gte: AGE_BUCKETS[a][0], $lte: AGE_BUCKETS[a][1] } })) });
+  if (q.who === 'locals') and.push({ isTourist: { $ne: true } });
+  if (q.who === 'tourists') and.push({ isTourist: true });
+  if (q.available === '1') and.push({ availableUntil: { $gt: new Date() } });
+  if (q.recent === '1') and.push({ lastActiveAt: { $gte: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) } });
+  const goesWith = str(q.goesWith).split(',').filter((g) => (GOES_WITH as string[]).includes(g));
+  if (goesWith.length) and.push({ goesWith: { $in: goesWith } });
+  // «С кем хочу общаться» из моей анкеты (возраст 18–45 раньше сохранялся сам — не считаем его выбором)
+  if (q.myPrefs === '1' && me) {
+    if (['male', 'female'].includes(me.preferredGender)) and.push({ gender: me.preferredGender });
+    const r = me.preferredAgeRange;
+    if (r && !(r.min === 18 && r.max === 45) && !(r.min === 18 && r.max === 99)) and.push({ age: { $gte: r.min, $lte: r.max } });
+  }
+  const maxKm = [1, 3, 10].includes(Number(q.maxKm)) ? Number(q.maxKm) : 0;
+  return { and, maxKm };
+}
+
+// Сколько анкет отдаём за раз: карта не перегружается, «Люди» догружают следующие, когда долистали
+const PEOPLE_PAGE = 300;
+
 // Только то, что нужно ленте (formatPublicUser и ранжированию). Без skipped/hidden*/blockedUsers:
 // у активных там сотни записей, и 3000 полных анкет на запрос переполняли память сервера (OOM 01.11)
 const FEED_USER_FIELDS = {
@@ -666,8 +693,18 @@ async function appUsersCount() {
 app.get('/api/users/nearby-count', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
-    const currentUser = await User.findOne({ telegramId: tgUser.id }, { blockedUsers: 1, skipped: 1, gender: 1, age: 1 }).lean();
-    res.json({ total: await User.countDocuments(nearbyQuery(tgUser, currentUser, typeof req.query.goal === 'string' ? req.query.goal : undefined)), all: await appUsersCount() });
+    const currentUser = await User.findOne(
+      { telegramId: tgUser.id },
+      { blockedUsers: 1, skipped: 1, gender: 1, age: 1, preferredGender: 1, preferredAgeRange: 1, locationExact: 1, areaName: 1 }
+    ).lean();
+    const query = nearbyQuery(tgUser, currentUser, typeof req.query.goal === 'string' ? req.query.goal : undefined);
+    const { and, maxKm } = peopleFilters(req.query, currentUser);
+    if (and.length) query.$and = [...(query.$and || []), ...and];
+    // «До N км» — по настоящей точке (или району), её в запросе не выразить: считаем по лёгким записям
+    const total = maxKm
+      ? (await User.find(query, { telegramId: 1, locationExact: 1, locationFuzzy: 1, areaName: 1 }).lean()).filter((u) => (metersBetween(currentUser, u) ?? Infinity) <= maxKm * 1000).length
+      : await User.countDocuments(query);
+    res.json({ total, all: await appUsersCount() });
   } catch (err: any) {
     console.warn('⚠️ /api/users/nearby-count:', err?.message || err);
     res.status(500).json({ error: 'Ошибка подсчёта' });
@@ -679,10 +716,14 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
     const tgUser = req.telegramUser!;
     const currentUser = await User.findOne({ telegramId: tgUser.id });
     const query = nearbyQuery(tgUser, currentUser, typeof req.query.goal === 'string' ? req.query.goal : undefined);
+    const { and, maxKm } = peopleFilters(req.query, currentUser);
+    if (and.length) query.$and = [...(query.$and || []), ...and];
+    const offset = Math.max(0, Math.min(3000, Math.floor(Number(req.query.offset)) || 0));
 
-    // Берём широко (все, кто подходит, по свежести), считаем очки и отдаём 300 лучших: карта не перегружается.
-    // Внутри — сначала новые для меня лица, виденные за 3 дня в конце
-    const candidates = await User.find(query, FEED_USER_FIELDS).sort({ lastActiveAt: -1 }).limit(3000).lean();
+    // Берём широко (все, кто подходит под фильтры, по свежести), считаем очки и отдаём страницу из 300 лучших.
+    // Внутри страницы — сначала новые для меня лица, виденные за 3 дня в конце
+    let candidates = await User.find(query, FEED_USER_FIELDS).sort({ lastActiveAt: -1 }).limit(3000).lean();
+    if (maxKm) candidates = candidates.filter((u) => (metersBetween(currentUser, u) ?? Infinity) <= maxKm * 1000);
     const ids = candidates.map((u) => u.telegramId);
     const [flags, ctx] = await Promise.all([getReactionFlags(tgUser.id, ids), currentUser ? buildRankContext(currentUser, ids) : null]);
     const users = ctx
@@ -690,10 +731,10 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
           candidates
             .map((u) => ({ u, score: scoreUser(u, ctx, flags.get(u.telegramId)) }))
             .sort((a, b) => b.score - a.score)
-            .slice(0, 300),
+            .slice(offset, offset + PEOPLE_PAGE),
           ctx
         ).map((x) => x.u)
-      : candidates.slice(0, 300);
+      : candidates.slice(offset, offset + PEOPLE_PAGE);
 
     res.json(users.map((u) => ({ ...formatPublicUser(u, currentUser, flags.get(u.telegramId)), ...(ctx ? { why: whyShown(u.telegramId, ctx), wishKinds: sharedKinds(u.telegramId, ctx) } : {}) })));
   } catch (err: any) {
@@ -841,13 +882,9 @@ async function getReactionFlags(myId: number, otherIds: number[]): Promise<Map<n
 
 // Публичная анкета. @username отдаём только при взаимной симпатии (мэтче)
 function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
-  const fuzzyCoords = u.locationFuzzy?.coordinates || [27.5615, 53.9045];
-  let distanceMeters = 350;
-
-  if (currentUser?.locationExact?.coordinates) {
-    const [myLng, myLat] = currentUser.locationExact.coordinates;
-    distanceMeters = calculateDistanceMeters(myLat, myLng, fuzzyCoords[1], fuzzyCoords[0]);
-  }
+  // Не ставил точку сам — метка в его районе из анкеты, а не в центре Минска по умолчанию
+  const fuzzyCoords = shownPoint(u) || [27.5615, 53.9045];
+  const distanceMeters = metersBetween(currentUser, u) ?? 350;
 
   const isMatch = Boolean(flags?.isMatch);
 

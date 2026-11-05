@@ -4,6 +4,7 @@ import { Reaction } from './models/Reaction';
 import { EventTemplate } from './models/EventTemplate';
 import { PeopleSeen } from './models/PeopleSeen';
 import { calculateDistanceMeters } from './utils/geoUtils';
+import { realPoint, shownPoint } from './utils/userLocation';
 import { PEOPLE_TEXTS as T } from './texts';
 import { CUSTOM_WISH } from './wishes';
 
@@ -47,8 +48,8 @@ export function scoreUser(u: any, ctx: RankContext, flags?: { iLiked: boolean; l
   if (plans.length) s += 8 + (plans.length - 1) * 2;
   if (ctx.sameEvent.has(u.telegramId)) s += 5;
 
-  const their = u.locationFuzzy?.coordinates || u.locationExact?.coordinates;
-  if (ctx.myCoords && their?.length === 2) {
+  const their = shownPoint(u);
+  if (ctx.myCoords && their) {
     const km = calculateDistanceMeters(ctx.myCoords[1], ctx.myCoords[0], their[1], their[0]) / 1000;
     s += 6 * Math.exp(-km / 4); // рядом ~6, 3 км ~3, 10 км ~0,5
   }
@@ -155,14 +156,14 @@ export async function buildRankContext(me: any, candidateIds: number[]): Promise
     seen.set(r.userId, { count: r.count, at: new Date(r.lastSeenAt).getTime() });
   }
 
-  const coords = me.locationExact?.coordinates || me.locationFuzzy?.coordinates;
+  const coords = realPoint(me);
   const myGoals = new Set<string>((me.goals?.length ? me.goals : me.goal ? [me.goal] : []).filter((g: string) => g !== 'other'));
   const dayKey = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10); // день по Минску
 
   return {
     viewerId,
     myGoals,
-    myCoords: coords?.length === 2 ? [coords[0], coords[1]] : null,
+    myCoords: coords,
     myGoesWith: me.goesWith,
     myAge: Number(me.age) || undefined,
     sharedPlans,
