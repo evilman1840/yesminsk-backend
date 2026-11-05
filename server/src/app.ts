@@ -1199,7 +1199,17 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
     });
     ranked.sort((a, b) => b.score - a.score || a.ev.dateTime.getTime() - b.ev.dateTime.getTime());
 
-    res.json(ranked.map(({ ev, distanceMeters }) => ({ ...formatEvent(ev, tgUser.id), ...(distanceMeters !== null ? { distanceMeters } : {}) })));
+    // Почему записаться нельзя (модератор видит и сходки не для него) — приложение покажет вместо «Пойду!»
+    const notForMe = (ev: IEvent) =>
+      ev.creator.telegramId === tgUser.id
+        ? null
+        : audienceError(ev, me) || ((ev.tags || []).includes('empaths') && !me?.isEmpath ? 'Эта сходка только для эмпатов' : null);
+    res.json(
+      ranked.map(({ ev, distanceMeters }) => {
+        const reason = notForMe(ev);
+        return { ...formatEvent(ev, tgUser.id), ...(distanceMeters !== null ? { distanceMeters } : {}), ...(reason ? { notForMe: reason } : {}) };
+      })
+    );
   } catch (err: any) {
     console.warn('⚠️ /api/events:', err?.message || err);
     res.status(500).json({ error: 'Ошибка загрузки событий' });
