@@ -44,6 +44,7 @@ import { setupAccountRoutes } from './account';
 import { setupPlaceSuggestionRoutes, backfillPlaceAuthors } from './placeSuggestions';
 import { runPlaceImports } from './placesImport';
 import { setupAfishaRoutes, startAfishaLoop } from './afisha';
+import { setupGameRoutes } from './games';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote, rsvpButtons } from './eventNotify';
 
 dotenv.config();
@@ -2092,6 +2093,9 @@ setupProposalRoutes(app);
 
 // Афиша города из Telegram-каналов
 setupAfishaRoutes(app);
+
+// Мини-игры: «Пять в ряд» со случайным игроком или знакомым
+setupGameRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);
