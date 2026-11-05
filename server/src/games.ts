@@ -33,11 +33,11 @@ const WIN = 5;
 const MIN = 60 * 1000;
 const DAY = 24 * 60 * MIN;
 const SEARCH_STALE_MS = 20 * 1000;      // ищущий не спрашивал о партии 20 секунд — закрыл приложение
-const LIVE_LEFT_MS = 45 * 1000;         // случайный соперник пропал на 45 секунд — ушёл, победа за тобой
+const LIVE_LEFT_MS = 45 * 1000;         // соперник пропал на 45 секунд (закрыл приложение, пропала связь) — ушёл, победа за тобой
+const AWAY_MS = 15 * 1000;              // свернул приложение дольше чем на 15 секунд — тоже ушёл
+const HOST_GRACE_MS = 2 * MIN;          // знакомый принял приглашение, а позвавший уже не в приложении: ждём его 2 минуты
 const ONLINE_MS = 35 * 1000;            // «на месте» для значка в партии
-const INVITE_EXPIRE_MS = 3 * DAY;       // партия со знакомым: 3 дня без ходов — закрываем
 const INVITE_WAIT_MS = DAY;             // приглашение никто не принял за сутки — закрываем
-const NOTIFY_AWAY_MS = 30 * 1000;       // «Твой ход» от бота — если человек не заглядывал в партию 30 секунд
 const REMATCH_MS = MIN;                 // «Ещё партию» ждём минуту
 const LONG_POLL_MS = 25 * 1000;         // сколько сервер держит вопрос «что нового»
 const SEARCH_POLL_MS = 6 * 1000;        // в поиске — короче: заодно ещё раз пробуем подобрать пару
@@ -76,7 +76,8 @@ interface Player {
   nick: string;      // для инкогнито
   nickEmoji: string;
   seenAt: Date;
-  notifiedAt?: Date;
+  awayAt?: Date;     // свернул приложение
+  graceUntil?: Date; // до этого времени не считаем ушедшим
   rematch?: boolean;
 }
 
@@ -89,7 +90,8 @@ const PlayerSchema = new Schema(
     nick: { type: String, default: '' },
     nickEmoji: { type: String, default: '' },
     seenAt: { type: Date, default: Date.now },
-    notifiedAt: { type: Date },
+    awayAt: { type: Date },
+    graceUntil: { type: Date },
     rematch: { type: Boolean }
   },
   { _id: false }
@@ -288,7 +290,8 @@ function view(m: any, telegramId: number) {
         avatar: p.incognito ? '' : p.avatar,
         emoji: p.incognito ? p.nickEmoji : '',
         rematch: Boolean(p.rematch),
-        online: Date.now() - new Date(p.seenAt).getTime() < ONLINE_MS
+        online: !p.awayAt && Date.now() - new Date(p.seenAt).getTime() < ONLINE_MS,
+        away: Boolean(p.awayAt)
       };
     }),
     updatedAt: m.updatedAt
@@ -324,6 +327,13 @@ async function update(filter: any, set: any, extra: any = {}): Promise<any> {
   return next;
 }
 
+// С какого момента игрок считается ушедшим из партии: закрыл приложение или свернул его надолго
+function leftAt(p: any): number {
+  const seen = new Date(p.seenAt).getTime() + LIVE_LEFT_MS;
+  const away = p.awayAt ? new Date(p.awayAt).getTime() + AWAY_MS : Infinity;
+  return Math.max(p.graceUntil ? new Date(p.graceUntil).getTime() : 0, Math.min(seen, away));
+}
+
 // Партия устарела: соперник ушёл, приглашение никто не принял и т.п. Закрываем при чтении
 async function settle(m: any): Promise<any> {
   const now = Date.now();
@@ -332,12 +342,13 @@ async function settle(m: any): Promise<any> {
     set = { status: 'cancelled' };
   } else if (m.status === 'waiting' && now - new Date(m.createdAt).getTime() > INVITE_WAIT_MS) {
     set = { status: 'cancelled' };
-  } else if (m.status === 'active' && m.mode === 'random') {
-    const gone = m.players.findIndex((p: any) => now - new Date(p.seenAt).getTime() > LIVE_LEFT_MS);
-    if (gone >= 0) set = { status: 'finished', winner: 1 - gone, reason: 'left', finishedAt: new Date() };
-  } else if (m.status === 'active' && m.mode === 'invite') {
-    const last = new Date(m.lastMoveAt || m.updatedAt).getTime();
-    if (now - last > INVITE_EXPIRE_MS) set = { status: 'finished', winner: m.moves ? 1 - m.turn : -1, reason: 'expired', finishedAt: new Date() };
+  } else if (m.status === 'active') {
+    // Ушли оба (например, связь пропала у обоих) — победа тому, кто продержался дольше
+    const gone = m.players
+      .map((p: any, i: number) => ({ i, at: leftAt(p) }))
+      .filter((g: any) => now > g.at)
+      .sort((a: any, b: any) => a.at - b.at);
+    if (gone.length) set = { status: 'finished', winner: 1 - gone[0].i, reason: 'left', finishedAt: new Date() };
   }
   if (!set) return m;
   return (await update({ _id: m._id, status: m.status }, set)) || (await GameMatch.findById(m._id).lean());
@@ -393,20 +404,6 @@ async function tryPair(mine: any): Promise<any | null> {
   return null;
 }
 
-// «Твой ход» от бота: партия со знакомым, человек давно не заглядывал
-async function notifyTurn(m: any) {
-  if (m.mode !== 'invite' || m.status !== 'active') return;
-  const p = m.players[m.turn];
-  const other = m.players[1 - m.turn];
-  if (!p || Date.now() - new Date(p.seenAt).getTime() < NOTIFY_AWAY_MS) return;
-  if (p.notifiedAt && new Date(p.notifiedAt).getTime() > new Date(p.seenAt).getTime()) return; // уже писали, человек ещё не заходил
-  const u: any = await User.findOne({ telegramId: p.telegramId }, { canMessage: 1 }).lean();
-  if (u?.canMessage === false) return;
-  await GameMatch.updateOne({ _id: m._id }, { $set: { [`players.${m.turn}.notifiedAt`]: new Date() } }, { timestamps: false });
-  const name = other.incognito ? `${other.nickEmoji} ${other.nick}` : other.firstName;
-  sendWithButtons(p.telegramId, `🎲 Твой ход в «Пять в ряд»! <b>${escapeHtml(name)}</b> ждёт`, [[{ text: '🎲 Сходить', path: `?game=${m._id}` }]]).catch(() => {});
-}
-
 const inviteCode = () => Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
 
 // Пока игры проверяет автор: искать соперника и звать знакомых могут только админы.
@@ -415,8 +412,12 @@ const canStart = (telegramId: number) => process.env.GAMES_OPEN === '1' || isAdm
 const CLOSED = 'Игры скоро появятся 🎲';
 
 // «Я на месте» и сама партия — одним запросом к базе
-const touch = (id: string, telegramId: number) =>
-  GameMatch.findOneAndUpdate({ _id: id, 'players.telegramId': telegramId }, { $set: { 'players.$.seenAt': new Date() } }, { new: true, timestamps: false }).lean();
+// back — человек снова смотрит на партию: снимаем «свернул», сопернику об этом сообщаем
+async function touch(id: string, telegramId: number, back = true): Promise<any> {
+  const m: any = await GameMatch.findOneAndUpdate({ _id: id, 'players.telegramId': telegramId }, { $set: { 'players.$.seenAt': new Date() } }, { new: true, timestamps: false }).lean();
+  if (!back || !m || m.status !== 'active' || !m.players.find((p: any) => p.telegramId === telegramId)?.awayAt) return m;
+  return (await update({ _id: id, status: 'active', 'players.telegramId': telegramId }, { 'players.$.seenAt': new Date() }, { $unset: { 'players.$.awayAt': 1 } })) || m;
+}
 
 // ---------- Статистика ----------
 
@@ -538,10 +539,20 @@ export function setupGameRoutes(app: Express) {
       const meUser: any = await User.findOne({ telegramId: myId }, { blockedUsers: 1 }).lean();
       if (host?.blockedUsers?.includes(myId) || meUser?.blockedUsers?.includes(m.players[0].telegramId)) return res.status(404).json({ error: 'Приглашение не найдено' });
       const guest = await makePlayer(myId, Boolean(req.body?.incognito), m.players[0].nick);
-      const players = Math.random() < 0.5 ? [m.players[0], guest] : [guest, m.players[0]];
+      // Позвавший, скорее всего, уже в чате с тобой: ждём его пару минут и один раз зовём ботом
+      const hostP: any = { ...m.players[0], awayAt: undefined };
+      const hostHere = Date.now() - new Date(hostP.seenAt).getTime() < ONLINE_MS && !m.players[0].awayAt;
+      if (!hostHere) hostP.graceUntil = new Date(Date.now() + HOST_GRACE_MS);
+      const players = Math.random() < 0.5 ? [hostP, guest] : [guest, hostP];
       const started: any = await update({ _id: m._id, status: 'waiting' }, { status: 'active', players, lastMoveAt: new Date() });
       if (!started) return res.status(410).json({ error: 'Эту партию уже начали' });
-      notifyTurn(started).catch(() => {}); // хозяин ходит первым и ушёл из приложения — бот позовёт
+      if (!hostHere) {
+        const u: any = await User.findOne({ telegramId: hostP.telegramId }, { canMessage: 1 }).lean();
+        const name = guest.incognito ? `${guest.nickEmoji} ${guest.nick}` : guest.firstName;
+        if (u?.canMessage !== false) {
+          sendWithButtons(hostP.telegramId, `🎲 <b>${escapeHtml(name)}</b> принял приглашение в «Пять в ряд» и ждёт тебя. Заходи в течение пары минут`, [[{ text: '🎲 Играть', path: `?game=${started._id}` }]]).catch(() => {});
+        }
+      }
       res.json(view(started, myId));
     } catch (err: any) {
       console.warn('⚠️ Игры, вход по приглашению:', err?.message || err);
@@ -580,8 +591,8 @@ export function setupGameRoutes(app: Express) {
       const myId = req.telegramUser!.id;
       const id = String(req.params.id);
       if (!validId(req)) return res.sendStatus(404);
-      const load = async () => {
-        let m: any = await touch(id, myId);
+      const load = async (back = true) => {
+        let m: any = await touch(id, myId, back);
         if (!m) return null;
         m = await settle(m);
         if (m.status === 'searching') m = (await tryPair(m)) || m;
@@ -598,9 +609,15 @@ export function setupGameRoutes(app: Express) {
       const sameGame = String(m._id) === id;
       const waitable = ['searching', 'waiting', 'active', 'finished'].includes(m.status) && !m.nextId;
       if (sub && sameGame && waitable && (m.v || 0) <= since) {
-        const stillThere = await sub.wait(m.status === 'searching' ? SEARCH_POLL_MS : LONG_POLL_MS);
+        let wait = m.status === 'searching' ? SEARCH_POLL_MS : LONG_POLL_MS;
+        // Соперник свернул приложение или пропал — проснуться к моменту, когда партию пора закрыть
+        if (m.status === 'active') {
+          const soonest = Math.min(...m.players.filter((p: any) => p.telegramId !== myId).map(leftAt));
+          wait = Math.max(1000, Math.min(wait, soonest - Date.now() + 500));
+        }
+        const stillThere = await sub.wait(wait);
         if (!stillThere) return; // человек закрыл приложение — отвечать некому
-        m = (await load()) || m;
+        m = (await load(false)) || m; // пока ждали, человек мог свернуть приложение: «вернулся» не ставим
       } else sub?.cancel();
       res.json(view(m, myId));
     } catch (err: any) {
@@ -629,7 +646,6 @@ export function setupGameRoutes(app: Express) {
       // Защита от двойного нажатия: ход засчитываем, только если доска не поменялась
       const next: any = await update({ _id: m._id, status: 'active', board: m.board, turn: i }, set, { $inc: { moves: 1 } });
       if (!next) return res.status(409).json({ error: 'Ход уже сделан', game: view((await GameMatch.findById(m._id).lean()) as any, myId) });
-      notifyTurn(next).catch(() => {});
       res.json(view(next, myId));
     } catch (err: any) {
       console.warn('⚠️ Игры, ход:', err?.message || err);
@@ -653,7 +669,19 @@ export function setupGameRoutes(app: Express) {
     }
   });
 
-  // Сдаться / отменить поиск / отменить приглашение
+  // Свернул приложение: через 15 секунд партия закроется, если не вернётся
+  app.post('/api/games/:id/away', auth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const myId = req.telegramUser!.id;
+      if (!validId(req)) return res.sendStatus(404);
+      await update({ _id: String(req.params.id), status: 'active', players: { $elemMatch: { telegramId: myId, awayAt: { $exists: false } } } }, { 'players.$.awayAt': new Date() });
+      res.json({ ok: true });
+    } catch {
+      res.status(500).json({ error: 'Не получилось' });
+    }
+  });
+
+  // Завершить игру / отменить поиск / отменить приглашение
   app.post('/api/games/:id/leave', auth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const myId = req.telegramUser!.id;
@@ -697,24 +725,16 @@ export function setupGameRoutes(app: Express) {
       const i = meIndex(m, myId);
       if (m.status !== 'finished') return res.status(409).json({ error: 'Партия ещё идёт' });
       if (m.nextId) return res.json(view(m, myId));
-      if (m.mode === 'random' && Date.now() - new Date(m.finishedAt || m.updatedAt).getTime() > REMATCH_MS) {
+      if (m.reason === 'left' || m.reason === 'resign' || Date.now() - new Date(m.finishedAt || m.updatedAt).getTime() > REMATCH_MS) {
         return res.status(410).json({ error: 'Соперник уже ушёл. Найдём другого?' });
       }
       m = await update({ _id: m._id }, { [`players.${i}.rematch`]: true, [`players.${i}.seenAt`]: new Date() });
       if (m.players.every((p: any) => p.rematch) && !m.nextId) {
-        const players = [m.players[1], m.players[0]].map((p: any) => ({ ...p, rematch: undefined, notifiedAt: undefined, seenAt: new Date() }));
+        const players = [m.players[1], m.players[0]].map((p: any) => ({ ...p, rematch: undefined, awayAt: undefined, graceUntil: undefined, seenAt: new Date() }));
         const created: any = await GameMatch.create({ game: m.game, mode: m.mode, status: 'active', players, lastMoveAt: new Date(), expireAt: expireAt('active') });
         const linked = await update({ _id: m._id, nextId: { $exists: false } }, { nextId: created._id });
         if (!linked) await GameMatch.deleteOne({ _id: created._id }); // второй успел первым
-        else notifyTurn(created.toObject()).catch(() => {});
         m = await GameMatch.findById(m._id).lean();
-      } else if (m.mode === 'invite') {
-        // Знакомый мог уже закрыть приложение — бот позовёт на реванш
-        const other = m.players[1 - i];
-        const name = m.players[i].incognito ? `${m.players[i].nickEmoji} ${m.players[i].nick}` : m.players[i].firstName;
-        if (Date.now() - new Date(other.seenAt).getTime() > NOTIFY_AWAY_MS) {
-          sendWithButtons(other.telegramId, `🎲 <b>${escapeHtml(name)}</b> зовёт сыграть ещё партию в «Пять в ряд»`, [[{ text: '🎲 Сыграть', path: `?game=${m._id}` }]]).catch(() => {});
-        }
       }
       res.json(view(m, myId));
     } catch (err: any) {
