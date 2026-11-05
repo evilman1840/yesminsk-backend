@@ -300,6 +300,7 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     userObj.photos = (user.photos || []).map(photoUrl); // ещё фото в анкете — адресами
     userObj.avatarUrl = avatarFor(user.telegramId, user.avatarUrl);
     userObj.isAdmin = isAdmin(user.telegramId); // модератор: может удалять любые сходки
+    userObj.gamesOpen = process.env.GAMES_OPEN === '1' || userObj.isAdmin; // вкладка «Игры» и человечки на карте
 
     res.json(userObj);
   } catch (err: any) {
