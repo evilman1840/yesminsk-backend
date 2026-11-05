@@ -6,7 +6,8 @@ import { User } from './models/User';
 import { Event } from './models/Event';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { isAdmin } from './news';
-import { formatWhen } from './eventNotify';
+import { formatWhen, eventSummaryHtml, eventAppPath } from './eventNotify';
+import { audienceNote } from './eventAudience';
 import { removeUserPhotos, removeEventPhotos } from './photoModeration';
 import { StopHit } from './stopWords';
 
@@ -248,6 +249,53 @@ export async function handleModerationCommand(message: any): Promise<boolean> {
   if (!isAdmin(message.from?.id)) return false;
   await User.updateOne({ telegramId: Number(m[1]) }, { $set: { isBanned: false, hiddenByReports: false } });
   sendTelegramMessage(message.chat.id, `✅ Пользователь ${m[1]} разбанен.`);
+  return true;
+}
+
+/**
+ * /event руки вверх — найти сходку по названию или месту (и скрытые тоже) и показать, кому она видна и почему.
+ * Удалённые организатором или модератором не хранятся — их бот не найдёт
+ */
+export async function handleEventLookupCommand(message: any): Promise<boolean> {
+  const m = (message.text || '').trim().match(/^\/event(?:@\w+)?(?:\s+([\s\S]+))?$/i);
+  if (!m || !isAdmin(message.from?.id)) return false;
+  const chatId = message.chat.id;
+  const query = (m[1] || '').trim().slice(0, 60);
+  if (!query) {
+    sendTelegramMessage(chatId, '🔎 Напиши часть названия или места: <code>/event руки вверх</code>');
+    return true;
+  }
+  const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  const events = await Event.find({ $or: [{ title: re }, { locationName: re }], dateTime: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } })
+    .sort({ dateTime: 1 })
+    .limit(5);
+  if (!events.length) {
+    sendTelegramMessage(chatId, `🔎 По «${escapeHtml(query)}» ничего не нашёл среди сегодняшних и будущих сходок.\n\nЕсли сходка была, её удалили: организатор или модератор. Удалённые не хранятся.`);
+    return true;
+  }
+  for (const ev of events) {
+    const id = String(ev._id);
+    const [creator, me, hiddenBy, reports] = await Promise.all([
+      User.findOne({ telegramId: ev.creator.telegramId }, { isBanned: 1 }).lean(),
+      User.findOne({ telegramId: message.from.id }, { hiddenEvents: 1 }).lean(),
+      User.countDocuments({ hiddenEvents: id }),
+      Report.countDocuments({ targetType: 'event', targetId: id, status: 'open' })
+    ]);
+    const status = ev.isActive
+      ? '✅ Видна в ленте'
+      : `🙈 Скрыта: ${ev.stopWordsHold ? 'стоп-слова' : creator?.isBanned ? 'организатор забанен' : reports ? 'жалобы' : 'модератор скрыл'}`;
+    const lines = [
+      eventSummaryHtml(ev),
+      `👤 ${escapeHtml(ev.creator.name || '-')}${ev.creator.username ? ` · @${escapeHtml(ev.creator.username)}` : ''} · ID ${ev.creator.telegramId}`,
+      '',
+      status,
+      `👥 Для кого: ${audienceNote(ev) || 'все'}`,
+      ...(reports ? [`⚠️ Открытых жалоб: ${reports}`] : []),
+      ...(hiddenBy ? [`👋 «Неинтересно» нажали: ${hiddenBy}${me?.hiddenEvents?.includes(id) ? ' (и ты тоже)' : ''}`] : []),
+      ...(ev.participants.some((p) => p.telegramId === message.from.id) ? ['⭐ Ты записан: ищи во вкладке «Мои»'] : [])
+    ];
+    await sendTelegramMessage(chatId, lines.join('\n'), ev.isActive ? 'Открыть сходку' : undefined, ev.isActive ? eventAppPath(ev) : undefined);
+  }
   return true;
 }
 

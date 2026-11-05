@@ -10,7 +10,7 @@ import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
 import { Event } from './models/Event';
 import { Donation } from './models/Donation';
 import { handleNewsMessage } from './news';
-import { handleModerationCallback, handleModerationCommand, banUser } from './moderation';
+import { handleModerationCallback, handleModerationCommand, handleEventLookupCommand, banUser } from './moderation';
 import { handlePhotoModerationCallback, handlePhotosCommand } from './photoModeration';
 import { handleStatsCommand } from './stats';
 import { handleFundCommand } from './fund';
@@ -106,6 +106,7 @@ async function handleMessage(message: any, chatId: number) {
   // Новости проекта (/news, /delnews, /tip, /deltip, /myid) — в том числе фото и альбомы
   if (await handleNewsMessage(message)) return;
   if (await handleModerationCommand(message)) return;
+  if (await handleEventLookupCommand(message)) return;
   if (await handlePhotosCommand(message)) return;
   if (await handleStatsCommand(message)) return;
   if (await handleFundCommand(message)) return;
