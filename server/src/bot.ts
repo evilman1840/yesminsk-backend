@@ -18,6 +18,7 @@ import { handlePollCommand } from './polls';
 import { handleCoffeeCommand } from './coffee';
 import { handleIdeasCommand } from './ideas';
 import { handleDigestCommand } from './digest';
+import { handleAfishaCommand, handleAfishaCallback } from './afisha';
 import { handleInviteStart } from './invites';
 import { markCanMessage } from './utils/telegramNotify';
 import { handlePlaceMessage, handlePlaceCallback } from './places';
@@ -60,7 +61,7 @@ export function setupTelegramBot(app: Express) {
     // Нажатие кнопки под жалобой (бан / всё в порядке)
     if (req.body?.callback_query) {
       const q = req.body.callback_query;
-      (async () => (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handleNudgeCallback(q)) || (await handleProposalCallback(q)) || (await handleSuggestionCallback(q)) || (await handlePhotoModerationCallback(q, banUser)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)))().catch((err) =>
+      (async () => (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handleNudgeCallback(q)) || (await handleProposalCallback(q)) || (await handleSuggestionCallback(q)) || (await handleAfishaCallback(q)) || (await handlePhotoModerationCallback(q, banUser)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)))().catch((err) =>
         console.warn('⚠️ Ошибка обработки кнопки:', err?.message || err)
       );
       return;
@@ -111,6 +112,7 @@ async function handleMessage(message: any, chatId: number) {
   if (await handleCoffeeCommand(message)) return;
   if (await handleIdeasCommand(message)) return;
   if (await handleDigestCommand(message)) return;
+  if (await handleAfishaCommand(message)) return;
   if (await handleFeedbackCommand(message)) return;
   if (await handleTemplatesCommand(message)) return;
   if (await handleNudgeCommand(message)) return;

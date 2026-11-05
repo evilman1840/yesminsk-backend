@@ -42,6 +42,7 @@ import { startProposalLoop, setupProposalRoutes, fixAutoMeetupHosts } from './pr
 import { setupAccountRoutes } from './account';
 import { setupPlaceSuggestionRoutes, backfillPlaceAuthors } from './placeSuggestions';
 import { runPlaceImports } from './placesImport';
+import { setupAfishaRoutes, startAfishaLoop } from './afisha';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote, rsvpButtons } from './eventNotify';
 
 dotenv.config();
@@ -2035,6 +2036,9 @@ setupPlaceSuggestionRoutes(app);
 setupAvatarRoutes(app);
 setupProposalRoutes(app);
 
+// Афиша города из Telegram-каналов
+setupAfishaRoutes(app);
+
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);
 
@@ -2048,4 +2052,5 @@ app.listen(PORT, () => {
   startWishLoop();
   startNudgeLoop();
   startProposalLoop();
+  startAfishaLoop();
 });
