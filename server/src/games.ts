@@ -9,7 +9,7 @@ import { escapeHtml } from './utils/telegramNotify';
 import { isAdmin } from './news';
 
 /**
- * Мини-игры: «Крестики-нолики» на поле 10×10, пять в ряд.
+ * Мини-игры: «Крестики-Нолики» на поле 10×10, пять в ряд.
  *
  * Как играют:
  *   • с ботом — целиком в приложении, сервер только считает партии для /stats;
@@ -550,7 +550,7 @@ export function setupGameRoutes(app: Express) {
         const u: any = await User.findOne({ telegramId: hostP.telegramId }, { canMessage: 1 }).lean();
         const name = guest.incognito ? `${guest.nickEmoji} ${guest.nick}` : guest.firstName;
         if (u?.canMessage !== false) {
-          sendWithButtons(hostP.telegramId, `🎲 <b>${escapeHtml(name)}</b> уже в партии в крестики-нолики и ждёт тебя. Заходи в течение пары минут`, [[{ text: '🎲 Играть', path: `?game=${started._id}` }]]).catch(() => {});
+          sendWithButtons(hostP.telegramId, `🎲 <b>${escapeHtml(name)}</b> уже в игре «Крестики-Нолики» и ждёт тебя. Заходи в течение пары минут`, [[{ text: '🎲 Играть', path: `?game=${started._id}` }]]).catch(() => {});
         }
       }
       res.json(view(started, myId));
