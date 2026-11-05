@@ -98,7 +98,9 @@ export async function meetupStatsLines(since: Date): Promise<string[]> {
 
   const lines = [T.title, T.created(viaTemplate, custom, noTemplate)];
   if (top.length) lines.push(T.top(top.map((b) => `${name.get(b._id) || b._id} ${b.n}`).join(' · ')));
-  lines.push(T.funnel(opened, picked, published, pct(published, opened)));
+  // «Создано» — сходки, что есть в базе сейчас; отменённые и удалённые из неё пропадают, а публикация в воронке остаётся
+  const removed = Math.max(0, published - (viaTemplate + custom + noTemplate));
+  lines.push(T.funnel(opened, picked, published, pct(published, opened), removed));
   lines.push(T.quit(quitPick, quitForm));
   if (bySource.length) lines.push(T.sources(bySource.map(([src, n]) => `${T.sourceNames[src]} ${n}`).join(' · ')));
 

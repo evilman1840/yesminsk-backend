@@ -50,11 +50,11 @@ export const METRICS_TEXTS = {
   created: (viaTemplate: number, custom: number, noTemplate: number) =>
     `Создано по шаблонам ${viaTemplate} · через «Свою идею» ${custom}${noTemplate ? ` · по старой форме ${noTemplate}` : ''}`,
   top: (list: string) => `Чаще выбирают: ${list}`,
-  funnel: (opened: number, picked: number, published: number, rate: string) =>
-    `Форма: открыли ${opened} → выбрали идею ${picked} → опубликовали ${published} (${rate})`,
+  funnel: (opened: number, picked: number, published: number, rate: string, removed: number) =>
+    `Форма: открыли ${opened} → выбрали идею ${picked} → опубликовали ${published} (${rate})${removed ? ` · потом удалили не меньше ${removed}` : ''}`,
   quit: (atPick: number, atForm: number) => `Бросили: на выборе идеи ${atPick} · в заполненной форме ${atForm}`,
   sources: (list: string) => `Откуда открывают: ${list}`,
-  sourceNames: { feed: 'лента', empty: 'пустая лента', place: 'карточка места', link: 'ссылка', map: 'призыв на карте' } as Record<string, string>,
+  sourceNames: { feed: 'лента', empty: 'пустая лента', place: 'карточка места', link: 'ссылка', map: 'призыв на карте', people: '«Тоже хотят»' } as Record<string, string>,
   quitFields: (list: string, filled: number) => `Бросили форму, не заполнив: ${list || 'всё было заполнено'}${list && filled ? ` · всё заполнено, но ушли: ${filled}` : ''}`,
   errors: (list: string) => `Ошибки в форме: ${list}`,
   fieldNames: { title: 'название', description: 'описание', place: 'место', time: 'время', templateField: 'поле шаблона' } as Record<string, string>,
