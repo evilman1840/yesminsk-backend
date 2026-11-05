@@ -19,7 +19,7 @@ import { Reaction, ReactionType } from './models/Reaction';
 import { sendLike } from './social';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
-import { setupNewsRoutes, isAdmin } from './news';
+import { setupNewsRoutes, isAdmin, adminIds } from './news';
 import { setupFundRoutes } from './fund';
 import { setupPollRoutes } from './polls';
 import { banGuard, setupModerationRoutes, reportStopWords, BANNED_ERROR } from './moderation';
@@ -31,7 +31,7 @@ import { setupMeetupMetricsRoutes } from './meetupMetrics';
 import { rankEvent, distanceTo, Viewer } from './eventRanking';
 import { buildRankContext, scoreUser, whyShown, sharedKinds, orderForFeed } from './peopleRanking';
 import { PeopleSeen } from './models/PeopleSeen';
-import { cleanAudience, audienceError, audienceFeedQuery, audienceUsersQuery } from './eventAudience';
+import { cleanAudience, audienceError, audienceFeedQuery, audienceUsersQuery, audienceNote } from './eventAudience';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish, notifyWishersOfMeetup, inviteToMeetup, INVITE_MAX, sendWithButtons, Btn, CUSTOM_WISH } from './wishes';
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
@@ -1142,6 +1142,8 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
     // Лента: ближайшие 30 дней (начавшиеся — ещё полчаса, можно успеть подойти).
     // «Неинтересно» и «только для эмпатов» (если я не эмпат) — не показываем
     const hiddenIds = (me?.hiddenEvents || []).filter((id) => mongoose.Types.ObjectId.isValid(id));
+    // Модератор видит все сходки, даже «только для девушек» или эмпатов — чтобы при нужде удалить
+    const admin = isAdmin(tgUser.id);
     const feedQuery: any = {
       isActive: true,
       ...categoryQuery,
@@ -1149,9 +1151,9 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
       'creator.telegramId': { $ne: tgUser.id },
       'participants.telegramId': { $ne: tgUser.id },
       ...(hiddenIds.length ? { _id: { $nin: hiddenIds } } : {}),
-      ...(me?.isEmpath ? {} : { tags: { $ne: 'empaths' } }),
+      ...(me?.isEmpath || admin ? {} : { tags: { $ne: 'empaths' } }),
       // «Только девушки / мужчины», «25–35 лет» — кому не подходит, тот не видит
-      $and: audienceFeedQuery(me)
+      ...(admin ? {} : { $and: audienceFeedQuery(me) })
     };
     // Свои и куда записан — всегда, даже дальше месяца (для «⭐ Мои»); начавшиеся — ещё 4 часа.
     // Свои прошедшие организатор видит ещё NO_SHOW_DAYS — чтобы отметить, кто не пришёл
@@ -1315,6 +1317,11 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     if (inviteIds.length) inviteToMeetup(newEvent, inviteIds, user).catch((err) => console.warn('⚠️ «Позвать в компанию»:', err?.message || err));
     if (req.body?.notifyWishers) notifyWishersOfMeetup(newEvent, wishGroupId, inviteIds).catch((err) => console.warn('⚠️ «Тоже хотят» после сходки:', err?.message || err));
     if (newEvent.placeId) notifyPlaceSavers(newEvent).catch((err) => console.warn('⚠️ Уведомление сохранившим место:', err?.message || err));
+    // Модераторам — о каждой новой сходке: посмотреть и при нужде удалить
+    const author = `${escapeHtml(newEvent.creator.name || 'Без имени')}${newEvent.creator.username ? ` (@${escapeHtml(newEvent.creator.username)})` : ''}`;
+    for (const id of adminIds()) {
+      if (id !== tgUser.id) sendTelegramMessage(id, EVENT_MESSAGE_TEXTS.adminNew(eventSummaryHtml(newEvent), author, audienceNote(newEvent)), 'Открыть сходку', eventAppPath(newEvent));
+    }
   } catch (err: any) {
     console.warn('⚠️ Создание сходки:', err?.message || err);
     res.status(500).json({ error: 'Ошибка создания события' });

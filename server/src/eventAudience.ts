@@ -67,3 +67,13 @@ export function audienceUsersQuery(ev: Audience): any {
   if (ev.ageMin || ev.ageMax) q.age = { ...(ev.ageMin ? { $gte: ev.ageMin } : {}), ...(ev.ageMax ? { $lte: ev.ageMax } : {}) };
   return q;
 }
+
+// Для кого сходка, коротко: «только девушки, 25–35 лет, для эмпатов»; '' — для всех
+export function audienceNote(ev: Audience & { tags?: string[] }): string {
+  const parts: string[] = [];
+  if (ev.audienceGender === 'female') parts.push('только девушки');
+  if (ev.audienceGender === 'male') parts.push('только мужчины');
+  if (ev.ageMin || ev.ageMax) parts.push(ev.ageMin && ev.ageMax ? `${ev.ageMin}–${ev.ageMax} лет` : ev.ageMin ? `от ${ev.ageMin} лет` : `до ${ev.ageMax} лет`);
+  if (ev.tags?.includes('empaths')) parts.push('только для эмпатов');
+  return parts.join(', ');
+}

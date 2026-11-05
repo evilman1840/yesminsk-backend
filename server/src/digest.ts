@@ -4,6 +4,7 @@ import { Event } from './models/Event';
 import { Place, PLACE_MOODS } from './models/Place';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
 import { isAdmin } from './news';
+import { audienceError } from './eventAudience';
 
 /**
  * Подборки от бота: «что интересного» — сходки и места. Как часто — человек выбирает в анкете:
@@ -74,7 +75,13 @@ export async function buildDigest(user: IUser, freq: DigestFrequency, now = Date
 
   const events = (
     await Event.find({ isActive: true, dateTime: { $gte: from, $lte: to } }).sort({ dateTime: 1 }).limit(40).lean()
-  ).filter((ev: any) => ev.creator?.telegramId !== user.telegramId && !hiddenEvents.has(String(ev._id)));
+  ).filter(
+    (ev: any) =>
+      ev.creator?.telegramId !== user.telegramId &&
+      !hiddenEvents.has(String(ev._id)) &&
+      // как в ленте: «только девушки», «25–35 лет», «для эмпатов» — кому не подходит, тому и в подборке не показываем
+      (isAdmin(user.telegramId) || (!audienceError(ev, user) && (user.isEmpath || !ev.tags?.includes('empaths'))))
+  );
   // Официальные — первыми, дальше по времени
   events.sort((a: any, b: any) => Number(isAdmin(b.creator?.telegramId)) - Number(isAdmin(a.creator?.telegramId)));
   const shownEvents = events.slice(0, MAX_EVENTS);
