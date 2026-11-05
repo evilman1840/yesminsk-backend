@@ -33,14 +33,19 @@ const INVITE_WAIT_MS = 24 * 60 * 60 * 1000;       // приглашение ни
 const NOTIFY_AWAY_MS = 30 * 1000;       // «Твой ход» от бота — если человек не заглядывал в партию 30 секунд
 const REMATCH_MS = 60 * 1000;           // «Ещё партию» ждём минуту
 
-export const GAME_EMOJIS = ['👍', '😄', '😮', '🤔', '🔥', '🙈', '👏', '🤝'];
+// Ключ — что присылает приложение, значение — что увидит соперник
+export const GAME_EMOJIS: Record<string, string> = {
+  skull: '💀', sob: '😭', moai: '🗿', pinch: '🤌', nails: '💅', boom: '🤯', six7: '6️⃣7️⃣', fire: '🔥'
+};
 export const GAME_PHRASES: Record<string, string> = {
-  hi: 'Привет! 👋',
-  nice: 'Хороший ход!',
-  think: 'Дай подумать…',
-  oops: 'Ой 🙈',
-  gg: 'Хорошая игра!',
-  again: 'Ещё разок?'
+  sixseven: '67!',
+  base: 'Это база',
+  cringe: 'Кринж…',
+  minusvibe: 'Минус вайб',
+  nochance: 'Без шансов',
+  hurt: 'Это было больно 🥀',
+  onemore: 'Ещё одну и спать',
+  nice: 'Хороший ход!'
 };
 
 // Ник в инкогнито: зверёк, один на партию
@@ -445,7 +450,7 @@ export function setupGameRoutes(app: Express) {
     try {
       const myId = req.telegramUser!.id;
       const key = String(req.body?.say || '');
-      const text = GAME_EMOJIS.includes(key) ? key : GAME_PHRASES[key];
+      const text = Object.prototype.hasOwnProperty.call(GAME_EMOJIS, key) ? GAME_EMOJIS[key] : Object.prototype.hasOwnProperty.call(GAME_PHRASES, key) ? GAME_PHRASES[key] : '';
       if (!text || !Types.ObjectId.isValid(String(req.params.id))) return res.status(400).json({ error: 'Такой фразы нет' });
       const m: any = await GameMatch.findOne({ _id: String(req.params.id), 'players.telegramId': myId }, { players: 1 }).lean();
       if (!m) return res.status(404).json({ error: 'Партия не найдена' });
