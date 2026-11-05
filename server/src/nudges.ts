@@ -263,9 +263,10 @@ export async function nudgeStatsLines(since: Date): Promise<string[]> {
     const filled = (await User.find({ telegramId: { $in: ids } })).filter((u) => !missingProfileParts(u).length).length;
     profileLines.push('', P.statsTitle, P.statsLine(profileLogs.length, filled, `${Math.round((filled / profileLogs.length) * 100)}%`));
   }
-  if (!logs.length) return [T.statsTitle, T.statsSent(0, 0), ...profileLines];
+  const title = NUDGES_ENABLED ? [T.statsTitle] : [T.statsTitle, T.statsDisabled];
+  if (!logs.length) return [...title, T.statsSent(0, 0), ...profileLines];
   const now = Date.now();
-  const lines = [T.statsTitle, T.statsSent(logs.filter((l) => l.n === 1).length, logs.filter((l) => l.n === 2).length)];
+  const lines = [...title, T.statsSent(logs.filter((l) => l.n === 1).length, logs.filter((l) => l.n === 2).length)];
   for (const v of ['A', 'B', 'C', 'second']) {
     // Считаем только те, у которых уже прошло 48 часов
     const done = logs.filter((l) => l.variant === v && now - l.sentAt.getTime() >= 2 * DAY);

@@ -85,6 +85,12 @@ export const proposalSlots = (g: { windowStart: Date; windowEnd: Date }, leadHou
 
 // Окно группы заканчивается сегодня (кто-то хотел «сегодня») — тогда можно предлагать и сегодняшний вечер
 export const endsToday = (g: { windowEnd: Date }, now = new Date()) => g.windowEnd.getTime() < minskMidnight(now, 1);
+// Предложение бота — не раньше чем через 20 часов (почти сутки), если только люди не хотели «сегодня» — тогда через 4 часа
+export const proposalLead = (g: { windowEnd: Date }, now = new Date()) => (endsToday(g, now) ? 4 : 20);
+// В общем окне группы должно остаться время, которое бот сможет предложить. Иначе один «сегодня» сжимает окно
+// группы из 15 человек до пары часов, и она истекает раньше, чем бот успел кому-то написать
+const usableWindow = (start: Date, end: Date, now = new Date()) =>
+  proposalSlots({ windowStart: start, windowEnd: end }, proposalLead({ windowEnd: end }, now), 1, now).length > 0;
 
 // Первое быстрое время в общем окне группы, не раньше чем через leadHours
 export const slotForGroup = (g: { windowStart: Date; windowEnd: Date }, leadHours = 1, now = new Date()) => {
@@ -155,6 +161,7 @@ export async function tryMatch(wish: IWish): Promise<boolean> {
   const groups = await WishGroup.find({ status: 'open', kind: wish.kind, sport, windowEnd: { $gt: new Date() } }).sort({ createdAt: 1 });
   for (const g of groups) {
     if (!overlaps(g, wish) || !placeOk(g.placeId, wish.placeId)) continue;
+    if (!usableWindow(new Date(Math.max(g.windowStart.getTime(), wish.windowStart.getTime())), new Date(Math.min(g.windowEnd.getTime(), wish.windowEnd.getTime())))) continue;
     if (await Wish.exists({ groupId: g._id, telegramId: wish.telegramId, status: { $in: ['matched', 'fulfilled'] } })) continue;
     await joinGroup(g, [wish]);
     return true;
@@ -184,14 +191,17 @@ export async function tryMatch(wish: IWish): Promise<boolean> {
   for (const c of cands) {
     if (users.has(c.telegramId) || !placeOk(place, c.placeId)) continue;
     if (!(c.windowStart < end && start < c.windowEnd)) continue;
+    const nextStart = new Date(Math.max(start.getTime(), c.windowStart.getTime()));
+    const nextEnd = new Date(Math.min(end.getTime(), c.windowEnd.getTime()));
+    if (!usableWindow(nextStart, nextEnd)) continue;
     members.push(c);
     users.add(c.telegramId);
-    start = new Date(Math.max(start.getTime(), c.windowStart.getTime()));
-    end = new Date(Math.min(end.getTime(), c.windowEnd.getTime()));
+    start = nextStart;
+    end = nextEnd;
   }
   if (users.size < matchThreshold()) return false;
 
-  const group = await WishGroup.create({ kind: wish.kind, sport: wish.sport, placeId: members.find((m) => m.placeId)?.placeId, windowStart: start, windowEnd: end });
+  const group = await WishGroup.create({ kind: wish.kind, sport: wish.sport, placeId: place || undefined, windowStart: start, windowEnd: end });
   await joinGroup(group, members);
   return true;
 }
@@ -457,6 +467,15 @@ async function housekeeping() {
   const now = new Date();
   await Wish.updateMany({ status: { $in: ['active', 'matched'] }, windowEnd: { $lte: now } }, { $set: { status: 'expired', pending: null } });
   await WishGroup.updateMany({ status: 'open', windowEnd: { $lte: now } }, { $set: { status: 'expired' } });
+  // Группа истекла без сходки, а желание ещё живо («на неделе») — возвращаем его в поиск, иначе оно так и висит «совпавшим»
+  const stuck = await Wish.find({ status: 'matched', windowEnd: { $gt: now } }, { groupId: 1 }).lean();
+  const dead = await WishGroup.find({ _id: { $in: stuck.map((w) => w.groupId) }, status: 'expired', meetupId: { $exists: false } }, { _id: 1 }).lean();
+  if (dead.length) {
+    await Wish.updateMany(
+      { status: 'matched', windowEnd: { $gt: now }, groupId: { $in: dead.map((g) => g._id) } },
+      { $set: { status: 'active', pending: null }, $unset: { groupId: 1, matchedAt: 1 } }
+    );
+  }
   for (const w of await Wish.find({ status: 'active' }).sort({ createdAt: 1 })) await tryMatch(w);
 }
 
@@ -644,12 +663,24 @@ export async function wishStatsLines(since: Date): Promise<string[]> {
   const yesCounts = proposedGroups.map((g: any) => Math.max(0, ...(g.proposal?.options || []).map((o: any) => (o.yes || []).length)));
   const best = yesCounts.length ? ` (больше всего «Пойду» на одном варианте: ${Math.max(...yesCounts)})` : '';
   const expired = await WishGroup.countDocuments({ createdAt: { $gte: since }, status: 'expired', meetupId: { $exists: false } });
+  // Почему желания без пары: больше никто не хочет того же, хотят, но в другое время, или мешает место
+  const now = new Date();
+  const live = await Wish.find({ status: { $in: ['active', 'matched'] }, windowEnd: { $gt: now } }).lean<IWish[]>();
+  const alone = { kind: 0, time: 0, place: 0 };
+  for (const w of live.filter((x) => x.status === 'active')) {
+    const same = live.filter((o) => o.telegramId !== w.telegramId && o.kind === w.kind && (o.sport || null) === (w.sport || null));
+    const sameTime = same.filter((o) => overlaps(o, w));
+    if (!same.length) alone.kind++;
+    else if (!sameTime.length) alone.time++;
+    else if (!sameTime.some((o) => placeOk(o.placeId, w.placeId))) alone.place++;
+  }
   return [
     T.statsTitle,
     T.statsCreated(created, byKind.map((k) => `${names.get(k._id) || k._id} ${k.n}`).join(' · ')),
     T.statsGroups(groups, built, rate),
     T.statsFunnel(waitPeople, waitPlace, proposedGroups.length, best, expired),
     T.statsLinks(linkUsers.length, withProfile),
-    T.statsActive(active)
+    T.statsActive(active),
+    ...(alone.kind + alone.time + alone.place ? [T.statsAlone(alone.kind, alone.time, alone.place)] : [])
   ];
 }

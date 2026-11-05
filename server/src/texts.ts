@@ -144,7 +144,9 @@ export const WISH_TEXTS = {
   statsFunnel: (waitPeople: number, waitPlace: number, proposed: number, best: string, expired: number) =>
     `Сейчас в группах: ждут людей ${waitPeople} · ждут место ${waitPlace} · предложено время ${proposed}${best} · истекли без сходки (30 дн.) ${expired}`,
   statsLinks: (n: number, withProfile: number) => `По ссылкам wish_: ${people(n)}, из них заполнили анкету ${withProfile}`,
-  statsActive: (n: number) => `Активных желаний сейчас: ${n}`
+  statsActive: (n: number) => `Активных желаний сейчас: ${n}`,
+  statsAlone: (kind: number, time: number, place: number) =>
+    `Без пары: больше никто не хочет того же ${kind} · хотят, но в другое время ${time} · в то же время, но в другом месте ${place}`
 };
 
 export const peopleCount = people;
@@ -173,6 +175,8 @@ export const NUDGE_TEXTS = {
   previewNote: '<i>Так люди увидят сообщения бота: два приветственных и напоминание про анкету (оно подстроится под то, что не заполнено):</i>',
   // /stats
   statsTitle: '👋 <b>Приветственный толчок за 30 дней</b>',
+  // Толчки выключены, а журнал ещё помнит прошлые отправки — чтобы цифры не читались как текущие
+  statsDisabled: '<i>Сейчас выключены (вместе с напоминаниями про анкету и @username), цифры — по старым отправкам</i>',
   statsSent: (first: number, second: number) => `Отправлено: первых ${first}, вторых ${second}`,
   statsVariant: (v: string, sent: number, matured: number, acted: number) =>
     matured
