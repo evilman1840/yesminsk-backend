@@ -18,7 +18,7 @@ import { handlePollCommand } from './polls';
 import { handleCoffeeCommand } from './coffee';
 import { handleIdeasCommand } from './ideas';
 import { handleDigestCommand } from './digest';
-import { handleAfishaCommand, handleAfishaCallback } from './afisha';
+import { handleAfishaCommand, handleAfishaCallback, handleAfishaEditMessage } from './afisha';
 import { handleInviteStart } from './invites';
 import { markCanMessage } from './utils/telegramNotify';
 import { handlePlaceMessage, handlePlaceCallback } from './places';
@@ -101,6 +101,7 @@ async function handleMessage(message: any, chatId: number) {
   if (await handleCsvMessage(message)) return;
   // Добавление мест (/place …) — раньше новостей, чтобы фото места не попали в новости
   if (await handleSuggestionEditMessage(message)) return;
+  if (await handleAfishaEditMessage(message)) return;
   if (await handlePlaceMessage(message)) return;
   // Новости проекта (/news, /delnews, /tip, /deltip, /myid) — в том числе фото и альбомы
   if (await handleNewsMessage(message)) return;

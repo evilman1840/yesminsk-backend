@@ -18,6 +18,7 @@ import { isAdmin, adminIds } from './news';
  * Боту (только админам):
  *   /afisha      — прочитать каналы сейчас и показать, сколько ждёт одобрения
  *   /afisha list — прислать карточки всех, кто ждёт
+ *   ✏️ Изменить под карточкой — бот присылает её текстом, автор правит и шлёт обратно
  */
 
 // Каналы можно поменять без кода: AFISHA_CHANNELS=minsk_kuda,Minsk_kudaGo
@@ -176,14 +177,118 @@ function cardHtml(e: ICityEvent | any) {
     .join('\n');
 }
 
+// Ждут одобрения — «В афишу / Нет»; одобренные и отклонённые можно только править
 const sendCard = (chatId: number, e: any) =>
   sendWithButtons(chatId, cardHtml(e), [
+    ...(e.status === 'pending'
+      ? [
+          [
+            { text: '✅ В афишу', data: `aff:ok:${e._id}` },
+            { text: '❌ Нет', data: `aff:no:${e._id}` }
+          ]
+        ]
+      : []),
     [
-      { text: '✅ В афишу', data: `aff:ok:${e._id}` },
-      { text: '❌ Нет', data: `aff:no:${e._id}` }
-    ],
-    [{ text: '🔗 Открыть пост', url: e.sourceUrl }]
+      { text: '✏️ Изменить', data: `aff:ed:${e._id}` },
+      { text: '🔗 Открыть пост', url: e.sourceUrl }
+    ]
   ]);
+
+// ---------- Правка карточки ----------
+
+// Автор получает карточку текстом, меняет что хочет и присылает обратно
+const FIELDS = [
+  { label: 'Название', key: 'title', max: 200 },
+  { label: 'Описание', key: 'summary', max: 400 },
+  { label: 'Когда', key: 'when', max: 200 },
+  { label: 'Даты', key: 'dates' },
+  { label: 'Площадка', key: 'venue', max: 200 },
+  { label: 'Адрес', key: 'address', max: 200 },
+  { label: 'Цена', key: 'price', max: 100 },
+  { label: 'Бесплатно', key: 'isFree' },
+  { label: 'Под крышей', key: 'indoor' },
+  { label: 'С детьми', key: 'kidsOk' }
+] as const;
+
+const ruDate = (d?: Date) => (d ? new Date(d.getTime() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10).split('-').reverse().join('.') : '');
+
+const editTemplate = (e: any) =>
+  FIELDS.map(({ label, key }) => {
+    if (key === 'dates') return `${label}: ${ruDate(e.startDate)}${e.endDate && ruDate(e.endDate) !== ruDate(e.startDate) ? ` — ${ruDate(e.endDate)}` : ''}`;
+    if (key === 'isFree' || key === 'indoor' || key === 'kidsOk') return `${label}: ${e[key] ? 'да' : 'нет'}`;
+    return `${label}: ${e[key] || ''}`;
+  }).join('\n');
+
+// «7.11», «07.11.2026» или «2026-11-07» → полночь по Минску; год по умолчанию — ближайший
+const parseDay = (s: string, year: number) => {
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const ru = s.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$/);
+  const parts = iso ? [iso[1], iso[2], iso[3]] : ru ? [ru[3] ? (ru[3].length === 2 ? `20${ru[3]}` : ru[3]) : String(year), ru[2], ru[1]] : null;
+  if (!parts) return undefined;
+  const [y, m, d] = parts;
+  return toDate(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`);
+};
+
+// Текст автора → поля, которые он прислал. Строка без «Поле:» продолжает предыдущее поле (длинное описание)
+export function parseEditText(text: string, year = new Date().getFullYear()) {
+  const values: Record<string, string> = {};
+  let current = '';
+  for (const line of text.split('\n')) {
+    const field = FIELDS.find((f) => line.toLowerCase().startsWith(f.label.toLowerCase() + ':'));
+    if (field) {
+      current = field.key;
+      values[current] = line.slice(field.label.length + 1).trim();
+    } else if (current && line.trim()) values[current] += ' ' + line.trim();
+  }
+  const out: Record<string, any> = {};
+  const errors: string[] = [];
+  for (const f of FIELDS) {
+    if (!(f.key in values)) continue;
+    const v = values[f.key] === '-' ? '' : values[f.key];
+    if (f.key === 'dates') {
+      const [a, b] = v.replace(/^с\s+/i, '').split(/\s*[—–]\s*|\s+-{1,2}\s+|\s+по\s+/).filter(Boolean);
+      const start = a ? parseDay(a, year) : undefined;
+      const end = b ? parseDay(b, year) : start;
+      if (!start || !end || end < start) errors.push('Даты: напиши «07.11» или «04.11 — 21.11»');
+      else Object.assign(out, { startDate: start, endDate: end });
+    } else if (f.key === 'isFree' || f.key === 'indoor' || f.key === 'kidsOk') {
+      if (/^(да|yes|\+)$/i.test(v)) out[f.key] = true;
+      else if (/^(нет|no|-)?$/i.test(v)) out[f.key] = false;
+      else errors.push(`${f.label}: да или нет`);
+    } else if (f.key === 'title' && !v) errors.push('Название не может быть пустым');
+    else out[f.key] = v.slice(0, 'max' in f ? f.max : 200);
+  }
+  return { out, errors };
+}
+
+const editing = new Map<number, string>(); // chatId → id события
+
+// Ответ автора с исправленной карточкой. /cancel — передумал
+export async function handleAfishaEditMessage(message: any): Promise<boolean> {
+  const chatId: number = message.chat?.id;
+  const id = editing.get(chatId);
+  if (!id || !isAdmin(message.from?.id)) return false;
+  const text: string = (message.text || '').trim();
+  if (/^\/cancel\b/i.test(text)) {
+    editing.delete(chatId);
+    sendTelegramMessage(chatId, 'Ок, ничего не меняю.');
+    return true;
+  }
+  if (!text || text.startsWith('/')) return false;
+  const e = await CityEvent.findById(id);
+  if (!e) return editing.delete(chatId), true;
+  const { out, errors } = parseEditText(text, (e.startDate || e.postedAt).getFullYear());
+  if (errors.length || !Object.keys(out).length) {
+    sendTelegramMessage(chatId, `Не получилось 🙈\n${escapeHtml(errors.join('\n') || 'Пришли карточку в том же виде: «Поле: значение» на каждой строке.')}\n\nПопробуй ещё раз или /cancel`);
+    return true;
+  }
+  editing.delete(chatId);
+  if ('address' in out && out.address !== e.address) e.coords = out.address ? (await geocode(out.address).catch(() => null))?.coords : undefined;
+  e.set(out);
+  await e.save();
+  await sendCard(chatId, e);
+  return true;
+}
 
 // ---------- Обход каналов ----------
 
@@ -287,7 +392,7 @@ export async function handleAfishaCommand(message: any): Promise<boolean> {
   return true;
 }
 
-// Кнопки карточки: aff:ok:<id> / aff:no:<id>
+// Кнопки карточки: aff:ok:<id> / aff:no:<id> / aff:ed:<id>
 export async function handleAfishaCallback(query: any): Promise<boolean> {
   const data: string = query.data || '';
   if (!data.startsWith('aff:')) return false;
@@ -297,11 +402,24 @@ export async function handleAfishaCallback(query: any): Promise<boolean> {
   if (!isAdmin(query.from?.id)) return true;
   const [, action, id] = data.split(':');
   const e = mongoose.Types.ObjectId.isValid(id) ? await CityEvent.findById(id) : null;
-  if (!e || e.status !== 'pending') return true;
+  if (!e) return true;
+  const chatId = query.message?.chat?.id;
+  // ✏️ Прислать карточку текстом: автор правит и шлёт обратно
+  if (action === 'ed') {
+    editing.set(chatId, id);
+    await sendWithButtons(
+      chatId,
+      `✏️ Скопируй текст ниже (нажми на него), поменяй что нужно и пришли мне.\nМожно прислать только нужные строки. «-» — очистить поле. /cancel — отменить\n\n<pre>${escapeHtml(editTemplate(e))}</pre>`,
+      []
+    );
+    return true;
+  }
+  if (e.status !== 'pending') return true;
   e.status = action === 'ok' ? 'approved' : 'rejected';
   await e.save();
-  call('editMessageReplyMarkup', { chat_id: query.message?.chat?.id, message_id: query.message?.message_id, reply_markup: { inline_keyboard: [] } });
-  sendTelegramMessage(query.message.chat.id, e.status === 'approved' ? `✅ «${escapeHtml(e.title)}» в афише` : `❌ «${escapeHtml(e.title)}» пропускаем`);
+  call('editMessageReplyMarkup', { chat_id: chatId, message_id: query.message?.message_id, reply_markup: { inline_keyboard: [] } });
+  if (e.status === 'approved') await sendWithButtons(chatId, `✅ «${escapeHtml(e.title)}» в афише`, [[{ text: '✏️ Изменить', data: `aff:ed:${e._id}` }]]);
+  else sendTelegramMessage(chatId, `❌ «${escapeHtml(e.title)}» пропускаем`);
   return true;
 }
 
