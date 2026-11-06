@@ -15,6 +15,8 @@ import { POLL_TEXTS as T } from './texts';
  *   /poll Вопрос | 🐾 Вариант = коротко | ☕ Вариант | Свой вариант   — новый опрос (прошлый закрывается)
  *     «= коротко» — имя варианта для строки в шапке после голоса: «Донаты → 🐾 приют»
  *     вторая строка вопроса — пояснение под ним; «Свой вариант» — поле для своей идеи
+ *     строка «шапка: Ты в игре? 🎲» — своя подпись в шапке карты (без неё — «Нужен твой совет»)
+ *     строка «кнопка: 🎲 Сыграть партию -> игры» — кнопка после голоса, ведёт во вкладку
  *   /poll       — что идёт сейчас и сколько голосов
  *   /pollend    — закрыть опрос и прислать итоги с таблицей
  *   /pollcsv    — таблица голосов и идей, не закрывая
@@ -35,6 +37,8 @@ const Poll = model(
       note: { type: String, default: '', maxlength: 300 },
       options: { type: [{ key: String, label: String, emoji: String, short: String, _id: false }], default: [] },
       allowCustom: { type: Boolean, default: false },
+      pill: { type: String, default: '', maxlength: 30 },
+      action: { text: { type: String, default: '' }, tab: { type: String, default: '' } },
       active: { type: Boolean, default: true, index: true },
       closedAt: Date
     },
@@ -58,6 +62,8 @@ const PollVote = model(
 );
 
 const CUSTOM = 'custom';
+// «кнопка: … -> игры»: куда ведёт кнопка после голоса
+const ACTION_TABS: Record<string, string> = { игры: 'games', люди: 'feed', сходки: 'events', места: 'places', карта: 'main' };
 export const POLL_CUSTOM_MAX = 200;
 const MAX_OPTIONS = 6;
 const LEADING_EMOJI = /^(\p{Extended_Pictographic}(️|‍\p{Extended_Pictographic})*)\s*/u;
@@ -95,6 +101,8 @@ async function pollForUser(telegramId: number) {
     note: poll.note || '',
     options: poll.options,
     allowCustom: Boolean(poll.allowCustom),
+    pill: poll.pill || '',
+    action: poll.action?.text && poll.action?.tab ? { text: poll.action.text, tab: poll.action.tab } : null,
     total,
     myVote: mine ? { options: optionsOf(mine), custom: mine.custom || '' } : null,
     results: mine ? keys.map((key, i) => ({ key, percent: percents[i] })) : null
@@ -187,16 +195,26 @@ export async function handlePollCommand(message: any): Promise<boolean> {
 
   const parts = body.split('|').map((s) => s.trim()).filter(Boolean);
   const [head, ...rawOptions] = parts;
-  const [question, ...noteLines] = head.split('\n').map((s) => s.trim());
+  const [question, ...headLines] = head.split('\n').map((s) => s.trim()).filter(Boolean);
+  const special = (name: string) => headLines.find((l) => l.toLowerCase().startsWith(name + ':'))?.slice(name.length + 1).trim() || '';
+  const pill = special('шапка');
+  const actionRaw = special('кнопка');
+  const [actionText = '', actionTabRaw = ''] = actionRaw.split('->').map((s) => s.trim());
+  const action = actionRaw ? { text: actionText, tab: ACTION_TABS[actionTabRaw.toLowerCase()] || '' } : null;
+  const noteLines = headLines.filter((l) => !/^(шапка|кнопка):/i.test(l));
   const allowCustom = rawOptions.some((o) => /^(✏️\s*)?свой вариант$/i.test(o));
   const options = rawOptions.filter((o) => !/^(✏️\s*)?свой вариант$/i.test(o)).slice(0, MAX_OPTIONS).map(parseOption);
-  if (!question || question.length > 140 || options.length + Number(allowCustom) < 2 || options.some((o) => !o.label || o.label.length > 60 || !o.short)) {
+  if (
+    !question || question.length > 140 || options.length + Number(allowCustom) < 2 || options.some((o) => !o.label || o.label.length > 60 || !o.short) ||
+    pill.length > 30 || (action && (!action.text || action.text.length > 40 || !action.tab))
+  ) {
     sendWithButtons(chatId, T.bad + T.usage, []);
     return true;
   }
 
   await Poll.updateMany({ active: true }, { $set: { active: false, closedAt: new Date() } });
-  const poll = await Poll.create({ question, note: noteLines.join(' ').slice(0, 300), options, allowCustom });
-  sendWithButtons(chatId, T.created + (await resultsText(poll)) + (current ? T.replaced : ''), []);
+  const poll = await Poll.create({ question, note: noteLines.join(' ').slice(0, 300), options, allowCustom, pill, action: action || undefined });
+  const extras = [pill && `Шапка: <b>${escapeHtml(pill)}</b>`, action && `Кнопка после голоса: <b>${escapeHtml(action.text)}</b> → ${actionTabRaw}`].filter(Boolean).join('\n');
+  sendWithButtons(chatId, T.created + (await resultsText(poll)) + (extras ? `\n\n${extras}` : '') + (current ? T.replaced : ''), []);
   return true;
 }
