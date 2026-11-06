@@ -145,6 +145,9 @@ const GameDay = model(
     day: { type: String, unique: true }, // '2026-11-05' по Минску
     botGames: { type: Number, default: 0 },
     botPlayers: { type: [Number], default: [] },
+    // Партии с живыми людьми: сами партии хранятся 30 дней, а итоги по дням — всегда (для «всего сыграно» в меню)
+    humanGames: { type: Number },
+    humanPlayers: { type: [Number], default: undefined },
     peak: { type: Number, default: 0 },
     peakAt: { type: Date },
     eveningSent: { type: Boolean } // «Час игр» сегодня уже позвали
@@ -329,6 +332,11 @@ async function update(filter: any, set: any, extra: any = {}): Promise<any> {
   // Партия только что закончилась — в личную статистику игроков
   if (next && status === 'finished' && next.players?.length === 2) {
     recordFiveMatch(next).catch((err) => console.warn('⚠️ Игры, статистика партии:', err?.message || err));
+    GameDay.updateOne(
+      { day: minskDay() },
+      { $inc: { humanGames: 1 }, $addToSet: { humanPlayers: { $each: next.players.map((p: any) => p.telegramId) } } },
+      { upsert: true }
+    ).catch(() => {});
   }
   return next;
 }
@@ -512,6 +520,32 @@ export async function handleGameCallback(q: any): Promise<boolean> {
 }
 
 // Сколько людей сейчас в играх — для счётчика в меню. Считаем не чаще раза в 5 секунд на всех
+// За всё время: сколько партий сыграно в приложении (с людьми и с ботом) и сколько человек играли с живыми людьми.
+// Складываем итоги по дням; считаем не чаще раза в минуту
+let totalsCache: { at: number; games: number; livePlayers: number } | null = null;
+async function allTimeTotals() {
+  if (totalsCache && Date.now() - totalsCache.at < MIN) return totalsCache;
+  const [sums, people] = await Promise.all([
+    GameDay.aggregate([{ $group: { _id: null, human: { $sum: { $ifNull: ['$humanGames', 0] } }, bot: { $sum: '$botGames' } } }]),
+    GameDay.aggregate([{ $unwind: '$humanPlayers' }, { $group: { _id: '$humanPlayers' } }, { $count: 'n' }])
+  ]);
+  totalsCache = { at: Date.now(), games: (sums[0]?.human || 0) + (sums[0]?.bot || 0), livePlayers: people[0]?.n || 0 };
+  return totalsCache;
+}
+
+// Один раз: итоги по дням для партий, сыгранных до того, как их стали считать (из тех, что ещё хранятся)
+async function backfillHumanDays() {
+  const days: any[] = await GameMatch.aggregate([
+    { $match: { status: 'finished', 'players.1': { $exists: true } } },
+    { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: { $ifNull: ['$finishedAt', '$updatedAt'] }, timezone: 'Europe/Minsk' } }, n: { $sum: 1 }, ids: { $push: '$players.telegramId' } } }
+  ]);
+  for (const d of days) {
+    const ids = [...new Set(d.ids.flat())];
+    // Уже посчитанные дни не трогаем; дня в базе нет — создаём (если создать не вышло, значит, его уже считают)
+    await GameDay.updateOne({ day: d._id, humanGames: { $exists: false } }, { $set: { humanGames: d.n, humanPlayers: ids } }, { upsert: true }).catch(() => {});
+  }
+}
+
 let lobbyCache: { at: number; searching: number; playing: number; today: number } | null = null;
 async function lobbyCounts() {
   if (lobbyCache && Date.now() - lobbyCache.at < 5000) return lobbyCache;
@@ -542,6 +576,7 @@ async function eveningCall() {
 // Раз в минуту запоминаем пик за день. Заодно старым партиям без срока хранения — срок
 export function startGameStatsLoop() {
   GameMatch.updateMany({ expireAt: { $exists: false } }, { $set: { expireAt: expireAt('finished') } }, { timestamps: false }).catch(() => {});
+  backfillHumanDays().catch((err) => console.warn('⚠️ Игры, итоги по дням:', err?.message || err));
   const tick = async () => {
     eveningCall().catch((err) => console.warn('⚠️ Игры, час игр:', err?.message || err));
     try {
@@ -613,12 +648,14 @@ export function setupGameRoutes(app: Express) {
   // Меню игр: сколько людей ищут соперника и играют, сколько партий сегодня, позвать ли меня
   app.get('/api/games/lobby', auth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const [c, me] = await Promise.all([lobbyCounts(), User.findOne({ telegramId: req.telegramUser!.id }, { gameNotify: 1, canMessage: 1 }).lean() as any]);
+      const [c, all, me] = await Promise.all([lobbyCounts(), allTimeTotals().catch(() => null), User.findOne({ telegramId: req.telegramUser!.id }, { gameNotify: 1, canMessage: 1 }).lean() as any]);
       const hour = minskHour();
       res.json({
         searching: c.searching,
         playing: c.playing,
         today: c.today,
+        totalGames: all?.games ?? null,
+        livePlayers: all?.livePlayers ?? null,
         notify: Boolean(me?.gameNotify),
         canMessage: me?.canMessage !== false,
         eveningHour: EVENING_HOUR,
