@@ -45,6 +45,7 @@ import { setupPlaceSuggestionRoutes, backfillPlaceAuthors } from './placeSuggest
 import { runPlaceImports } from './placesImport';
 import { setupAfishaRoutes, startAfishaLoop } from './afisha';
 import { setupGameRoutes, startGameStatsLoop } from './games';
+import { setupGameScoreRoutes } from './gameScores';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote, rsvpButtons } from './eventNotify';
 
 dotenv.config();
@@ -2100,6 +2101,7 @@ setupProposalRoutes(app);
 setupAfishaRoutes(app);
 
 // Мини-игры: «Крестики-Нолики» со случайным игроком или знакомым
+setupGameScoreRoutes(app); // раньше /api/games/:id, иначе «summary» примут за номер партии
 setupGameRoutes(app);
 
 // Telegram-бот (/start с кнопкой открытия приложения)

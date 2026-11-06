@@ -7,6 +7,7 @@ import { preferencesAllow } from './preferences';
 import { sendWithButtons } from './wishes';
 import { escapeHtml } from './utils/telegramNotify';
 import { isAdmin } from './news';
+import { recordFiveMatch, recordFiveBot } from './gameScores';
 
 /**
  * Мини-игры: «Крестики-Нолики» на поле 10×10, пять в ряд.
@@ -325,6 +326,10 @@ async function update(filter: any, set: any, extra: any = {}): Promise<any> {
     { new: true }
   ).lean();
   if (next) changed(next._id);
+  // Партия только что закончилась — в личную статистику игроков
+  if (next && status === 'finished' && next.players?.length === 2) {
+    recordFiveMatch(next).catch((err) => console.warn('⚠️ Игры, статистика партии:', err?.message || err));
+  }
   return next;
 }
 
@@ -701,6 +706,7 @@ export function setupGameRoutes(app: Express) {
   app.post('/api/games/bot-played', auth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       await GameDay.updateOne({ day: minskDay() }, { $inc: { botGames: 1 }, $addToSet: { botPlayers: req.telegramUser!.id } }, { upsert: true });
+      await recordFiveBot(req.telegramUser!.id, Boolean(req.body?.won));
     } catch {
       /* статистика не важнее игры */
     }
