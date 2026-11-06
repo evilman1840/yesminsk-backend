@@ -99,11 +99,26 @@ async function tractorDay(telegramId: number) {
   };
 }
 
+// Трактор за всё время у всех: сколько матчей сыграно и сколько человек играли. Не чаще раза в минуту
+let allCache: { at: number; games: number; players: number } | null = null;
+async function tractorAll() {
+  if (allCache && Date.now() - allCache.at < 60 * 1000) return allCache;
+  const [sum, people] = await Promise.all([
+    GameScore.aggregate([{ $match: { game: 'tractor' } }, { $group: { _id: null, games: { $sum: '$games' } } }]),
+    GameScore.distinct('telegramId', { game: 'tractor', games: { $gt: 0 } })
+  ]);
+  allCache = { at: Date.now(), games: sum[0]?.games || 0, players: people.length };
+  return allCache;
+}
+
 async function summary(telegramId: number) {
-  const [five, tractor, day] = await Promise.all([totals(telegramId, 'five'), totals(telegramId, 'tractor'), tractorDay(telegramId)]);
+  const [five, tractor, day, all] = await Promise.all([totals(telegramId, 'five'), totals(telegramId, 'tractor'), tractorDay(telegramId), tractorAll()]);
   return {
     five: { games: five.games, wins: five.wins },
-    tractor: { games: tractor.games, wins: tractor.wins, rounds: tractor.rounds, roundWins: tractor.roundWins, best: tractor.best, nemesis: tractor.nemesis, day }
+    tractor: {
+      games: tractor.games, wins: tractor.wins, rounds: tractor.rounds, roundWins: tractor.roundWins, best: tractor.best, nemesis: tractor.nemesis, day,
+      all: { games: all.games, players: all.players }
+    }
   };
 }
 
@@ -169,6 +184,7 @@ export function setupGameScoreRoutes(app: Express) {
         { $inc: { games: 1, wins: b.won ? 1 : 0, rounds, roundWins, ...crashInc }, $max: { best } },
         { upsert: true }
       );
+      if (allCache) allCache.games++; // свой матч сразу виден в «всего сыграно»
       res.json(await summary(myId));
     } catch (err: any) {
       console.warn('⚠️ Трактор, итог матча:', err?.message || err);
