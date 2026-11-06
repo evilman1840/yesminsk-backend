@@ -104,6 +104,7 @@ connectDb()
     runPlaceImports();
     markCompletedProfiles();
     restoreSwipeHides();
+    fixMinskMirPoint();
     widenFuzzyLocations();
     fixOneSeatEvents();
     fixAutoMeetupHosts();
@@ -131,6 +132,19 @@ async function fixOneSeatEvents() {
     if (r.modifiedCount) console.log(`✅ Сходки на 1 место → 2: ${r.modifiedCount}`);
   } catch (err: any) {
     console.warn('⚠️ Сходки на 1 место:', err?.message || err);
+  }
+}
+
+// У «Минск-Мира» была опечатка в долготе (27.44 вместо 27.54) — точка стояла за Малиновкой. Переносим тех, у кого она сохранилась
+async function fixMinskMirPoint() {
+  try {
+    const users = await User.find({ 'locationExact.coordinates': [27.44, 53.862] }, { _id: 1 }).lean();
+    for (const u of users) {
+      await User.updateOne({ _id: u._id }, { $set: { 'locationExact.coordinates': [27.54, 53.868], 'locationFuzzy.coordinates': obfuscateCoordinates(27.54, 53.868) } });
+    }
+    if (users.length) console.log(`✅ Минск-Мир: точка перенесена у ${users.length}`);
+  } catch (err: any) {
+    console.warn('⚠️ Минск-Мир:', err?.message || err);
   }
 }
 
