@@ -145,7 +145,8 @@ const GameDay = model(
     botGames: { type: Number, default: 0 },
     botPlayers: { type: [Number], default: [] },
     peak: { type: Number, default: 0 },
-    peakAt: { type: Date }
+    peakAt: { type: Date },
+    eveningSent: { type: Boolean } // «Час игр» сегодня уже позвали
   })
 );
 
@@ -441,10 +442,103 @@ async function livePlayers(): Promise<number> {
   return r[0]?.n || 0;
 }
 
+// ---------- Позвать людей поиграть ----------
+// Кто нажал «🔔 Позови меня»: бот пишет, когда кто-то ищет соперника, и в 21:00 — «Час игр».
+// Одному человеку — не чаще раза в сутки, ночью (23:00–9:00) не пишем
+
+const NOTIFY_GAP_MS = DAY;
+const WAVE_GAP_MS = 10 * MIN;   // «кто-то ищет соперника» — волна не чаще раза в 10 минут
+const WAVE_SIZE = 25;           // и не больше 25 человек за раз
+export const EVENING_HOUR = 21;
+let lastWaveAt = 0;
+const minskHour = (t = Date.now()) => new Date(t + MINSK_OFFSET).getUTCHours();
+const quietNow = () => minskHour() >= 23 || minskHour() < 9;
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function callSubscribers(kind: 'wave' | 'evening', seeker?: any) {
+  const since = new Date(Date.now() - NOTIFY_GAP_MS);
+  const exclude = seeker ? [seeker.telegramId, ...(seeker.blockedUsers || [])] : [];
+  const fresh = { $or: [{ gameNotifiedAt: { $exists: false } }, { gameNotifiedAt: { $lt: since } }] };
+  const users: any[] = await User.find(
+    { gameNotify: true, canMessage: { $ne: false }, telegramId: { $nin: exclude }, ...fresh },
+    { telegramId: 1, blockedUsers: 1 }
+  )
+    .sort({ lastActiveAt: -1 })
+    .limit(kind === 'wave' ? WAVE_SIZE * 2 : 1000)
+    .lean();
+  // Кто и так сейчас в игре — не зовём
+  const busy = new Set<number>(await GameMatch.distinct('players.telegramId', { status: { $in: ['searching', 'active'] }, updatedAt: { $gte: new Date(Date.now() - 2 * MIN) } }));
+  const text =
+    kind === 'wave'
+      ? '🎲 Кто-то прямо сейчас ищет соперника в «Крестики-Нолики». Заходи, сыграйте!'
+      : `🎲 ${EVENING_HOUR}:00, час игр в ГУЛЯЙ! Вечером соперник находится быстрее. Сыграем в «Крестики-Нолики»?`;
+  let sent = 0;
+  for (const u of users) {
+    if (kind === 'wave' && sent >= WAVE_SIZE) break;
+    if (busy.has(u.telegramId) || !canStart(u.telegramId)) continue;
+    if (seeker && (u.blockedUsers || []).includes(seeker.telegramId)) continue;
+    // Отмечаем до отправки: два сервера или две волны одного и того же не позовут
+    const claimed = await User.updateOne({ telegramId: u.telegramId, ...fresh }, { $set: { gameNotifiedAt: new Date() } });
+    if (!claimed.modifiedCount) continue;
+    await sendWithButtons(u.telegramId, text, [[{ text: '🎲 Играть', path: '?tab=games' }], [{ text: '🔕 Больше не звать', data: 'games:off' }]]).catch(() => false);
+    sent++;
+    await sleepMs(50); // Telegram: не больше ~30 сообщений в секунду
+  }
+  if (sent) console.log(`🎲 Игры: позвал поиграть (${kind}) — ${sent} чел.`);
+}
+
+// Ищет соперника, а никого нет — зовём подписавшихся
+function callForSeeker(seeker: any) {
+  if (quietNow() || Date.now() - lastWaveAt < WAVE_GAP_MS) return;
+  lastWaveAt = Date.now();
+  callSubscribers('wave', seeker).catch((err) => console.warn('⚠️ Игры, позвать поиграть:', err?.message || err));
+}
+
+// Кнопка «🔕 Больше не звать» под сообщением бота
+export async function handleGameCallback(q: any): Promise<boolean> {
+  if (q?.data !== 'games:off') return false;
+  await User.updateOne({ telegramId: q.from?.id }, { $set: { gameNotify: false } });
+  await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_query_id: q.id, text: 'Больше не позову. Включить снова можно в «Играх»' })
+  }).catch(() => null);
+  return true;
+}
+
+// Сколько людей сейчас в играх — для счётчика в меню. Считаем не чаще раза в 5 секунд на всех
+let lobbyCache: { at: number; searching: number; playing: number; today: number } | null = null;
+async function lobbyCounts() {
+  if (lobbyCache && Date.now() - lobbyCache.at < 5000) return lobbyCache;
+  const fresh = new Date(Date.now() - 40 * 1000);
+  const today = startOfMinskDay();
+  const [searching, active, human, day] = await Promise.all([
+    GameMatch.countDocuments({ status: 'searching', 'players.0.seenAt': { $gte: new Date(Date.now() - SEARCH_STALE_MS) } }),
+    GameMatch.find({ status: 'active', updatedAt: { $gte: new Date(Date.now() - DAY) } }, { players: 1 }).lean(),
+    GameMatch.countDocuments({ status: { $in: ['active', 'finished'] }, createdAt: { $gte: today } }),
+    GameDay.findOne({ day: minskDay() }, { botGames: 1 }).lean() as any
+  ]);
+  const playing = active.reduce((n: number, m: any) => n + m.players.filter((p: any) => new Date(p.seenAt) >= fresh).length, 0);
+  lobbyCache = { at: Date.now(), searching, playing, today: human + (day?.botGames || 0) };
+  return lobbyCache;
+}
+
+// «Час игр» в 21:00 по Минску — один раз за день
+async function eveningCall() {
+  const t = new Date(Date.now() + MINSK_OFFSET);
+  if (t.getUTCHours() !== EVENING_HOUR || t.getUTCMinutes() > 10) return;
+  const day = minskDay();
+  // Только один сервер и один раз: кто первым поставил отметку, тот и зовёт
+  const doc = await GameDay.findOneAndUpdate({ day, eveningSent: { $ne: true } }, { $set: { eveningSent: true } }, { upsert: true, new: true }).catch(() => null);
+  if (!doc) return;
+  await callSubscribers('evening');
+}
+
 // Раз в минуту запоминаем пик за день. Заодно старым партиям без срока хранения — срок
 export function startGameStatsLoop() {
   GameMatch.updateMany({ expireAt: { $exists: false } }, { $set: { expireAt: expireAt('finished') } }, { timestamps: false }).catch(() => {});
   const tick = async () => {
+    eveningCall().catch((err) => console.warn('⚠️ Игры, час игр:', err?.message || err));
     try {
       const n = await livePlayers();
       if (!n) return;
@@ -503,10 +597,41 @@ export function setupGameRoutes(app: Express) {
       const me = await makePlayer(myId, incognito);
       const mine: any = (await GameMatch.create({ mode: 'random', status: 'searching', players: [me], seek: seekProfile(u), expireAt: expireAt('searching') })).toObject();
       const paired = await tryPair(mine);
+      if (!paired) callForSeeker({ telegramId: myId, blockedUsers: u.blockedUsers });
       res.json(view(paired || mine, myId));
     } catch (err: any) {
       console.warn('⚠️ Игры, поиск:', err?.message || err);
       res.status(500).json({ error: 'Не получилось начать поиск' });
+    }
+  });
+
+  // Меню игр: сколько людей ищут соперника и играют, сколько партий сегодня, позвать ли меня
+  app.get('/api/games/lobby', auth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const [c, me] = await Promise.all([lobbyCounts(), User.findOne({ telegramId: req.telegramUser!.id }, { gameNotify: 1, canMessage: 1 }).lean() as any]);
+      const hour = minskHour();
+      res.json({
+        searching: c.searching,
+        playing: c.playing,
+        today: c.today,
+        notify: Boolean(me?.gameNotify),
+        canMessage: me?.canMessage !== false,
+        eveningHour: EVENING_HOUR,
+        eveningNow: hour === EVENING_HOUR
+      });
+    } catch {
+      res.status(500).json({ error: 'Не получилось' });
+    }
+  });
+
+  // «🔔 Позови меня, когда кто-то захочет сыграть»
+  app.post('/api/games/notify', auth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const on = Boolean(req.body?.on);
+      await User.updateOne({ telegramId: req.telegramUser!.id }, { $set: { gameNotify: on } });
+      res.json({ notify: on });
+    } catch {
+      res.status(500).json({ error: 'Не получилось' });
     }
   });
 
