@@ -50,6 +50,7 @@ import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, 
 dotenv.config();
 
 import compression from 'compression';
+import { trafficMeter, startTrafficReport } from './middleware/traffic';
 import { avatarFor, setupAvatarRoutes, storeAvatar, isOwnAvatarLink, moveAvatarsOut, syncEventAvatars, syncAllEventAvatars } from './avatars';
 import { legalVisibleQuery, removeNonConsented } from './legal';
 import { registerAvatarUpload } from './photoModeration';
@@ -60,6 +61,9 @@ app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(securityHeaders);
 app.use(cors());
+// Сколько трафика уходит по каждому адресу — раз в час в лог (стоит до сжатия, считает сжатые байты)
+app.use(trafficMeter);
+startTrafficReport();
 // Сжатие ответов: списки людей и сходок становятся в разы легче
 app.use(compression());
 // Медленные запросы — в лог Render, чтобы было видно, что тормозит
