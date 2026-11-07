@@ -4,6 +4,7 @@ import { Reaction } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { preferencesAllow } from './preferences';
 import { waveQuota, markWaveLimitHit, WaveLimitError } from './waveLimit';
+import { noteIncomingWave } from './waveNotify';
 
 /**
  * 👋 «Пообщаться» от одного человека другому. Если в ответ уже было 👋 — оба «На связи», бот пишет обоим.
@@ -69,7 +70,8 @@ export async function sendLike(
       // Без @username второй человек не сможет написать первым — подсказываем завести
       if (!target.username) sendTelegramMessage(target.telegramId, U.noUsernameMatch(escapeHtml(me.firstName), Boolean(me.username)), 'Открыть анкету', `?user=${me.telegramId}`);
       if (!me.username) sendTelegramMessage(me.telegramId, U.noUsernameMatch(escapeHtml(target.firstName), Boolean(target.username)), 'Открыть анкету', `?user=${target.telegramId}`);
-    } else {
+    } else if (await noteIncomingWave(target.telegramId)) {
+      // Первые 3 за день — сразу; дальше копим до вечерней сводки (waveNotify.ts)
       sendTelegramMessage(
         target.telegramId,
         `👋 <b>${escapeHtml(me.firstName)}</b> передаёт тебе привет и хочет пообщаться${context ? ` ${escapeHtml(context)}` : ''}!\n\nЗагляни в «Хотят пообщаться». Если тоже захочешь, нажми 👋, и сможете написать друг другу.`,

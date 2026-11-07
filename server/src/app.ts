@@ -10,6 +10,7 @@ import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/teleg
 import { securityHeaders, stripMongoOperators, rateLimit } from './middleware/security';
 import { User, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, DIGEST_FREQUENCIES, Gender, PreferredGender } from './models/User';
 import { startDigestLoop } from './digest';
+import { startWaveDigestLoop } from './waveNotify';
 import { startFeedbackLoop } from './feedback';
 import { Event, EventCategory, IEvent, EVENT_TAGS } from './models/Event';
 import { Place } from './models/Place';
@@ -2147,6 +2148,7 @@ app.listen(PORT, () => {
   registerTelegramWebhook();
   startReminderLoop();
   startDigestLoop();
+  startWaveDigestLoop();
   startFeedbackLoop();
   startWishLoop();
   startNudgeLoop();
