@@ -104,7 +104,7 @@ connectDb()
     runPlaceImports();
     markCompletedProfiles();
     restoreSwipeHides();
-    fixMinskMirPoint();
+    fixMovedAreaPoints();
     widenFuzzyLocations();
     fixOneSeatEvents();
     fixAutoMeetupHosts();
@@ -135,16 +135,28 @@ async function fixOneSeatEvents() {
   }
 }
 
-// У «Минск-Мира» была опечатка в долготе (27.44 вместо 27.54) — точка стояла за Малиновкой. Переносим тех, у кого она сохранилась
-async function fixMinskMirPoint() {
+// Точки районов, которые поправили: [lng, lat] было → стало. У «Минск-Мира» была опечатка (стоял за Малиновкой),
+// остальные стояли на краю района. Кто сохранял анкету со старой точкой района, переносим на новую
+const MOVED_AREA_POINTS: [[number, number], [number, number]][] = [
+  [[27.44, 53.862], [27.54, 53.868]], // Минск-Мир
+  [[27.66, 53.866], [27.678, 53.879]], // Ангарская
+  [[27.5, 53.952], [27.48, 53.94]], // Лебяжий
+  [[27.425, 53.897], [27.437, 53.884]], // Сухарево
+  [[27.59, 53.942], [27.607, 53.947]] // Зелёный Луг
+];
+async function fixMovedAreaPoints() {
   try {
-    const users = await User.find({ 'locationExact.coordinates': [27.44, 53.862] }, { _id: 1 }).lean();
-    for (const u of users) {
-      await User.updateOne({ _id: u._id }, { $set: { 'locationExact.coordinates': [27.54, 53.868], 'locationFuzzy.coordinates': obfuscateCoordinates(27.54, 53.868) } });
+    let moved = 0;
+    for (const [from, [lng, lat]] of MOVED_AREA_POINTS) {
+      const users = await User.find({ 'locationExact.coordinates': from }, { _id: 1 }).lean();
+      for (const u of users) {
+        await User.updateOne({ _id: u._id }, { $set: { 'locationExact.coordinates': [lng, lat], 'locationFuzzy.coordinates': obfuscateCoordinates(lng, lat) } });
+      }
+      moved += users.length;
     }
-    if (users.length) console.log(`✅ Минск-Мир: точка перенесена у ${users.length}`);
+    if (moved) console.log(`✅ Точки районов перенесены: ${moved}`);
   } catch (err: any) {
-    console.warn('⚠️ Минск-Мир:', err?.message || err);
+    console.warn('⚠️ Точки районов:', err?.message || err);
   }
 }
 
