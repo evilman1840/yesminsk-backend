@@ -73,6 +73,7 @@ export interface IUser extends Document {
   noShowCount?: number;      // внутренний рейтинг: сколько раз организаторы отметили «Не пришёл(ла)». Никому не показываем
   photosHidden?: boolean;    // жалоба «неприличное фото»: фото не показываем до решения модератора
   guideAbout?: string;    // что может показать
+  waveLimitDays?: string[]; // дни (по Минску, 'YYYY-MM-DD'), когда человек упёрся в дневной лимит 👋 — для /stats
   lastActiveAt: Date;
 }
 
@@ -153,6 +154,7 @@ const UserSchema = new Schema<IUser>(
     noShowCount: { type: Number, default: 0 },
     photosHidden: { type: Boolean, default: false },
     guideAbout: { type: String, maxlength: 140, default: '' },
+    waveLimitDays: { type: [String], default: undefined },
     lastActiveAt: { type: Date, default: Date.now }
   },
   { timestamps: true }

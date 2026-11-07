@@ -202,7 +202,7 @@ export async function handleFeedbackCallback(query: any): Promise<boolean> {
   let sent = 0;
   let matches = 0;
   for (const target of targets) {
-    const res = await sendLike(me, target, `после сходки «${event.title}»`);
+    const res = await sendLike(me, target, `после сходки «${event.title}»`, { free: true });
     if (res) {
       sent++;
       if (res.isMatch) matches++;

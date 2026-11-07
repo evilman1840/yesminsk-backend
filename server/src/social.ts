@@ -3,28 +3,53 @@ import { IUser } from './models/User';
 import { Reaction } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { preferencesAllow } from './preferences';
+import { waveQuota, markWaveLimitHit, WaveLimitError } from './waveLimit';
 
 /**
  * 👋 «Пообщаться» от одного человека другому. Если в ответ уже было 👋 — оба «На связи», бот пишет обоим.
  * context — откуда привет (например, «после сходки «Пикник»»), попадёт в уведомление
- * Возвращает null, если привет передать нельзя (скрыли друг друга)
+ * opts.free — не в счёт дневного лимита (привет участникам после сходки)
+ * Возвращает null, если привет передать нельзя (скрыли друг друга).
+ * Бросает WaveLimitError, если дневной лимит 👋 исчерпан (ответ на чужой 👋 в лимит не входит)
  */
-export async function sendLike(me: IUser, target: IUser, context = ''): Promise<{ isMatch: boolean; isNewLike: boolean } | null> {
+export async function sendLike(
+  me: IUser,
+  target: IUser,
+  context = '',
+  opts: { free?: boolean } = {}
+): Promise<{ isMatch: boolean; isNewLike: boolean } | null> {
   if (me.telegramId === target.telegramId) return null;
   if ((me.blockedUsers || []).includes(target.telegramId) || (target.blockedUsers || []).includes(me.telegramId)) return null;
+  const [previous, reverse] = await Promise.all([
+    Reaction.findOne({ fromTelegramId: me.telegramId, toTelegramId: target.telegramId }),
+    Reaction.findOne({ fromTelegramId: target.telegramId, toTelegramId: me.telegramId, type: 'like' })
+  ]);
   // Его настройки «с кем хочу общаться» меня не допускают — привет не передаём (если он сам передал мне 👋 — можно ответить)
-  if (!preferencesAllow(target, me) && !(await Reaction.exists({ fromTelegramId: target.telegramId, toTelegramId: me.telegramId, type: 'like' }))) return null;
+  if (!preferencesAllow(target, me) && !reverse) return null;
 
-  const previous = await Reaction.findOne({ fromTelegramId: me.telegramId, toTelegramId: target.telegramId });
-  await Reaction.findOneAndUpdate(
-    { fromTelegramId: me.telegramId, toTelegramId: target.telegramId },
-    { $set: { type: 'like' } },
-    { upsert: true }
-  );
-
-  const reverse = await Reaction.findOne({ fromTelegramId: target.telegramId, toTelegramId: me.telegramId, type: 'like' });
   const isMatch = Boolean(reverse);
   const isNewLike = previous?.type !== 'like'; // не спамим уведомлениями при повторном нажатии
+  const free = Boolean(opts.free) || isMatch;
+
+  // Дневной лимит: только для новых 👋 первым
+  let lastOne = false;
+  if (isNewLike && !free) {
+    const quota = await waveQuota(me);
+    if (quota.left <= 0) {
+      markWaveLimitHit(me.telegramId);
+      throw new WaveLimitError(quota);
+    }
+    lastOne = quota.left === 1;
+  }
+
+  if (isNewLike) {
+    await Reaction.findOneAndUpdate(
+      { fromTelegramId: me.telegramId, toTelegramId: target.telegramId },
+      { $set: { type: 'like', likedAt: new Date(), likeFree: free } },
+      { upsert: true }
+    );
+    if (lastOne) markWaveLimitHit(me.telegramId);
+  }
 
   if (isNewLike) {
     if (isMatch) {

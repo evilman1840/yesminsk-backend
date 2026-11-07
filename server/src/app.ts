@@ -18,6 +18,7 @@ import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils'
 import { metersBetween, realPoint, shownPoint } from './utils/userLocation';
 import { Reaction, ReactionType } from './models/Reaction';
 import { sendLike } from './social';
+import { waveQuota, WaveLimitError, rememberWaveLimitLaunch } from './waveLimit';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
 import { setupNewsRoutes, isAdmin, adminIds } from './news';
@@ -112,6 +113,7 @@ connectDb()
     backfillPlaceAuthors();
     removeNonConsented();
     seedEventTemplates();
+    rememberWaveLimitLaunch();
   })
   .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));
 
@@ -332,6 +334,7 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     userObj.avatarUrl = avatarFor(user.telegramId, user.avatarUrl);
     userObj.isAdmin = isAdmin(user.telegramId); // модератор: может удалять любые сходки
     userObj.gamesOpen = process.env.GAMES_OPEN === '1' || userObj.isAdmin; // вкладка «Игры» и человечки на карте
+    if (!isDraft) userObj.waves = await waveQuota(user).catch(() => undefined); // дневной лимит 👋: сколько осталось
 
     res.json(userObj);
   } catch (err: any) {
@@ -997,9 +1000,14 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
     res.json({
       success: true,
       isMatch,
-      user: formatPublicUser(target, me, { iLiked: true, likedMe: isMatch, isMatch })
+      user: formatPublicUser(target, me, { iLiked: true, likedMe: isMatch, isMatch }),
+      waves: await waveQuota(me) // сколько 👋 осталось на сегодня
     });
   } catch (err: any) {
+    // Дневной лимит 👋 исчерпан: 👋 не создаём, приложение покажет карточку про сходки
+    if (err instanceof WaveLimitError) {
+      return res.status(429).json({ error: 'На сегодня «👋» закончились', code: 'DAILY_WAVE_LIMIT', limit: err.quota.limit, waves: err.quota });
+    }
     res.status(500).json({ error: 'Ошибка сохранения реакции' });
   }
 });
