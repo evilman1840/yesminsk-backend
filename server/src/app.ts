@@ -11,6 +11,7 @@ import { securityHeaders, stripMongoOperators, rateLimit } from './middleware/se
 import { User, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, DIGEST_FREQUENCIES, Gender, PreferredGender } from './models/User';
 import { startDigestLoop } from './digest';
 import { startWaveDigestLoop } from './waveNotify';
+import { startQuietSortLoop, isQuiet, quietLast } from './quietSort';
 import { startFeedbackLoop } from './feedback';
 import { Event, EventCategory, IEvent, EVENT_TAGS } from './models/Event';
 import { Place } from './models/Place';
@@ -763,15 +764,20 @@ app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: Authenti
     if (maxKm) candidates = candidates.filter((u) => (metersBetween(currentUser, u) ?? Infinity) <= maxKm * 1000);
     const ids = candidates.map((u) => u.telegramId);
     const [flags, ctx] = await Promise.all([getReactionFlags(tgUser.id, ids), currentUser ? buildRankContext(currentUser, ids) : null]);
+    // Тихая сортировка: кто жмёт 👋 всем подряд без ответа — после всех остальных (quietSort.ts)
+    const quietFlag = (u: any) => Number(isQuiet(u.telegramId));
     const users = ctx
-      ? orderForFeed(
-          candidates
-            .map((u) => ({ u, score: scoreUser(u, ctx, flags.get(u.telegramId)) }))
-            .sort((a, b) => b.score - a.score)
-            .slice(offset, offset + PEOPLE_PAGE),
-          ctx
-        ).map((x) => x.u)
-      : candidates.slice(offset, offset + PEOPLE_PAGE);
+      ? quietLast(
+          orderForFeed(
+            candidates
+              .map((u) => ({ u, score: scoreUser(u, ctx, flags.get(u.telegramId)) }))
+              .sort((a, b) => quietFlag(a.u) - quietFlag(b.u) || b.score - a.score)
+              .slice(offset, offset + PEOPLE_PAGE),
+            ctx
+          ).map((x) => x.u),
+          (u) => u.telegramId
+        )
+      : quietLast(candidates, (u) => u.telegramId).slice(offset, offset + PEOPLE_PAGE);
 
     res.json(users.map((u) => ({ ...formatPublicUser(u, currentUser, flags.get(u.telegramId)), ...(ctx ? { why: whyShown(u.telegramId, ctx), wishKinds: sharedKinds(u.telegramId, ctx) } : {}) })));
   } catch (err: any) {
@@ -2149,6 +2155,7 @@ app.listen(PORT, () => {
   startReminderLoop();
   startDigestLoop();
   startWaveDigestLoop();
+  startQuietSortLoop();
   startFeedbackLoop();
   startWishLoop();
   startNudgeLoop();

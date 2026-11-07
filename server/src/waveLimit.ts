@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { IUser, User } from './models/User';
 import { Reaction } from './models/Reaction';
+import { quietCount } from './quietSort';
 
 /**
  * Дневной лимит 👋 «Пообщаться».
@@ -89,8 +90,45 @@ export async function waveLimitStatsLines(): Promise<string[]> {
     User.countDocuments({ waveLimitDays: { $in: days } })
   ]);
   const since = launch?.at ? new Date(launch.at).toLocaleDateString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'long' }) : '—';
+  const weekAgo = new Date(Date.now() - 7 * DAY);
+  const [reciprocity, hides7] = await Promise.all([
+    reciprocityLine(weekAgo),
+    Reaction.countDocuments({ type: 'dislike', updatedAt: { $gte: weekAgo } })
+  ]);
   return [
     `⏳ Лимит 👋 (${WAVE_LIMIT_BASE}/${WAVE_LIMIT_BOOSTED} в день) включён с ${since}`,
-    `Упёрлись в лимит 👋: сегодня ${today} чел., за 7 дней ${week} чел.`
+    `Упёрлись в лимит 👋: сегодня ${today} чел., за 7 дней ${week} чел.`,
+    reciprocity,
+    `🙈 «Скрыть навсегда» за 7 дней: ${hides7}`,
+    `🔇 В тихой сортировке: ${quietCount()} чел.`
   ];
+}
+
+// Доля взаимных ответов на 👋, нажатые за 7 дней, по направлениям (М → Ж и т. д.)
+async function reciprocityLine(since: Date): Promise<string> {
+  const waves = await Reaction.find(
+    { type: 'like', $or: [{ likedAt: { $gte: since } }, { likedAt: { $exists: false }, createdAt: { $gte: since } }] },
+    { fromTelegramId: 1, toTelegramId: 1 }
+  ).lean();
+  if (!waves.length) return '↩️ Взаимность 👋 за 7 дней: пока нет данных';
+  const ids = [...new Set(waves.flatMap((w) => [w.fromTelegramId, w.toTelegramId]))];
+  const [users, answers] = await Promise.all([
+    User.find({ telegramId: { $in: ids } }, { telegramId: 1, gender: 1 }).lean(),
+    Reaction.find({ type: 'like', fromTelegramId: { $in: waves.map((w) => w.toTelegramId) }, toTelegramId: { $in: waves.map((w) => w.fromTelegramId) } }, { fromTelegramId: 1, toTelegramId: 1 }).lean()
+  ]);
+  const gender = new Map(users.map((u) => [u.telegramId, u.gender]));
+  const answered = new Set(answers.map((a) => `${a.fromTelegramId}:${a.toTelegramId}`));
+  const sign: Record<string, string> = { male: 'М', female: 'Ж' };
+  const dirs: Record<string, [number, number]> = { 'М→Ж': [0, 0], 'Ж→М': [0, 0], 'Ж→Ж': [0, 0], 'М→М': [0, 0] };
+  for (const w of waves) {
+    const key = `${sign[gender.get(w.fromTelegramId) as string] || '?'}→${sign[gender.get(w.toTelegramId) as string] || '?'}`;
+    if (!dirs[key]) continue; // пол не указан
+    dirs[key][0]++;
+    if (answered.has(`${w.toTelegramId}:${w.fromTelegramId}`)) dirs[key][1]++;
+  }
+  const part = (k: string) => {
+    const [n, m] = dirs[k];
+    return `${k} ${n ? Math.round((m / n) * 100) : 0}% (${m}/${n})`;
+  };
+  return `↩️ Взаимность 👋 за 7 дней: ${Object.keys(dirs).map(part).join(' · ')}`;
 }
