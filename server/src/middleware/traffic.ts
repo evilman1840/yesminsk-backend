@@ -46,13 +46,13 @@ export function startTrafficReport() {
     const total = rows.reduce((n, [, s]) => n + s.bytes, 0);
     const mb = (b: number) => (b / 1024 / 1024).toFixed(1);
     const min = Math.round((Date.now() - since) / 60000);
-    console.log(
-      `📦 Трафик за ${min} мин: ${mb(total)} МБ\n` +
-        rows
-          .slice(0, 10)
-          .map(([k, s]) => `   ${mb(s.bytes).padStart(7)} МБ  ${String(s.count).padStart(6)} запр.  ${Math.round(s.bytes / Math.max(1, s.count) / 1024)} КБ/запр.  ${k}`)
-          .join('\n')
-    );
+    // Render режет многострочный лог на отдельные строки — каждая строка своим console.log и со значком,
+    // чтобы поиск по «📦» находил и адреса
+    console.log(`📦 Трафик за ${min} мин: ${mb(total)} МБ`);
+    rows.slice(0, 10).forEach(([k, s], i) => {
+      const share = total ? Math.round((s.bytes / total) * 100) : 0;
+      console.log(`📦 ${i + 1}. ${k} — ${mb(s.bytes)} МБ (${share}%), ${s.count} запр., ${Math.round(s.bytes / Math.max(1, s.count) / 1024)} КБ/запр.`);
+    });
     stats.clear();
     since = Date.now();
   }, 60 * 60 * 1000).unref();
