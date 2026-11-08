@@ -82,7 +82,54 @@ async function download(fileId: string) {
   return (await shrinkImage(body, 1000)) || { type: file.headers.get('content-type') || 'image/jpeg', body };
 }
 
-export async function sendTelegramPhoto(res: Response, fileId: string) {
+// Маленькие копии (200 px) — для меток на карте и списков: в 5-10 раз легче полного фото
+const SMALL_SIDE = 200;
+const MAX_THUMB_BYTES = 8 * 1024 * 1024;
+const thumbs = new Map<string, { type: string; body: Buffer }>();
+let thumbBytes = 0;
+const thumbInflight = new Map<string, Promise<{ type: string; body: Buffer }>>();
+
+// small — отдать копию 200 px (?w=200 в адресе)
+export async function sendTelegramPhoto(res: Response, fileId: string, small = false) {
+  if (small) {
+    let t = thumbs.get(fileId);
+    if (t) {
+      thumbs.delete(fileId);
+      thumbs.set(fileId, t);
+    } else {
+      const full = await getPhoto(fileId);
+      if (!full) return res.sendStatus(404);
+      let p = thumbInflight.get(fileId);
+      if (!p) {
+        p = limited(() => shrinkImage(full.body, SMALL_SIDE))
+          .then((s) => s || full)
+          .finally(() => thumbInflight.delete(fileId));
+        thumbInflight.set(fileId, p);
+      }
+      t = await p;
+      if (!thumbs.has(fileId)) {
+        thumbs.set(fileId, t);
+        thumbBytes += t.body.length;
+        while (thumbBytes > MAX_THUMB_BYTES && thumbs.size) {
+          const [oldId, old] = thumbs.entries().next().value!;
+          thumbs.delete(oldId);
+          thumbBytes -= old.body.length;
+        }
+      }
+    }
+    res.setHeader('Content-Type', t.type);
+    res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    return res.send(t.body);
+  }
+  const item = await getPhoto(fileId);
+  if (!item) return res.sendStatus(404);
+  res.setHeader('Content-Type', item.type);
+  res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+  res.send(item.body);
+}
+
+// Полное фото (до 1000 px): из памяти, из базы или из Telegram
+async function getPhoto(fileId: string): Promise<{ type: string; body: Buffer } | null> {
   let item = cache.get(fileId);
   if (item) {
     // Свежие — в конец очереди
@@ -95,7 +142,7 @@ export async function sendTelegramPhoto(res: Response, fileId: string) {
       inflight.set(fileId, p);
     }
     const got = await p;
-    if (!got) return res.sendStatus(404);
+    if (!got) return null;
     item = got;
     if (!cache.has(fileId)) {
       cache.set(fileId, item);
@@ -107,9 +154,7 @@ export async function sendTelegramPhoto(res: Response, fileId: string) {
       }
     }
   }
-  res.setHeader('Content-Type', item.type);
-  res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
-  res.send(item.body);
+  return item;
 }
 
 // Фото уже в кеше — значит, проверено, что оно наше
@@ -121,6 +166,11 @@ export async function purgePhoto(fileId: string) {
   if (item) {
     cache.delete(fileId);
     cacheBytes -= item.body.length;
+  }
+  const t = thumbs.get(fileId);
+  if (t) {
+    thumbs.delete(fileId);
+    thumbBytes -= t.body.length;
   }
   await SmallPhoto.deleteOne({ fileId }).catch(() => {});
 }

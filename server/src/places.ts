@@ -139,7 +139,7 @@ export function setupPlacesRoutes(app: Express) {
     try {
       const fileId = String(req.params.fileId);
       if (!isCachedPhoto(fileId) && !(await Place.exists({ photos: fileId }))) return res.sendStatus(404);
-      await sendTelegramPhoto(res, fileId);
+      await sendTelegramPhoto(res, fileId, req.query.w === '200');
     } catch {
       res.sendStatus(500);
     }

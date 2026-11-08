@@ -86,7 +86,7 @@ export function setupPhotoRoutes(app: Express) {
       const t0 = Date.now();
       if (!isCachedPhoto(id) && !(await Event.exists({ photos: id })) && !(await User.exists({ photos: id }))) return res.sendStatus(404);
       if (Date.now() - t0 > 1000) console.log(`🐢 проверка фото в базе: ${Date.now() - t0} мс`);
-      await sendTelegramPhoto(res, id);
+      await sendTelegramPhoto(res, id, req.query.w === '200');
     } catch {
       res.sendStatus(500);
     }
