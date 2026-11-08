@@ -1,5 +1,5 @@
 import { Schema, model, Document } from 'mongoose';
-import { EventCategory, EventTag, EVENT_TAGS } from './Event';
+import { EventCategory, EventTag, EVENT_TAGS, EVENT_CATEGORIES } from './Event';
 
 /**
  * Шаблон сходки: заполняет форму за человека («Кофе и поболтать», «Кино», «Поиграем?»…).
@@ -62,7 +62,7 @@ const EventTemplateSchema = new Schema<IEventTemplate>(
     active: { type: Boolean, default: true },
     emoji: { type: String, default: '✨' },
     name: { type: String, required: true, trim: true, maxlength: 40 },
-    category: { type: String, enum: ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'relax', 'learn', 'talk', 'support', 'other'] },
+    category: { type: String, enum: EVENT_CATEGORIES },
     title: { type: String, default: '', maxlength: 100 },
     fallbackTitle: { type: String, default: '', maxlength: 100 },
     description: { type: String, default: '', maxlength: 600 },

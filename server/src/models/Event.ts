@@ -1,6 +1,22 @@
 import { Schema, model, Document } from 'mongoose';
 
-export type EventCategory = 'walk' | 'cafe_bar' | 'expo_cinema' | 'trip_outdoors' | 'boardgames' | 'sport' | 'relax' | 'learn' | 'talk' | 'support' | 'other';
+// «Кафе и бар» разделили на кафе, бар и ресторан, «Арт, кино» — на выставку, музей и кино.
+// Прежние cafe_bar и expo_cinema оставлены для старых записей (их переносят миграции в eventTemplates.ts)
+// и старых версий приложения
+export const EVENT_CATEGORIES = [
+  'walk', 'cafe', 'bar', 'restaurant', 'exhibition', 'museum', 'cinema', 'trip_outdoors', 'boardgames', 'sport',
+  'relax', 'learn', 'talk', 'support', 'other', 'cafe_bar', 'expo_cinema'
+] as const;
+export type EventCategory = (typeof EVENT_CATEGORIES)[number];
+
+// Прежний общий тип → на какие разделили (первый — куда переносим по умолчанию)
+export const SPLIT_CATEGORIES: Partial<Record<EventCategory, EventCategory[]>> = {
+  cafe_bar: ['cafe', 'bar', 'restaurant'],
+  expo_cinema: ['exhibition', 'museum', 'cinema']
+};
+
+// Прежний общий тип от старого приложения записываем как первый из новых
+export const normalizeCategory = (c: string): string => SPLIT_CATEGORIES[c as EventCategory]?.[0] || c;
 
 export interface IEventParticipant {
   telegramId: number;
@@ -82,7 +98,7 @@ const EventSchema = new Schema<IEvent>(
     description: { type: String, required: true, trim: true, maxlength: 600 },
     category: {
       type: String,
-      enum: ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'relax', 'learn', 'talk', 'support', 'other'],
+      enum: EVENT_CATEGORIES,
       default: 'walk',
       required: true
     },

@@ -30,6 +30,15 @@ export interface Viewer {
   now?: number;
 }
 
+// Интересы из анкеты шире типов сходок: «Кафе или бар» — это кафе, бар и ресторан,
+// «Выставка или кино» — выставка, музей и кино
+const GOAL_TYPES: Record<string, string[]> = {
+  cafe_bar: ['cafe', 'bar', 'restaurant'],
+  expo_cinema: ['exhibition', 'museum', 'cinema']
+};
+const likes = (goals: string[], category: string) =>
+  goals.includes(category) || goals.some((g) => GOAL_TYPES[g]?.includes(category));
+
 // Скоро: сегодня-завтра — максимум, через неделю и дальше — ноль
 function timeScore(start: number, now: number) {
   const until = start - now;
@@ -68,7 +77,7 @@ export function rankEvent(ev: RankInput, viewer: Viewer): number {
   const isFull = ev.maxParticipants > 0 && ev.seatsTaken >= ev.maxParticipants;
   return (
     Math.min(30, friends * 15) +
-    (viewer.goals.includes(ev.category) ? 25 : 0) +
+    (likes(viewer.goals, ev.category) ? 25 : 0) +
     timeScore(start, now) +
     distanceScore(distanceTo(ev, viewer)) +
     popularityScore(ev.seatsTaken, ev.maxParticipants) +

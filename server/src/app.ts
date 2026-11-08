@@ -13,7 +13,7 @@ import { startDigestLoop } from './digest';
 import { startWaveDigestLoop } from './waveNotify';
 import { startQuietSortLoop, isQuiet, quietLast } from './quietSort';
 import { startFeedbackLoop } from './feedback';
-import { Event, EventCategory, IEvent, EVENT_TAGS } from './models/Event';
+import { Event, EventCategory, IEvent, EVENT_TAGS, EVENT_CATEGORIES, SPLIT_CATEGORIES, normalizeCategory } from './models/Event';
 import { Place } from './models/Place';
 import { EventTemplate } from './models/EventTemplate';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
@@ -1189,7 +1189,7 @@ const cleanPrice = (v: unknown) => {
 
 const cleanDuration = (v: unknown) => Math.min(24 * 60, Math.max(0, Math.round(Number(v) || 0)));
 
-const EVENT_CATEGORIES = ['walk', 'cafe_bar', 'expo_cinema', 'trip_outdoors', 'boardgames', 'sport', 'relax', 'learn', 'talk', 'support', 'other'];
+const isEventCategory = (c: string): c is EventCategory => (EVENT_CATEGORIES as readonly string[]).includes(c);
 
 // Дата сходки: настоящая дата не дальше чем через год
 const cleanEventDate = (v: unknown) => {
@@ -1233,7 +1233,11 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
     const now = Date.now();
     const me = await User.findOne({ telegramId: tgUser.id }, { hiddenEvents: 1, isEmpath: 1, goals: 1, goal: 1, locationExact: 1, gender: 1, age: 1 }).lean();
     const mineQuery = { $or: [{ 'creator.telegramId': tgUser.id }, { 'participants.telegramId': tgUser.id }] };
-    const categoryQuery = category && category !== 'all' ? { category: category as EventCategory } : {};
+    // Старое приложение просит прежний общий тип («Кафе и бар», «Арт, кино») — отдаём и новые, на которые его разделили
+    const split = category ? SPLIT_CATEGORIES[category as EventCategory] : undefined;
+    const categoryQuery = split
+      ? { category: { $in: [category as EventCategory, ...split] } }
+      : category && category !== 'all' ? { category: category as EventCategory } : {};
 
     // Лента: ближайшие 30 дней (начавшиеся — ещё полчаса, можно успеть подойти).
     // «Неинтересно» и «только для эмпатов» (если я не эмпат) — не показываем
@@ -1346,7 +1350,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     if (!cleanTitle || !cleanDescription || !cleanLocation || !latLng || !when) {
       return res.status(400).json({ error: 'Заполните все обязательные поля события' });
     }
-    if (category && !EVENT_CATEGORIES.includes(category)) return res.status(400).json({ error: 'Неизвестный тип сходки' });
+    if (category && !isEventCategory(category)) return res.status(400).json({ error: 'Неизвестный тип сходки' });
     if ((await Event.countDocuments({ 'creator.telegramId': tgUser.id, createdAt: { $gte: new Date(Date.now() - DAY) } })) >= EVENTS_PER_DAY) {
       return res.status(429).json({ error: 'Сегодня ты уже собрал(а) много сходок. Новые можно будет создать завтра' });
     }
@@ -1365,7 +1369,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     const newEvent = await Event.create({
       title: cleanTitle,
       description: cleanDescription,
-      category: category || 'walk',
+      category: normalizeCategory(category || 'walk'),
       customCategory: cleanCustom,
       tags: cleanTags(tags) || [],
       placeId: placeId && mongoose.Types.ObjectId.isValid(String(placeId)) ? String(placeId) : undefined,
@@ -1828,8 +1832,8 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
     if (cleanTitle) event.title = cleanTitle;
     if (cleanDescription) event.description = cleanDescription;
     if (category) {
-      if (!EVENT_CATEGORIES.includes(category)) return res.status(400).json({ error: 'Неизвестный тип сходки' });
-      event.category = category;
+      if (!isEventCategory(category)) return res.status(400).json({ error: 'Неизвестный тип сходки' });
+      event.category = normalizeCategory(category) as EventCategory;
       event.customCategory = category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '';
     }
     if (cleanTags(tags)) event.tags = cleanTags(tags);

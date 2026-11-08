@@ -8,7 +8,13 @@ import { sendTelegramMessage, escapeHtml, markCannotMessage } from './utils/tele
 
 const CATEGORY_EMOJI: Record<string, string> = {
   walk: '🚶',
+  cafe: '☕️',
+  bar: '🍸',
+  restaurant: '🍽',
   cafe_bar: '☕️',
+  exhibition: '🖼',
+  museum: '🏛',
+  cinema: '🎬',
   expo_cinema: '🎨',
   trip_outdoors: '🌲',
   boardgames: '🎲',

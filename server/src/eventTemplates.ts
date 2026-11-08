@@ -1,6 +1,7 @@
 import { Express, Response } from 'express';
+import mongoose from 'mongoose';
 import { EventTemplate, IEventTemplate, ITemplateField } from './models/EventTemplate';
-import { EventCategory, EventTag, EVENT_TAGS } from './models/Event';
+import { Event, EventCategory, EventTag, EVENT_TAGS, normalizeCategory } from './models/Event';
 import { matchPlaceType } from './models/Place';
 import { DEFAULT_TEMPLATES } from './data/eventTemplates';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
@@ -23,6 +24,8 @@ export async function seedEventTemplates() {
       DEFAULT_TEMPLATES.map((t) => ({ updateOne: { filter: { key: t.key }, update: { $setOnInsert: t }, upsert: true } }))
     );
     if (res.upsertedCount) console.log(`🧩 Добавлены шаблоны сходок: ${res.upsertedCount}`);
+    await splitCafeBar();
+    await splitExpoCinema();
     // Цена теперь общая для всех сходок: убираем старое поле «Сколько стоит?» у «Поиграем?», ставим «Платно»
     await EventTemplate.updateOne({ key: 'sport', 'fields.key': 'cost' }, { $pull: { fields: { key: 'cost' } }, $set: { paid: true } });
     await EventTemplate.updateOne({ key: 'cinema', paid: { $exists: false } }, { $set: { paid: true } });
@@ -55,6 +58,38 @@ export async function seedEventTemplates() {
   } catch (err: any) {
     console.warn('⚠️ Шаблоны сходок:', err?.message || err);
   }
+}
+
+// «Кафе и бар» разделили на кафе, бар и ресторан: один раз переносим старые сходки и шаблоны в «Кафе».
+// Желания («Хочу сходить») хранят ключ шаблона, а не тип, их трогать не нужно
+async function splitCafeBar() {
+  const KEY = 'split-cafe-bar-2026-11-08';
+  const migrations = mongoose.connection.db!.collection('migrations');
+  if (await migrations.findOne({ key: KEY })) return;
+  const events = await Event.updateMany({ category: 'cafe_bar' }, { $set: { category: 'cafe' } });
+  const templates = await EventTemplate.updateMany({ category: 'cafe_bar' }, { $set: { category: 'cafe' } });
+  await migrations.insertOne({ key: KEY, events: events.modifiedCount, templates: templates.modifiedCount, at: new Date() });
+  console.log(`☕️ «Кафе и бар» → «Кафе»: сходок ${events.modifiedCount}, шаблонов ${templates.modifiedCount}`);
+}
+
+// «Арт, кино» разделили на выставку, музей и кино: один раз переносим старые сходки и шаблоны.
+// Тип угадываем по шаблону, потом по названию; если не понять — «Выставка»
+async function splitExpoCinema() {
+  const KEY = 'split-expo-cinema-2026-11-08';
+  const migrations = mongoose.connection.db!.collection('migrations');
+  if (await migrations.findOne({ key: KEY })) return;
+  const old = { category: 'expo_cinema' as const };
+  const cinema = await Event.updateMany(
+    { ...old, $or: [{ templateId: 'cinema' }, { title: /кино|фильм|сеанс/i }] },
+    { $set: { category: 'cinema' } }
+  );
+  const museum = await Event.updateMany({ ...old, templateId: { $ne: 'expo' }, title: /музе/i }, { $set: { category: 'museum' } });
+  const exhibition = await Event.updateMany(old, { $set: { category: 'exhibition' } });
+  const cinemaTpl = await EventTemplate.updateMany({ ...old, key: 'cinema' }, { $set: { category: 'cinema' } });
+  const otherTpl = await EventTemplate.updateMany(old, { $set: { category: 'exhibition' } });
+  const counts = { cinema: cinema.modifiedCount, museum: museum.modifiedCount, exhibition: exhibition.modifiedCount, templates: cinemaTpl.modifiedCount + otherTpl.modifiedCount };
+  await migrations.insertOne({ key: KEY, ...counts, at: new Date() });
+  console.log(`🖼 «Арт, кино» разделено: кино ${counts.cinema}, музей ${counts.museum}, выставка ${counts.exhibition} (шаблонов ${counts.templates})`);
 }
 
 /* ---------- Для приложения ---------- */
@@ -173,9 +208,15 @@ export function buildExtras(fields: ITemplateField[], raw: any): TemplateExtras 
 /* ---------- Таблица для автора ---------- */
 
 const CATEGORY_LABELS: Record<EventCategory, string> = {
-  cafe_bar: 'Кофе/бар',
+  cafe: 'Кафе',
+  bar: 'Бар',
+  restaurant: 'Ресторан',
+  cafe_bar: 'Кофе/бар', // прежний общий тип, для старых таблиц
   walk: 'Прогулка',
-  expo_cinema: 'Арт/кино',
+  exhibition: 'Выставка',
+  museum: 'Музей',
+  cinema: 'Кино',
+  expo_cinema: 'Арт/кино', // прежний общий тип, для старых таблиц
   trip_outdoors: 'За город',
   boardgames: 'Настолки',
   sport: 'Спорт/вело',
@@ -278,7 +319,7 @@ export async function planTemplates(rows: string[][]): Promise<TemplatesPlan> {
     if (get('name')) set.name = get('name').slice(0, 40);
     if (get('category')) {
       const cat = (Object.keys(CATEGORY_LABELS) as EventCategory[]).find((c) => norm(CATEGORY_LABELS[c]) === norm(get('category')) || c === get('category'));
-      cat ? (set.category = cat) : plan.warnings.push(T.badCategory(key, get('category')));
+      cat ? (set.category = normalizeCategory(cat)) : plan.warnings.push(T.badCategory(key, get('category')));
     }
     if (get('title')) set.title = get('title').slice(0, 100);
     if (get('fallbackTitle')) set.fallbackTitle = get('fallbackTitle').slice(0, 100);

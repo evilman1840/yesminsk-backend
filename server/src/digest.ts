@@ -58,7 +58,7 @@ const TITLES: Record<DigestFrequency, string> = {
 };
 
 const CATEGORY_EMOJI: Record<string, string> = {
-  walk: '🚶', cafe_bar: '☕️', expo_cinema: '🎨', trip_outdoors: '🌲', boardgames: '🎲', sport: '🚴', relax: '🧖', learn: '🧭', talk: '🤗', support: '🫂', other: '✨'
+  walk: '🚶', cafe: '☕️', bar: '🍸', restaurant: '🍽', cafe_bar: '☕️', exhibition: '🖼', museum: '🏛', cinema: '🎬', expo_cinema: '🎨', trip_outdoors: '🌲', boardgames: '🎲', sport: '🚴', relax: '🧖', learn: '🧭', talk: '🤗', support: '🫂', other: '✨'
 };
 
 const when = (d: Date) =>
