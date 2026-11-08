@@ -54,7 +54,7 @@ export const METRICS_TEXTS = {
     `Форма: открыли ${opened} → выбрали идею ${picked} → опубликовали ${published} (${rate})${removed ? ` · потом удалили не меньше ${removed}` : ''}`,
   quit: (atPick: number, atForm: number) => `Бросили: на выборе идеи ${atPick} · в заполненной форме ${atForm}`,
   sources: (list: string) => `Откуда открывают: ${list}`,
-  sourceNames: { feed: 'лента', empty: 'пустая лента', place: 'карточка места', link: 'ссылка', map: 'призыв на карте', people: '«Тоже хотят»' } as Record<string, string>,
+  sourceNames: { feed: 'лента', empty: 'пустая лента', place: 'карточка места', link: 'ссылка', map: 'призыв на карте', people: '«Тоже хотят»', buddy: '«Пойдём вместе»' } as Record<string, string>,
   quitFields: (list: string, filled: number) => `Бросили форму, не заполнив: ${list || 'всё было заполнено'}${list && filled ? ` · всё заполнено, но ушли: ${filled}` : ''}`,
   errors: (list: string) => `Ошибки в форме: ${list}`,
   fieldNames: { title: 'название', description: 'описание', place: 'место', time: 'время', templateField: 'поле шаблона' } as Record<string, string>,
@@ -452,4 +452,42 @@ export const PHOTO_MOD_TEXTS = {
 export const PEOPLE_TEXTS = {
   sameEvent: '📅 Идёте на одну сходку',
   samePlans: (names: string) => `🙋 Тоже хочет: ${names}`
+};
+
+// «👯 Пойдём на сходку вместе»: позвать знакомого из «На связи» на сходку компанией
+export const BUDDY_TEXTS = {
+  // Приглашённому
+  invite: (from: string, title: string, when: string, where: string, others: number) =>
+    `<b>${from}</b> зовёт тебя вместе на сходку 🙌\n\n` +
+    `«${title}», ${when}, ${where}\n\n` +
+    (others > 0 ? `Там будет ещё ${people(others)}. Вдвоём со знакомым идти всегда проще 🙂` : 'Компания только собирается, вы будете одними из первых.'),
+  yesBtn: '✅ Пойдём',
+  noBtn: 'Не в этот раз',
+  openBtn: 'Посмотреть сходку',
+  // Приглашённый нажал «✅ Пойдём»
+  joined: '🎉 Готово, ты в списке! Бот напомнит о сходке за сутки и за час.',
+  requested: '📝 Заявка ушла организатору. Когда подтвердит запись, бот напишет.',
+  declinedOk: 'Хорошо, может, в другой раз 🙂',
+  stale: 'Это приглашение уже неактуально',
+  // Отправителю
+  accepted: (name: string, title: string) => `<b>${name}</b> идёт с тобой на «${title}» 🎉`,
+  declined: (name: string) => `<b>${name}</b> в этот раз не сможет. Сходка в силе, может, позовёшь кого-то ещё?`,
+  moreBtn: 'Позвать ещё',
+  // Строка в напоминании приглашённому
+  reminderLine: (name: string) => `${name} тоже идёт 👯`,
+  // Ошибки для приложения
+  notOpen: 'Сюда позвать не получится: сходка уже скоро, на двоих или закончилась',
+  notMatch: 'Позвать можно только того, кто у тебя «На связи»',
+  notFit: 'Эта сходка не подходит этому человеку по условиям организатора',
+  alreadyGoing: 'Этот человек уже идёт на эту сходку',
+  alreadyInvited: 'Приглашение на эту сходку этому человеку уже отправлено',
+  noSeats: 'Не хватает мест, чтобы пойти вдвоём',
+  limit: (n: number) => `На сегодня приглашения закончились: не больше ${n} в день. Завтра можно снова 🙂`,
+  undelivered: 'Бот не может написать этому человеку: в Telegram не разрешены сообщения от бота. Позови лично 🙂',
+  // /stats
+  statsTitle: '👯 <b>«Пойдём вместе» за 7 дней</b>',
+  statsSent: (sent: number, accepted: number, declined: number, expired: number, pending: number, undelivered: number) =>
+    `Отправлено ${sent} · приняли ${accepted} · отказались ${declined} · истекли ${expired}${pending ? ` · ждут ответа ${pending}` : ''}${undelivered ? ` · не дошли ${undelivered}` : ''}`,
+  statsCame: (came: number, first: number) => `Пришли по приглашению (сходки за 30 дней) ${came} · из них впервые на сходке ${first}`,
+  statsScore: (avg: string, n: number) => `«Как прошло?» у пришедших по приглашению: ${avg} из 3 (оценок ${n})`
 };

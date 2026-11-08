@@ -29,6 +29,8 @@ import { setupPollRoutes } from './polls';
 import { banGuard, setupModerationRoutes, reportStopWords, BANNED_ERROR } from './moderation';
 import { checkStopWords, extrasText } from './stopWords';
 import { markInviteJoined } from './invites';
+import { joinEvent, isEventCreator, BY_REQUEST_LOCKED } from './eventJoin';
+import { setupBuddyRoutes, startBuddyLoop, buddyPairIds, inviteBuddyToNewEvent } from './buddyInvites';
 import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
@@ -1114,10 +1116,11 @@ const seatsLimit = (v: any) => {
   return n === 1 ? 2 : Math.min(n, 1000);
 };
 
-const isEventCreator = (ev: IEvent, viewerId: number) => Number(ev.creator.telegramId) === Number(viewerId);
 
 const formatEvent = (ev: IEvent, viewerId: number) => {
   const mine = ev.participants.find((p) => p.telegramId === viewerId);
+  // «👯 идут вместе»: пришедший по приглашению и тот, кто позвал (если оба ещё в списке)
+  const buddies = buddyPairIds(ev);
   return {
     id: ev._id.toString(),
     _id: ev._id.toString(),
@@ -1145,6 +1148,8 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     myConfirmed: Boolean(mine?.confirmedAt),
     byRequest: Boolean(ev.byRequest),
     myApproved: Boolean(ev.byRequest && mine?.approvedAt),
+    // Организатору: сколько пар пришло по «👯 Пойдём вместе»
+    ...(isEventCreator(ev, viewerId) && buddies.pairs ? { buddyPairs: buddies.pairs } : {}),
     audienceGender: ev.audienceGender || 'all',
     ageMin: ev.ageMin || null,
     ageMax: ev.ageMax || null,
@@ -1157,6 +1162,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
       withKids: Boolean(p.withKids),
       confirmed: Boolean(p.confirmedAt), // «✅ Точно приду» — значок у аватарки
       approved: Boolean(ev.byRequest && p.approvedAt), // «По записи»: организатор подтвердил
+      ...(buddies.ids.has(p.telegramId) ? { buddy: true } : {}),
       ...(isEventCreator(ev, viewerId) && p.noShowAt ? { noShow: true } : {}), // «Не пришёл(ла)» — видит только организатор
       ...(isEventCreator(ev, viewerId) && p.username ? { username: p.username } : {})
     })),
@@ -1426,6 +1432,8 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     // «Позвать в компанию»: отмеченным в «Тоже хотят» — личное приглашение от организатора (им общее «собрали сходку» не шлём)
     const inviteIds: number[] = Array.isArray(req.body?.inviteIds) ? [...new Set<number>(req.body.inviteIds.map(Number).filter(Number.isFinite))].slice(0, INVITE_MAX) : [];
     if (inviteIds.length) inviteToMeetup(newEvent, inviteIds, user).catch((err) => console.warn('⚠️ «Позвать в компанию»:', err?.message || err));
+    // «👯 Пойдём вместе» → «Собери свою сходку»: после публикации бот зовёт этого знакомого из «На связи»
+    if (req.body?.buddyId && user) inviteBuddyToNewEvent(newEvent, user, Number(req.body.buddyId)).catch((err) => console.warn('⚠️ «Пойдём вместе» после сходки:', err?.message || err));
     if (req.body?.notifyWishers) notifyWishersOfMeetup(newEvent, wishGroupId, inviteIds).catch((err) => console.warn('⚠️ «Тоже хотят» после сходки:', err?.message || err));
     if (newEvent.placeId) notifyPlaceSavers(newEvent).catch((err) => console.warn('⚠️ Уведомление сохранившим место:', err?.message || err));
     // Модераторам — о каждой новой сходке: посмотреть и при нужде удалить
@@ -1518,72 +1526,12 @@ app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: Auth
       return res.status(404).json({ error: 'Событие не найдено' });
     }
 
-    // Сходка «только для девушек» или «25–35 лет» — организатора не касается
-    const notFit = event.creator.telegramId !== tgUser.id ? audienceError(event, user) : null;
-    if (notFit) return res.status(403).json({ error: notFit });
-
-    // Организатор отказал — повторно записаться нельзя
-    if ((event.cancellations || []).some((c) => c.via === 'host' && c.telegramId === tgUser.id)) {
-      return res.status(403).json({ error: 'Организатор отказал в участии в этой сходке' });
-    }
-
-    // «Только эмпаты» — записаться может тот, кто отметил «Эмпат» в анкете (организатор — всегда)
-    if ((event.tags || []).includes('empaths') && !user?.isEmpath && event.creator.telegramId !== tgUser.id) {
-      return res.status(403).json({ error: 'Эта сходка только для эмпатов. Если это про тебя, отметь «Эмпат» в анкете' });
-    }
-
-    // Сколько человек ведёт с собой и идёт ли с детьми
-    const guests = Math.max(0, Math.floor(Number(req.body?.guests) || 0));
-    const withKids = Boolean(req.body?.withKids);
-    const mine = event.participants.find((p) => p.telegramId === tgUser.id);
-
-    // Места: каждый участник со своими гостями. Свою прошлую запись не считаем — её заменяем
-    if (event.maxParticipants && event.maxParticipants > 0) {
-      const othersSeats = seatsTaken(event) - (mine ? 1 + (mine.guests || 0) : 0);
-      const free = event.maxParticipants - othersSeats;
-      if (1 + guests > free) {
-        return res.status(400).json({
-          error: free <= 0 ? 'Все места заняты' : free === 1 ? 'Осталось одно место, только для тебя' : `Осталось мест: ${free}, можно взять не больше +${free - 1}`
-        });
-      }
-    }
-
-    const changed = !mine || (mine.guests || 0) !== guests || Boolean(mine.withKids) !== withKids;
-    // «По записи»: подтверждённую запись меняет только организатор
-    if (event.byRequest && mine?.approvedAt && changed && !isEventCreator(event, tgUser.id)) {
-      return res.status(403).json({ error: BY_REQUEST_LOCKED(event) });
-    }
-    if (mine) {
-      mine.guests = guests;
-      mine.withKids = withKids;
-    } else {
-      event.participants.push({
-        telegramId: tgUser.id,
-        name: user?.firstName || tgUser.first_name,
-        username: user?.username || tgUser.username,
-        avatarUrl: user?.avatarUrl || tgUser.photo_url || '',
-        joinedAt: new Date(),
-        guests,
-        withKids
-      });
-    }
-
-    await event.save();
-
-    // Организатору — кто идёт и с кем
-    if (changed && event.creator.telegramId !== tgUser.id) {
-      const name = escapeHtml(user?.firstName || tgUser.first_name);
-      const note = companyNote(guests, withKids);
-      const contact = user?.username || tgUser.username ? ` · @${escapeHtml(user?.username || tgUser.username || '')}` : '';
-      sendTelegramMessage(
-        event.creator.telegramId,
-        event.byRequest
-          ? `📝 <b>${name}</b>${contact} ${mine ? 'изменил(а) заявку' : 'хочет записаться'}${note ? ` (${escapeHtml(note)})` : ''}.\n\nПодтверди запись в приложении: там же можно поменять, сколько человек, или убрать.\n\n${eventSummaryHtml(event)}`
-          : `${mine ? '✏️' : '🙌'} <b>${name}</b> ${mine ? 'теперь идёт' : 'идёт на твою сходку'}${note ? ` (${escapeHtml(note)})` : ''}!\n\n${eventSummaryHtml(event)}`,
-        'Открыть сходку',
-        eventAppPath(event)
-      );
-    }
+    // Сколько человек ведёт с собой и идёт ли с детьми; проверки и сообщение организатору — в eventJoin.ts
+    const result = await joinEvent(event, user, tgUser, {
+      guests: Math.max(0, Math.floor(Number(req.body?.guests) || 0)),
+      withKids: Boolean(req.body?.withKids)
+    });
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
 
     res.json({ success: true, event: formatEvent(event, tgUser.id) });
   } catch (err) {
@@ -1666,10 +1614,6 @@ app.post('/api/events/:id/remove', telegramAuthMiddleware as any, async (req: Au
     res.status(500).json({ error: 'Не получилось, попробуй ещё раз' });
   }
 });
-
-// «По записи»: подтверждённую запись меняет и отменяет только организатор
-const BY_REQUEST_LOCKED = (ev: IEvent) =>
-  `Запись подтверждена организатором. Чтобы отменить или изменить её, напиши ${ev.creator.username ? `@${ev.creator.username}` : 'организатору'}`;
 
 // Организатор: подтвердить запись и/или поменять, сколько человек (вместе с детьми)
 app.post('/api/events/:id/participant', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
@@ -2146,6 +2090,9 @@ setupPhotoRoutes(app);
 // «Хочу сходить»
 setupWishRoutes(app);
 
+// «👯 Пойдём на сходку вместе»: позвать знакомого из «На связи»
+setupBuddyRoutes(app, formatEvent);
+
 // Удаление аккаунта
 setupAccountRoutes(app);
 
@@ -2174,6 +2121,7 @@ app.listen(PORT, () => {
   startQuietSortLoop();
   startFeedbackLoop();
   startWishLoop();
+  startBuddyLoop();
   startNudgeLoop();
   startProposalLoop();
   startAfishaLoop();

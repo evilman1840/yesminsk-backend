@@ -1,5 +1,5 @@
 import { Event, IEvent } from './models/Event';
-import { priceLabel } from './texts';
+import { priceLabel, BUDDY_TEXTS } from './texts';
 import { sendTelegramMessage, escapeHtml, markCannotMessage } from './utils/telegramNotify';
 
 /**
@@ -76,11 +76,13 @@ export async function sendEventButtons(chatId: number, html: string, rows: Event
 }
 
 // Напоминание: участникам — «Точно приду / Отменить», организатору — просто открыть сходку
+// Пришёл по «👯 Пойдём вместе» — дописываем, что позвавший тоже идёт
 const remindParticipants = (event: IEvent, html: string) => {
   for (const p of event.participants) {
     const isHost = p.telegramId === event.creator.telegramId;
     const rows: EventBtn[][] = [...(isHost ? [] : [rsvpButtons(event)]), [{ text: 'Открыть сходку', path: eventAppPath(event) }]];
-    sendEventButtons(p.telegramId, html, rows);
+    const buddy = p.buddyOf ? event.participants.find((x) => x.telegramId === p.buddyOf) : undefined;
+    sendEventButtons(p.telegramId, buddy ? `${html}\n\n${BUDDY_TEXTS.reminderLine(escapeHtml(buddy.name))}` : html, rows);
   }
 };
 

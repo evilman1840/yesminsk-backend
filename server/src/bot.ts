@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { handleGameCallback } from './games';
 import { handleTemplatesCommand, handleTemplatesCallback } from './eventTemplates';
 import { handleWishCallback, handleWishStart } from './wishes';
+import { handleBuddyCallback } from './buddyInvites';
 import { handleNudgeCallback, handleNudgeCommand } from './nudges';
 import { handleProposalCallback, handleWishesCommand, handleGroupPlaceReply, handleOwnTimeReply } from './proposals';
 import { handleSuggestionCallback, handleSuggestionEditMessage } from './placeSuggestions';
@@ -62,7 +63,7 @@ export function setupTelegramBot(app: Express) {
     // Нажатие кнопки под жалобой (бан / всё в порядке)
     if (req.body?.callback_query) {
       const q = req.body.callback_query;
-      (async () => (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handleNudgeCallback(q)) || (await handleProposalCallback(q)) || (await handleSuggestionCallback(q)) || (await handleAfishaCallback(q)) || (await handlePhotoModerationCallback(q, banUser)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)) || (await handleGameCallback(q)))().catch((err) =>
+      (async () => (await handleBuddyCallback(q)) || (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handleNudgeCallback(q)) || (await handleProposalCallback(q)) || (await handleSuggestionCallback(q)) || (await handleAfishaCallback(q)) || (await handlePhotoModerationCallback(q, banUser)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)) || (await handleGameCallback(q)))().catch((err) =>
         console.warn('⚠️ Ошибка обработки кнопки:', err?.message || err)
       );
       return;

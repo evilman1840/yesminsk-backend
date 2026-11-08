@@ -36,7 +36,7 @@ const GOAL_TYPES: Record<string, string[]> = {
   cafe_bar: ['cafe', 'bar', 'restaurant'],
   expo_cinema: ['exhibition', 'museum', 'cinema']
 };
-const likes = (goals: string[], category: string) =>
+export const likes = (goals: string[], category: string) =>
   goals.includes(category) || goals.some((g) => GOAL_TYPES[g]?.includes(category));
 
 // Скоро: сегодня-завтра — максимум, через неделю и дальше — ноль

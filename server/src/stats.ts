@@ -14,6 +14,7 @@ import { nudgeStatsLines } from './nudges';
 import { gameStatsLines } from './games';
 import { tractorStatsLines } from './gameScores';
 import { waveLimitStatsLines } from './waveLimit';
+import { buddyStatsLines } from './buddyInvites';
 
 /**
  * /stats — сводка по приложению для автора (только ADMIN_TELEGRAM_IDS)
@@ -126,6 +127,7 @@ export async function buildStats(): Promise<string> {
   ];
 
   const waveLimitLines = await waveLimitStatsLines().catch(() => [] as string[]);
+  const buddyLines = await buddyStatsLines().catch(() => [] as string[]);
 
   const date = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 
@@ -152,6 +154,7 @@ export async function buildStats(): Promise<string> {
     `🗓 <b>Сходки</b>`,
     `Предстоящих ${eventsUpcoming.length}, на них идут ${goingUpcoming} чел.`,
     `Создано за 7 дней ${plus(eventsCreated7)} · всего ${eventsTotal}`,
+    ...(buddyLines.length ? [``, ...buddyLines] : []),
     ``,
     ...meetupLines,
     ``,
