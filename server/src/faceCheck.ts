@@ -52,7 +52,7 @@ export async function photoHasFace(image: Buffer): Promise<boolean | null> {
   const jpeg = await sharp(image).rotate().flatten({ background: '#ffffff' }).resize({ width: 640, height: 640, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
   const response = await getClient().messages.parse({
     model: MODEL,
-    max_tokens: 200,
+    max_tokens: 1500, // с запасом: модель может сначала подумать, и при 200 ответ обрезался посреди JSON
     output_config: { effort: 'low', format: zodOutputFormat(Verdict) },
     system: SYSTEM,
     messages: [
