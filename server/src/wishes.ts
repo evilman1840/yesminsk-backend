@@ -575,7 +575,7 @@ export function setupWishRoutes(app: Express) {
       const summary = await wishSummary();
       // Считаем только тех, кого я увижу в списке «Тоже хотят»: видимая анкета, не заблокировали друг друга
       // и их настройки «с кем хочу общаться» (пол, возраст) допускают меня. Себя — считаем
-      const meUser = await User.findOne({ telegramId: me }, { gender: 1, age: 1, blockedUsers: 1 }).lean();
+      const meUser = await User.findOne({ telegramId: me }, { gender: 1, age: 1, blockedUsers: 1, photoOnly: 1, hasFacePhoto: 1, photosHidden: 1 }).lean();
       const allIds = [...new Set(summary.flatMap((s) => s.userIds))].filter((id) => id !== me);
       const seen = new Set(
         (

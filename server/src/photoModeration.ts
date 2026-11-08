@@ -81,7 +81,7 @@ async function removeUpload(up: any) {
     await purgePhoto(up.fileId);
   } else if (up.kind === 'avatar') {
     // Удаляем, только если это фото всё ещё стоит в анкете
-    const r = await User.updateOne({ telegramId: up.telegramId, avatarUrl: `avatar:${up.avatarV}` }, { $set: { avatarUrl: '' } });
+    const r = await User.updateOne({ telegramId: up.telegramId, avatarUrl: `avatar:${up.avatarV}` }, { $set: { avatarUrl: '', hasFacePhoto: false, faceCheckedFor: '' } });
     if (r.modifiedCount) {
       await deleteAvatar(up.telegramId);
       await syncEventAvatars(up.telegramId, '');
@@ -95,7 +95,7 @@ async function removeUpload(up: any) {
 export async function removeUserPhotos(telegramId: number) {
   const u = await User.findOne({ telegramId }, { photos: 1, avatarUrl: 1 }).lean();
   for (const id of u?.photos || []) await purgePhoto(id);
-  await User.updateOne({ telegramId }, { $set: { photos: [], avatarUrl: '', photosHidden: false } });
+  await User.updateOne({ telegramId }, { $set: { photos: [], avatarUrl: '', photosHidden: false, hasFacePhoto: false, faceCheckedFor: '' } });
   await deleteAvatar(telegramId);
   await syncEventAvatars(telegramId, '');
 }

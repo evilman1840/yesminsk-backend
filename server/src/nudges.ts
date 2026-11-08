@@ -9,6 +9,7 @@ import { meetupCreatePath } from './eventTemplates';
 import { sendWithButtons, Btn } from './wishes';
 import { isAdmin } from './news';
 import { NUDGE_TEXTS as T, PROFILE_NUDGE_TEXTS as P, USERNAME_TEXTS as U, peopleCount } from './texts';
+import { isOwnPhotoUrl } from './avatars';
 
 /**
  * Приветственный толчок: новичку без активности бот пишет через сутки и (последний раз) через 4 дня.
@@ -156,7 +157,7 @@ export async function runNudges(force = false) {
 // Что не заполнено: своё фото, о себе, интересы, «обычно хожу»
 export const missingProfileParts = (u: IUser) => {
   const parts: string[] = [];
-  if (!u.avatarUrl || u.avatarUrl.includes('images.unsplash.com')) parts.push(P.photo);
+  if (!isOwnPhotoUrl(u.avatarUrl)) parts.push(P.photo);
   if (!u.bio || u.bio.trim().length < 10) parts.push(P.bio);
   if (!u.goals?.length) parts.push(P.goals);
   if (!u.goesWith) parts.push(P.goesWith);
@@ -179,7 +180,7 @@ async function runProfileNudges(now: number) {
     isBanned: { $ne: true },
     profileNudgeSentAt: { $exists: false },
     createdAt: { $lte: new Date(now - 3 * DAY) },
-    $or: [{ avatarUrl: { $regex: 'images\\.unsplash\\.com' } }, { avatarUrl: { $in: ['', null] } }, { bio: { $in: ['', null] } }, { bio: { $regex: '^.{0,9}$', $options: 's' } }]
+    $or: [{ avatarUrl: { $regex: 'images\\.unsplash\\.com|no-photo\\.svg' } }, { avatarUrl: { $in: ['', null] } }, { bio: { $in: ['', null] } }, { bio: { $regex: '^.{0,9}$', $options: 's' } }]
   }).select('-skipped');
   for (const user of users) {
     const lastNudge = Math.max(user.nudge1SentAt?.getTime() || 0, user.nudge2SentAt?.getTime() || 0);

@@ -23,7 +23,32 @@ const Avatar = model(
   })
 );
 
-const NO_AVATAR = 'https://yesminsk-app.vercel.app/favicon.svg';
+// Заглушка, пока нет своего фото: нейтральный силуэт (раньше было стоковое фото девушки с Unsplash)
+export const NO_PHOTO = 'https://yesminsk-app.vercel.app/no-photo.svg';
+const NO_AVATAR = NO_PHOTO;
+// Своё фото, а не заглушка
+export const isOwnPhotoUrl = (url?: string) => Boolean(url) && !/images\.unsplash\.com|no-photo\.svg|favicon\.svg/.test(url!);
+
+// Один раз: стоковое фото девушки, стоявшее заглушкой, → нейтральный силуэт (в анкетах и в сходках)
+const OLD_STUB = /images\.unsplash\.com\/photo-1534528741775/;
+export async function replaceOldStubAvatar() {
+  const KEY = 'no-photo-stub-2026-11-08';
+  try {
+    const migrations = mongoose.connection.db!.collection('migrations');
+    if (await migrations.findOne({ key: KEY })) return;
+    const users = await User.updateMany({ avatarUrl: OLD_STUB }, { $set: { avatarUrl: NO_PHOTO, hasFacePhoto: false, faceCheckedFor: NO_PHOTO } });
+    const creators = await Event.updateMany({ 'creator.avatarUrl': OLD_STUB }, { $set: { 'creator.avatarUrl': NO_PHOTO } });
+    const parts = await Event.updateMany(
+      { 'participants.avatarUrl': OLD_STUB },
+      { $set: { 'participants.$[p].avatarUrl': NO_PHOTO } },
+      { arrayFilters: [{ 'p.avatarUrl': OLD_STUB }] }
+    );
+    await migrations.insertOne({ key: KEY, at: new Date() });
+    console.log(`✅ Заглушка фото заменена: анкет ${users.modifiedCount}, сходок ${creators.modifiedCount + parts.modifiedCount}`);
+  } catch (err: any) {
+    console.warn('⚠️ Замена заглушки фото:', err?.message || err);
+  }
+}
 
 const baseUrl = () => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 4000}`).replace(/\/+$/, '');
 
@@ -72,6 +97,13 @@ export async function syncAllEventAvatars() {
   } catch (err: any) {
     console.warn('⚠️ Фото в сходках:', err?.message || err);
   }
+}
+
+// Исходник загруженного фото профиля (для проверки лица)
+export async function avatarBytes(telegramId: number): Promise<Buffer | null> {
+  const stored = await Avatar.findOne({ telegramId }, { data: 1 }).lean();
+  const m = stored?.data?.match(/^data:image\/[\w.+-]+;base64,(.+)$/s);
+  return m ? Buffer.from(m[1], 'base64') : null;
 }
 
 // Удаление аккаунта: фото профиля тоже стираем

@@ -41,6 +41,7 @@ import { setupWishRoutes, startWishLoop, onMeetupFromWish, notifyWishersOfMeetup
 import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
 import { Wish, WishGroup, WISH_WINDOWS, WishWindow } from './models/Wish';
 import { theirPreferencesAllow } from './preferences';
+import { refreshFaceCheck, backfillFaceChecks } from './faceCheck';
 import { startNudgeLoop } from './nudges';
 import { startProposalLoop, setupProposalRoutes, fixAutoMeetupHosts } from './proposals';
 import { setupAccountRoutes } from './account';
@@ -55,7 +56,7 @@ dotenv.config();
 
 import compression from 'compression';
 import { trafficMeter, startTrafficReport } from './middleware/traffic';
-import { avatarFor, setupAvatarRoutes, storeAvatar, isOwnAvatarLink, moveAvatarsOut, syncEventAvatars, syncAllEventAvatars } from './avatars';
+import { avatarFor, setupAvatarRoutes, storeAvatar, isOwnAvatarLink, moveAvatarsOut, syncEventAvatars, syncAllEventAvatars, replaceOldStubAvatar, NO_PHOTO } from './avatars';
 import { legalVisibleQuery, removeNonConsented } from './legal';
 import { registerAvatarUpload } from './photoModeration';
 
@@ -111,11 +112,12 @@ connectDb()
     widenFuzzyLocations();
     fixOneSeatEvents();
     fixAutoMeetupHosts();
-    moveAvatarsOut().then(syncAllEventAvatars);
+    moveAvatarsOut().then(syncAllEventAvatars).then(replaceOldStubAvatar);
     backfillPlaceAuthors();
     removeNonConsented();
     seedEventTemplates();
     rememberWaveLimitLaunch();
+    setTimeout(backfillFaceChecks, 60 * 1000); // проверка лиц на фото — когда сервер уже разогрелся
   })
   .catch((err: any) => console.warn('⚠️ Ошибка подключения MongoDB:', err?.message || err));
 
@@ -273,7 +275,7 @@ function newUserFields(tgUser: any) {
     firstName: tgUser.first_name,
     lastName: tgUser.last_name,
     username: tgUser.username,
-    avatarUrl: tgUser.photo_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400',
+    avatarUrl: tgUser.photo_url || NO_PHOTO, // нет фото в Telegram — нейтральный силуэт
     goal: 'walk',
     age: 25,
     gender: 'not_specified',
@@ -334,6 +336,11 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     userObj.locationManual = Boolean(user.locationManual);
     userObj.photos = (user.photos || []).map(photoUrl); // ещё фото в анкете — адресами
     userObj.avatarUrl = avatarFor(user.telegramId, user.avatarUrl);
+    // Видно ли лицо на главном фото: ok / no / pending (ещё проверяем)
+    userObj.faceStatus = user.faceCheckedFor === (user.avatarUrl || '') ? (user.hasFacePhoto ? 'ok' : 'no') : 'pending';
+    delete userObj.faceCheckedFor;
+    delete userObj.hasFacePhoto;
+    if (!isDraft && userObj.faceStatus === 'pending') refreshFaceCheck(user.telegramId).catch(() => {});
     userObj.isAdmin = isAdmin(user.telegramId); // модератор: может удалять любые сходки
     userObj.gamesOpen = process.env.GAMES_OPEN === '1' || userObj.isAdmin; // вкладка «Игры» и человечки на карте
     if (!isDraft) userObj.waves = await waveQuota(user).catch(() => undefined); // дневной лимит 👋: сколько осталось
@@ -419,6 +426,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       isProfileActive,
       isGuide,
       guideAbout,
+      photoOnly,
       photos,
       ageConfirmed,
       genderConfirmed
@@ -468,6 +476,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     // Пол выбран самим человеком — больше не спрашиваем
     if (gender && genderConfirmed) updateData.genderConfirmed = true;
     if (['all', 'male', 'female'].includes(preferredGender)) updateData.preferredGender = preferredGender as PreferredGender;
+    if (photoOnly !== undefined) updateData.photoOnly = Boolean(photoOnly);
     if (preferredAgeRange && typeof preferredAgeRange === 'object') {
       const min = Math.floor(Number(preferredAgeRange.min));
       const max = Math.floor(Number(preferredAgeRange.max));
@@ -517,6 +526,8 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     }
     // Новое фото — сразу и в сходках, где человек организатор или участник
     if (updateData.avatarUrl) syncEventAvatars(tgUser.id, updateData.avatarUrl).catch((err) => console.warn('⚠️ Фото в сходках:', err?.message || err));
+    // Новое фото — проверяем, видно ли на нём лицо (для «Только с теми, у кого есть фото»)
+    if (updateData.avatarUrl) refreshFaceCheck(tgUser.id).catch(() => {});
 
     const f = updatedUser?.locationFuzzy?.coordinates;
     res.json({ success: true, user: updatedUser, shownCoordinates: f?.length === 2 ? [f[1], f[0]] : null, locationManual: Boolean(updatedUser?.locationManual) });
@@ -733,7 +744,7 @@ app.get('/api/users/nearby-count', telegramAuthMiddleware as any, async (req: Au
     const tgUser = req.telegramUser!;
     const currentUser = await User.findOne(
       { telegramId: tgUser.id },
-      { blockedUsers: 1, skipped: 1, gender: 1, age: 1, preferredGender: 1, preferredAgeRange: 1, locationExact: 1, areaName: 1 }
+      { blockedUsers: 1, skipped: 1, gender: 1, age: 1, preferredGender: 1, preferredAgeRange: 1, photoOnly: 1, hasFacePhoto: 1, photosHidden: 1, locationExact: 1, areaName: 1 }
     ).lean();
     const query = nearbyQuery(tgUser, currentUser, typeof req.query.goal === 'string' ? req.query.goal : undefined);
     const { and, maxKm } = peopleFilters(req.query, currentUser);

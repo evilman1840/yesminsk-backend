@@ -126,6 +126,9 @@ const GameMatch = model(
         age: Number,
         preferredGender: String,
         preferredAgeRange: { min: Number, max: Number },
+        photoOnly: Boolean,
+        hasFacePhoto: Boolean,
+        photosHidden: Boolean,
         goals: [String],
         areaName: String,
         blockedUsers: [Number]
@@ -373,6 +376,9 @@ const seekProfile = (u: any) => ({
   age: u?.age,
   preferredGender: u?.preferredGender,
   preferredAgeRange: u?.preferredAgeRange,
+  photoOnly: u?.photoOnly,
+  hasFacePhoto: u?.hasFacePhoto,
+  photosHidden: u?.photosHidden,
   goals: u?.goals?.length ? u.goals : u?.goal ? [u.goal] : [],
   areaName: u?.areaName,
   blockedUsers: u?.blockedUsers || []
@@ -632,7 +638,7 @@ export function setupGameRoutes(app: Express) {
         if (s.status === 'active') return res.json(view(s, myId));
         if (s.status === 'searching') await update({ _id: s._id, status: 'searching' }, { status: 'cancelled' });
       }
-      const u: any = await User.findOne({ telegramId: myId }, { gender: 1, age: 1, preferredGender: 1, preferredAgeRange: 1, goals: 1, goal: 1, areaName: 1, blockedUsers: 1, hasAgreedToRules: 1 }).lean();
+      const u: any = await User.findOne({ telegramId: myId }, { gender: 1, age: 1, preferredGender: 1, preferredAgeRange: 1, photoOnly: 1, hasFacePhoto: 1, photosHidden: 1, goals: 1, goal: 1, areaName: 1, blockedUsers: 1, hasAgreedToRules: 1 }).lean();
       if (!u?.hasAgreedToRules) return res.status(403).json({ error: 'Сначала прими правила «ГУЛЯЙ!»' });
       const me = await makePlayer(myId, incognito);
       const mine: any = (await GameMatch.create({ mode: 'random', status: 'searching', players: [me], seek: seekProfile(u), expireAt: expireAt('searching') })).toObject();

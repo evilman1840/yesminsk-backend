@@ -7,6 +7,7 @@ import { calculateDistanceMeters } from './utils/geoUtils';
 import { realPoint, shownPoint } from './utils/userLocation';
 import { PEOPLE_TEXTS as T } from './texts';
 import { CUSTOM_WISH } from './wishes';
+import { isOwnPhotoUrl } from './avatars';
 
 /**
  * Порядок во вкладке «Люди» и на карте: по тому, что сближает (общие интересы и планы, близость, как человек ходит),
@@ -36,7 +37,7 @@ const jitter = (viewerId: number, id: number, day: string) => {
   return ((h >>> 0) % 1000) / 1000;
 };
 
-const hasOwnPhoto = (u: any) => Boolean(u.avatarUrl) && !String(u.avatarUrl).includes('images.unsplash.com');
+const hasOwnPhoto = (u: any) => isOwnPhotoUrl(u.avatarUrl);
 
 export function scoreUser(u: any, ctx: RankContext, flags?: { iLiked: boolean; likedMe: boolean }, now = Date.now()) {
   let s = 0;

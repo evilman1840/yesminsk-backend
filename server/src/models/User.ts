@@ -32,6 +32,9 @@ export interface IUser extends Document {
     min: number;
     max: number;
   };
+  photoOnly?: boolean;       // «Только с теми, у кого есть фото»: видим друг друга только с людьми, у кого на фото лицо
+  hasFacePhoto?: boolean;    // на главном фото виден человек (проверка faceCheck.ts)
+  faceCheckedFor?: string;   // какое фото (значение avatarUrl) проверено
   goal: ActivityGoal;      // главная цель (первая из выбранных)
   goals: ActivityGoal[];   // все цели «Что тебе интересно?»
   customGoal?: string;     // своя идея, когда среди целей есть 'other'
@@ -155,6 +158,9 @@ const UserSchema = new Schema<IUser>(
     hiddenByReports: { type: Boolean, default: false },
     noShowCount: { type: Number, default: 0 },
     photosHidden: { type: Boolean, default: false },
+    photoOnly: { type: Boolean },
+    hasFacePhoto: { type: Boolean },
+    faceCheckedFor: { type: String },
     guideAbout: { type: String, maxlength: 140, default: '' },
     waveLimitDays: { type: [String], default: undefined },
     waveNotify: {
