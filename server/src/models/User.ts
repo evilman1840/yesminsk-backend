@@ -41,6 +41,9 @@ export interface IUser extends Document {
   goesWith?: GoesWith;     // «Обычно хожу»: один, парой, компанией, с детьми
   digest?: DigestFrequency; // подборки от бота; не выбрано — «на выходные»
   isEmpath?: boolean;      // «🫶 Эмпат» — человек отметил сам в анкете
+  isSupporter?: boolean;   // «🧡 Поддерживаю проект» — сам отметил после доната (на честном слове)
+  thanksOk?: boolean;      // разрешил сказать спасибо по имени (список /thanks)
+  thanksAt?: Date;
   ventUntil?: Date;        // «🫂 Хочется поныть» — до этого времени (видят только эмпаты)
   lastDigestAt?: Date;
   locationExact?: {
@@ -124,6 +127,9 @@ const UserSchema = new Schema<IUser>(
     goesWith: { type: String, enum: GOES_WITH },
     digest: { type: String, enum: DIGEST_FREQUENCIES },
     isEmpath: { type: Boolean, default: false },
+    isSupporter: { type: Boolean },
+    thanksOk: { type: Boolean },
+    thanksAt: { type: Date },
     ventUntil: { type: Date },
     lastDigestAt: { type: Date },
     locationExact: {

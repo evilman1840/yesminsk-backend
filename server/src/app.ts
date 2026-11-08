@@ -727,7 +727,7 @@ const PEOPLE_PAGE = 300;
 // у активных там сотни записей, и 3000 полных анкет на запрос переполняли память сервера (OOM 01.11)
 const FEED_USER_FIELDS = {
   telegramId: 1, firstName: 1, username: 1, avatarUrl: 1, photos: 1, photosHidden: 1, age: 1, gender: 1, goal: 1, goals: 1,
-  customGoal: 1, goesWith: 1, isEmpath: 1, ventUntil: 1, bio: 1, areaName: 1, isTourist: 1, isGuide: 1, guideAbout: 1,
+  customGoal: 1, goesWith: 1, isEmpath: 1, isSupporter: 1, ventUntil: 1, bio: 1, areaName: 1, isTourist: 1, isGuide: 1, guideAbout: 1,
   availableUntil: 1, lastActiveAt: 1, createdAt: 1, locationExact: 1, locationFuzzy: 1
 };
 
@@ -956,6 +956,7 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     customGoal: u.goals?.includes('other') ? u.customGoal || '' : '',
     goesWith: u.goesWith,
     isEmpath: Boolean(u.isEmpath),
+    isSupporter: Boolean(u.isSupporter) || undefined,
     // «Хочется поныть» — только для эмпатов (и не прошедший)
     ventUntil: currentUser?.isEmpath && u.ventUntil && new Date(u.ventUntil).getTime() > Date.now() ? u.ventUntil : undefined,
     bio: u.bio,
