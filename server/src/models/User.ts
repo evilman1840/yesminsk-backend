@@ -41,7 +41,7 @@ export interface IUser extends Document {
   goesWith?: GoesWith;     // «Обычно хожу»: один, парой, компанией, с детьми
   digest?: DigestFrequency; // подборки от бота; не выбрано — «на выходные»
   isEmpath?: boolean;      // «🫶 Эмпат» — человек отметил сам в анкете
-  isSupporter?: boolean;   // «🧡 Поддерживаю проект» — сам отметил после доната (на честном слове)
+  isSupporter?: boolean;   // «🥧 Кормлю ГУЛЯЙ-Печку» — сам отметил после доната (на честном слове)
   thanksOk?: boolean;      // разрешил сказать спасибо по имени (список /thanks)
   thanksAt?: Date;
   ventUntil?: Date;        // «🫂 Хочется поныть» — до этого времени (видят только эмпаты)
