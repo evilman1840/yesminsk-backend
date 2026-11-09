@@ -9,7 +9,7 @@ import { isAdmin } from './news';
  * Одна запись на человека и серию
  */
 
-const SOURCES = ['joy', 'strip', 'shelf', 'tv', 'next', 'link'] as const;
+const SOURCES = ['intro', 'joy', 'strip', 'shelf', 'tv', 'next', 'link'] as const;
 
 const SerialView = model(
   'SerialView',
@@ -122,7 +122,7 @@ export async function serialStatsLines(): Promise<string[]> {
       lines.push(`   карточки: ${funnel.join(' → ')}`);
     }
     if (from.length) {
-      const names: Record<string, string> = { joy: 'сама после радости', strip: 'плашка', shelf: 'список серий', tv: 'телевизор', next: 'из прошлой серии', link: 'ссылка' };
+      const names: Record<string, string> = { intro: 'приветствие Миши', joy: 'сама после радости', strip: 'плашка', shelf: 'список серий', tv: 'телевизор', next: 'из прошлой серии', link: 'ссылка' };
       lines.push(`   откуда: ${from.map(([s, n]) => `${names[s]} ${n}`).join(' · ')}`);
     }
   }
