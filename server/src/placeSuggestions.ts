@@ -355,6 +355,7 @@ export async function handleSuggestionCallback(query: any): Promise<boolean> {
     s.status = 'rejected';
     await s.save();
     sendTelegramMessage(query.message.chat.id, T.rejected);
+    if (!isAdmin(s.telegramId)) sendTelegramMessage(s.telegramId, T.authorRejected(escapeHtml(s.name)), 'Открыть «Места»', '?tab=places');
     return true;
   }
   // Уже есть такое место (по названию) — не дублируем

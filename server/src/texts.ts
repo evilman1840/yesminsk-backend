@@ -322,6 +322,7 @@ export const SUGGEST_TEXTS = {
   rejectBtn: '❌ Нет',
   approved: (name: string, type: string) => `✅ «${name}» добавлено в «Места»${type ? ` с типом «${type}»` : ''}. Поправить можно кнопками ниже или потом: /placeedit`,
   rejected: 'Не добавляем, ок.',
+  authorRejected: (name: string) => `🙏 Спасибо за «${name}»! В «Места» его пока не добавили — но присылай ещё, каждое предложение читаю.`,
   authorApproved: (name: string) => `💛 Твоё место «${name}» добавили в «Места». Спасибо, что делаешь «ГУЛЯЙ!» лучше!`,
   // Группа «Хочу сходить» без места
   groupAsk: (n: number, what: string) =>
