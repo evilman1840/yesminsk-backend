@@ -77,20 +77,20 @@ export const PHOTO_TEXTS = {
   failed: 'Не получилось сохранить фото, попробуй ещё раз'
 };
 
-// Цена сходки: бесплатно, свои траты (кассе, заведению) или взнос организатору (фикс или донат)
+// Цена сходки: бесплатно, кассе или кафе (билет, чек на месте) или организатору (фикс или донат)
 const byn = (n: number) => `${String(n).replace('.', ',')} BYN`;
 type PriceEv = { isPaid?: boolean; price?: number; payTo?: string; donation?: boolean; payFor?: string };
 export const PRICE_TEXTS = {
   free: '💚 Бесплатно',
-  venue: '🎟 Свои траты',
-  venueAmount: (n: number) => `🎟 Свои траты, примерно ${byn(n)}`,
-  host: '🙋 Взнос организатору',
-  hostAmount: (n: number) => `🙋 Взнос организатору ${byn(n)}`,
+  venue: '🎟 Билет или чек на месте',
+  venueAmount: (n: number) => `🎟 Билет или чек на месте, ~${byn(n)}`,
+  host: '🙋 Платят организатору',
+  hostAmount: (n: number) => `🙋 Организатору ${byn(n)}`,
   donation: '🙋 Донат организатору, сколько не жалко',
   donationAmount: (n: number) => `🙋 Донат организатору, обычно ${byn(n)}`,
   freeShort: 'бесплатно',
-  venueShort: 'свои траты',
-  hostShort: 'взнос',
+  venueShort: 'на месте',
+  hostShort: 'организатору',
   donationShort: 'донат'
 };
 
