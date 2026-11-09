@@ -61,6 +61,7 @@ import { trafficMeter, startTrafficReport } from './middleware/traffic';
 import { avatarFor, setupAvatarRoutes, storeAvatar, isOwnAvatarLink, moveAvatarsOut, syncEventAvatars, syncAllEventAvatars, replaceOldStubAvatar, NO_PHOTO } from './avatars';
 import { legalVisibleQuery, removeNonConsented } from './legal';
 import { registerAvatarUpload } from './photoModeration';
+import { needsRecruitHelp, startRecruitLoop } from './recruitHelp';
 
 const app = express();
 // Render стоит перед нами прокси: настоящий IP человека — в X-Forwarded-For
@@ -1174,6 +1175,10 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     photos: ev.photosHidden ? [] : (ev.photos || []).map(photoUrl),
     isPaid: Boolean(ev.isPaid),
     price: ev.isPaid && ev.price ? ev.price : undefined,
+    // «Помощь в наборе»: до начала меньше 48 часов, а идут меньше трёх — выше в ленте и в подсказках
+    ...(needsRecruitHelp(ev) ? { recruiting: true } : {}),
+    // Организатору после сходки: ответил ли «Все, кто записался, пришли?»
+    ...(isEventCreator(ev, viewerId) && ev.attendanceAnswer ? { attendanceAnswer: ev.attendanceAnswer } : {}),
     // «⭐ От ГУЛЯЙ!» — сходки автора проекта
     isOfficial: isAdmin(ev.creator.telegramId)
   };
@@ -1300,7 +1305,8 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
         participantIds: ev.participants.map((p) => p.telegramId),
         seatsTaken: seatsTaken(ev),
         maxParticipants: ev.maxParticipants || 0,
-        isOfficial: isAdmin(ev.creator.telegramId)
+        isOfficial: isAdmin(ev.creator.telegramId),
+        recruiting: needsRecruitHelp(ev, now)
       };
       return { ev, score: rankEvent(input, viewer), distanceMeters: distanceTo(input, viewer) };
     });
@@ -1670,9 +1676,33 @@ app.post('/api/events/:id/noshow', telegramAuthMiddleware as any, async (req: Au
     const noShow = Boolean(req.body?.noShow);
     if (noShow !== Boolean(target.noShowAt)) {
       target.noShowAt = noShow ? new Date() : undefined;
+      // Отмечает в списке — значит, ответил на «Все, кто записался, пришли?»
+      event.attendanceAnswer = 'marked';
+      event.attendanceAnsweredAt = new Date();
       await event.save();
       await User.updateOne({ telegramId: targetId }, { $inc: { noShowCount: noShow ? 1 : -1 } });
     }
+    res.json(formatEvent(event, tgUser.id));
+  } catch {
+    res.status(500).json({ error: 'Не получилось, попробуй ещё раз' });
+  }
+});
+
+// «Кто пришёл» → «Готово»: организатор проверил список (даже если все пришли и галочки не снимал)
+app.post('/api/events/:id/attendance', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const eventId = getParamId(req.params.id);
+    const event = mongoose.Types.ObjectId.isValid(eventId) ? await Event.findById(eventId) : null;
+    if (!event || !event.isActive) return res.status(404).json({ error: 'Сходка не найдена' });
+    if (!isEventCreator(event, tgUser.id)) return res.status(403).json({ error: 'Это может только организатор' });
+    const started = event.dateTime.getTime();
+    if (started > Date.now()) return res.status(400).json({ error: 'Отметить можно, когда сходка уже началась' });
+    if (started < Date.now() - NO_SHOW_DAYS * DAY) return res.status(400).json({ error: 'Отметить можно в течение трёх дней после сходки' });
+    const anyNoShow = event.participants.some((p) => p.noShowAt);
+    event.attendanceAnswer = anyNoShow ? 'marked' : event.attendanceAnswer || 'all';
+    event.attendanceAnsweredAt = new Date();
+    await event.save();
     res.json(formatEvent(event, tgUser.id));
   } catch {
     res.status(500).json({ error: 'Не получилось, попробуй ещё раз' });
@@ -2122,6 +2152,7 @@ app.listen(PORT, () => {
   startFeedbackLoop();
   startWishLoop();
   startBuddyLoop();
+  startRecruitLoop();
   startNudgeLoop();
   startProposalLoop();
   startAfishaLoop();

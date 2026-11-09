@@ -30,6 +30,7 @@ export interface IEventParticipant {
   approvedAt?: Date;   // «По записи»: организатор подтвердил запись (после этого отменить можно только через него)
   noShowAt?: Date;     // организатор отметил «Не пришёл(ла)» (внутренний рейтинг, человеку не сообщаем)
   buddyOf?: number;    // «👯 Пойдём вместе»: пришёл по приглашению этого человека (buddyInvites.ts)
+  viaRecruit?: boolean; // записался по сообщению «Компания собирается» (recruitHelp.ts)
 }
 
 // Отменил участие: из списка убираем, а здесь остаётся след (кто, когда, откуда)
@@ -89,6 +90,12 @@ export interface IEvent extends Document {
   feedbackAskedAt?: Date;        // участникам задан вопрос
   feedbackHostAskedAt?: Date;    // организатору задан вопрос (отдельно: раньше его не спрашивали)
   feedbackSummarySentAt?: Date;  // организатору отправлена сводка
+  // «Помощь в наборе» (recruitHelp.ts): до начала меньше 48 часов, а идут меньше трёх
+  recruitHelpAt?: Date;          // когда сходка впервые попала в помощь (для /stats)
+  recruitHostTipAt?: Date;       // организатору подсказали позвать кого-то из «На связи»
+  // «Все, кто записался, пришли?» после сходки: all — «Да, все», marked — отметил не пришедших в приложении
+  attendanceAnswer?: 'all' | 'marked';
+  attendanceAnsweredAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -143,7 +150,8 @@ const EventSchema = new Schema<IEvent>(
         confirmedAt: { type: Date },
         approvedAt: { type: Date },
         noShowAt: { type: Date },
-        buddyOf: { type: Number }
+        buddyOf: { type: Number },
+        viaRecruit: { type: Boolean }
       }
     ],
     cancellations: [
@@ -172,7 +180,11 @@ const EventSchema = new Schema<IEvent>(
     ],
     feedbackAskedAt: { type: Date },
     feedbackHostAskedAt: { type: Date },
-    feedbackSummarySentAt: { type: Date }
+    feedbackSummarySentAt: { type: Date },
+    recruitHelpAt: { type: Date, index: true },
+    recruitHostTipAt: { type: Date },
+    attendanceAnswer: { type: String, enum: ['all', 'marked'] },
+    attendanceAnsweredAt: { type: Date }
   },
   { timestamps: true }
 );

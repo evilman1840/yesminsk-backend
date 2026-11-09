@@ -491,3 +491,36 @@ export const BUDDY_TEXTS = {
   statsCame: (came: number, first: number) => `Пришли по приглашению (сходки за 30 дней) ${came} · из них впервые на сходке ${first}`,
   statsScore: (avg: string, n: number) => `«Как прошло?» у пришедших по приглашению: ${avg} из 3 (оценок ${n})`
 };
+
+// «Помощь в наборе»: до сходки меньше 48 часов, а идут меньше трёх (recruitHelp.ts)
+export const RECRUIT_TEXTS = {
+  // Тем, у кого желание «🙋 Хочу сходить» того же вида на эти дни
+  wish: (what: string, title: string, when: string, where: string) =>
+    `Ты хотел(а) ${what} 🙌 Есть сходка «<b>${title}</b>», ${when}, ${where}. Компания собирается, не хватает пары человек.`,
+  goBtn: 'Пойду',
+  skipBtn: 'Не подходит',
+  joined: '🎉 Готово, ты в списке! Бот напомнит о сходке за сутки и за час.',
+  requested: '📝 Заявка ушла организатору. Когда подтвердит запись, бот напишет.',
+  stale: 'Эта сходка уже неактуальна',
+  openBtn: 'Открыть сходку',
+  // Организатору, один раз
+  hostTip: (title: string, n: number) =>
+    `«<b>${title}</b>»: ${n ? `пока записались ${n}` : 'пока никто не записался'}. Позови кого-то из «На связи», вдвоём заходить проще`,
+  hostBtn: '👯 Позвать',
+  // «Все, кто записался, пришли?» — после «Как прошло?»
+  attendanceAsk: (title: string) => `Все, кто записался на «<b>${title}</b>», пришли?`,
+  attendanceAll: 'Да, все',
+  attendanceMark: 'Нет, отмечу',
+  attendanceAllDone: (title: string) => `Все, кто записался на «${title}», пришли? Да, все ✅`,
+  attendanceThanks: 'Спасибо!',
+  attendanceLate: 'Отметить уже не получится: прошло больше трёх дней',
+  // /stats
+  statsTitle: '🆘 <b>Помощь в наборе за 7 дней</b>',
+  statsHelp: (n: number, gathered: number, done: number, upcoming: number) =>
+    `Попали в помощь: ${n} · из прошедших (${done}) набрали 3+ человека: ${gathered}${upcoming ? ` · ещё не прошли ${upcoming}` : ''}`,
+  statsPings: (sent: number, joined: number, declined: number) => `«Компания собирается»: отправлено ${sent} · записались ${joined} · «Не подходит» ${declined}`,
+  statsAttendance: (pct: string, came: number, signed: number, answered: number, asked: number) =>
+    `Явка: ${pct} (пришли ${came} из ${signed}) · по сходкам, где организатор ответил «Все пришли?»: ${answered} из ${asked}`,
+  statsAttendanceNone: (asked: number) => `Явка: пока никто из организаторов не ответил «Все пришли?» (спросили ${asked})`,
+  statsPairs: (pairs: number, held: number) => `Прошли вдвоём (организатор и один участник): ${pairs} из ${held}`
+};

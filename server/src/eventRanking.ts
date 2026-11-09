@@ -12,6 +12,8 @@ const DAY = 24 * HOUR;
 export const OFFICIAL_PIN_DAYS = 3;
 export const OFFICIAL_PIN_SCORE = 1000;
 export const OFFICIAL_BONUS = 40;
+// «Помощь в наборе» (recruitHelp.ts): скоро начнётся, а идут меньше трёх — поднимаем
+export const RECRUIT_BONUS = 30;
 
 export interface RankInput {
   dateTime: Date;
@@ -21,6 +23,7 @@ export interface RankInput {
   seatsTaken: number;
   maxParticipants: number; // 0 — без ограничений
   isOfficial: boolean;
+  recruiting?: boolean;
 }
 
 export interface Viewer {
@@ -82,6 +85,7 @@ export function rankEvent(ev: RankInput, viewer: Viewer): number {
     distanceScore(distanceTo(ev, viewer)) +
     popularityScore(ev.seatsTaken, ev.maxParticipants) +
     (ev.isOfficial ? OFFICIAL_BONUS : 0) +
+    (ev.recruiting ? RECRUIT_BONUS : 0) +
     (isFull ? -50 : 0)
   );
 }

@@ -4,6 +4,7 @@ import { User } from './models/User';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { sendLike } from './social';
 import { isAdmin } from './news';
+import { RECRUIT_TEXTS as RT } from './texts';
 
 /**
  * «Как прошло?» — после сходки бот спрашивает участников и организатора: оценка, пара слов организатору
@@ -64,16 +65,41 @@ async function askParticipants(event: IEvent) {
 async function askHost(event: IEvent) {
   const hostId = event.creator.telegramId;
   if (!event.participants.some((p) => p.telegramId !== hostId)) return;
-  // Кнопка в приложение — отметить, кто не пришёл (видно только организатору, человеку не сообщаем)
+  await say(hostId, `👋 Как прошла твоя сходка «<b>${escapeHtml(event.title)}</b>»?`, [
+    [3, 2, 1].map((score) => ({ text: `${SCORES[score].emoji} ${SCORES[score].label}`, callback_data: `fb:${event._id}:${score}` }))
+  ]);
+  // Отдельным сообщением, чтобы ответ на оценку не убрал эти кнопки. Кто не пришёл, человеку не сообщаем
+  if (event.attendanceAnsweredAt) return;
   const appUrl = (process.env.MINI_APP_URL || '').replace(/\/+$/, '');
-  await say(
-    hostId,
-    `👋 Как прошла твоя сходка «<b>${escapeHtml(event.title)}</b>»?\n\nЕсли кто-то записался, но не пришёл, отметь это в сходке: так в будущем будет понятнее, на кого можно рассчитывать.`,
+  await say(hostId, RT.attendanceAsk(escapeHtml(event.title)), [
     [
-      [3, 2, 1].map((score) => ({ text: `${SCORES[score].emoji} ${SCORES[score].label}`, callback_data: `fb:${event._id}:${score}` })),
-      ...(appUrl ? [[{ text: '🚫 Отметить, кто не пришёл', web_app: { url: `${appUrl}/?event=${event._id}` } }]] : [])
+      { text: RT.attendanceAll, callback_data: `att:all:${event._id}` },
+      ...(appUrl ? [{ text: RT.attendanceMark, web_app: { url: `${appUrl}/?event=${event._id}&attendance=1` } }] : [])
     ]
-  );
+  ]);
+}
+
+// «Да, все» на «Все, кто записался, пришли?»: снимаем отметки «Не пришёл(ла)», если были
+const ATTENDANCE_DAYS = 3;
+async function handleAttendanceCallback(query: any): Promise<boolean> {
+  const [, , eventId] = String(query.data).split(':');
+  const fromId: number = query.from?.id;
+  const answer = (text = '') => callBot('answerCallbackQuery', { callback_query_id: query.id, text });
+  const event = mongoose.Types.ObjectId.isValid(eventId) ? await Event.findById(eventId) : null;
+  if (!event || Number(event.creator.telegramId) !== Number(fromId)) return answer(), true;
+  if (event.dateTime.getTime() < Date.now() - ATTENDANCE_DAYS * 24 * HOUR) {
+    answer(RT.attendanceLate);
+    return true;
+  }
+  const unmark = event.participants.filter((p) => p.noShowAt);
+  unmark.forEach((p) => (p.noShowAt = undefined));
+  event.attendanceAnswer = 'all';
+  event.attendanceAnsweredAt = new Date();
+  await event.save();
+  for (const p of unmark) await User.updateOne({ telegramId: p.telegramId }, { $inc: { noShowCount: -1 } });
+  answer(RT.attendanceThanks);
+  callBot('editMessageText', { chat_id: query.message?.chat?.id, message_id: query.message?.message_id, text: RT.attendanceAllDone(event.title) });
+  return true;
 }
 
 async function sendSummary(event: IEvent) {
@@ -136,6 +162,7 @@ export function startFeedbackLoop() {
  */
 export async function handleFeedbackCallback(query: any): Promise<boolean> {
   const data: string = query.data || '';
+  if (data.startsWith('att:')) return handleAttendanceCallback(query);
   if (!data.startsWith('fb:') && !data.startsWith('fbc:')) return false;
   const chatId: number = query.message?.chat?.id;
   const fromId: number = query.from?.id;

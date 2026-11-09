@@ -33,13 +33,14 @@ export const freeSeats = (event: IEvent) => (event.maxParticipants && event.maxP
 export type JoinResult = { ok: true; changed: boolean } | { ok: false; status: number; error: string };
 
 /**
- * Записать (или поменять, с кем идёт). buddyOf — пришёл по приглашению «Пойдём вместе» от этого человека
+ * Записать (или поменять, с кем идёт). buddyOf — пришёл по приглашению «Пойдём вместе» от этого человека,
+ * viaRecruit — по сообщению «Компания собирается»
  */
 export async function joinEvent(
   event: IEvent,
   user: Person,
   tg: TgFallback,
-  opts: { guests: number; withKids: boolean; buddyOf?: number }
+  opts: { guests: number; withKids: boolean; buddyOf?: number; viaRecruit?: boolean }
 ): Promise<JoinResult> {
   const blocked = joinBlockReason(event, user, tg.id);
   if (blocked) return { ok: false, status: 403, error: blocked };
@@ -78,7 +79,8 @@ export async function joinEvent(
       joinedAt: new Date(),
       guests,
       withKids,
-      ...(opts.buddyOf ? { buddyOf: opts.buddyOf } : {})
+      ...(opts.buddyOf ? { buddyOf: opts.buddyOf } : {}),
+      ...(opts.viaRecruit ? { viaRecruit: true } : {})
     });
   }
 

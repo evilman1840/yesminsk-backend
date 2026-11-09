@@ -59,6 +59,18 @@ const AREA_POINTS: Record<string, [number, number]> = {
   'Пушкинская / Запад': [53.909, 27.496]
 };
 
+// Ближайший район к точке сходки ([lng, lat]); дальше 2,5 км от центра любого — null
+export function nearestArea(coords?: number[]): string | null {
+  if (coords?.length !== 2) return null;
+  let best: { name: string; d: number } | null = null;
+  for (const [name, [lat, lng]] of Object.entries(AREA_POINTS)) {
+    if (name.includes(' / Запад')) continue; // дубль «Пушкинской»
+    const d = calculateDistanceMeters(coords[1], coords[0], lat, lng);
+    if (!best || d < best.d) best = { name, d };
+  }
+  return best && best.d <= 2500 ? best.name : null;
+}
+
 const DEFAULT_LNG = 27.5615;
 const DEFAULT_LAT = 53.9045;
 const isDefaultPoint = (c?: number[]) => Boolean(c && c.length === 2 && Math.abs(c[0] - DEFAULT_LNG) < 1e-4 && Math.abs(c[1] - DEFAULT_LAT) < 1e-4);

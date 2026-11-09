@@ -82,7 +82,7 @@ export async function invitesLeft(fromId: number) {
 }
 
 // «На связи»: оба нажали 👋
-async function matchIdsOf(myId: number): Promise<number[]> {
+export async function matchIdsOf(myId: number): Promise<number[]> {
   const [mine, toMe] = await Promise.all([
     Reaction.distinct('toTelegramId', { fromTelegramId: myId, type: 'like' }),
     Reaction.distinct('fromTelegramId', { toTelegramId: myId, type: 'like' })
