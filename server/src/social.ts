@@ -10,6 +10,7 @@ import { noteIncomingWave } from './waveNotify';
  * 👋 «Пообщаться» от одного человека другому. Если в ответ уже было 👋 — оба «На связи», бот пишет обоим.
  * context — откуда привет (например, «после сходки «Пикник»»), попадёт в уведомление
  * opts.free — не в счёт дневного лимита (привет участникам после сходки)
+ * opts.bulk — привет сразу многим (после сходки): тех, с кем я сам раньше нажал «Отменить», не трогаем
  * Возвращает null, если привет передать нельзя (скрыли друг друга).
  * Бросает WaveLimitError, если дневной лимит 👋 исчерпан (ответ на чужой 👋 в лимит не входит)
  */
@@ -17,7 +18,7 @@ export async function sendLike(
   me: IUser,
   target: IUser,
   context = '',
-  opts: { free?: boolean } = {}
+  opts: { free?: boolean; bulk?: boolean } = {}
 ): Promise<{ isMatch: boolean; isNewLike: boolean } | null> {
   if (me.telegramId === target.telegramId) return null;
   if ((me.blockedUsers || []).includes(target.telegramId) || (target.blockedUsers || []).includes(me.telegramId)) return null;
@@ -27,6 +28,8 @@ export async function sendLike(
   ]);
   // Его настройки «с кем хочу общаться» меня не допускают — привет не передаём (если он сам передал мне 👋 — можно ответить)
   if (!preferencesAllow(target, me) && !reverse) return null;
+  // Массовый привет не возвращает в «На связи» тех, кого я оттуда убрал
+  if (opts.bulk && previous?.type === 'unmatch') return null;
 
   const isMatch = Boolean(reverse);
   const isNewLike = previous?.type !== 'like'; // не спамим уведомлениями при повторном нажатии
