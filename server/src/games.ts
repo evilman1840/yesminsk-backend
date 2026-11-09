@@ -55,7 +55,7 @@ export const GAME_PHRASES: Record<string, string> = {
   sixseven: '67!',
   base: 'Это база',
   cringe: 'Кринж…',
-  minusvibe: 'Минус вайб',
+  minusvibe: 'Пу-Пу-Пууу',
   nochance: 'Без шансов',
   hurt: 'Это было больно 🥀',
   onemore: 'Ещё одну и спать',
