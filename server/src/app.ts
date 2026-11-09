@@ -1176,6 +1176,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     photos: ev.photosHidden ? [] : (ev.photos || []).map(photoUrl),
     isPaid: Boolean(ev.isPaid),
     price: ev.isPaid && ev.price ? ev.price : undefined,
+    ...(ev.isPaid && ev.payTo === 'host' ? { payTo: 'host', donation: Boolean(ev.donation) || undefined, payFor: ev.payFor || undefined } : {}),
     // «Помощь в наборе»: до начала меньше 48 часов, а идут меньше трёх — выше в ленте и в подсказках
     ...(needsRecruitHelp(ev) ? { recruiting: true } : {}),
     // Организатору после сходки: ответил ли «Все, кто записался, пришли?»
@@ -1195,6 +1196,19 @@ async function templateFields(templateId: unknown, rawExtras: unknown) {
 }
 
 // Примерная цена в BYN: число от 0 до 10 000, иначе не указана
+// Кому платят: заведению (по умолчанию) или организатору — тогда фикс или донат и «за что»
+const cleanPayment = (body: any) => {
+  if (!body?.isPaid) return { isPaid: false, price: undefined, payTo: undefined, donation: undefined, payFor: undefined };
+  const host = body.payTo === 'host';
+  return {
+    isPaid: true,
+    price: cleanPrice(body.price),
+    payTo: host ? ('host' as const) : undefined,
+    donation: host && body.donation ? true : undefined,
+    payFor: host ? cleanText(body.payFor, 60) || undefined : undefined
+  };
+};
+
 const cleanPrice = (v: unknown) => {
   const n = Number(String(v ?? '').replace(',', '.'));
   return Number.isFinite(n) && n > 0 && n <= 10000 ? Math.round(n * 100) / 100 : undefined;
@@ -1351,8 +1365,6 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       durationMinutes,
       extras,
       photos,
-      isPaid,
-      price,
       wishGroupId
     } = req.body;
 
@@ -1377,7 +1389,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
     const [lat, lng] = latLng;
     // Митинги, протесты, политика: однозначные слова — сходку не показываем, автора в бан
     const cleanCustom = category === 'other' ? String(customCategory || '').trim().slice(0, 30) : '';
-    const stopTexts = [cleanTitle, cleanDescription, cleanLocation, cleanCustom, extrasText(tpl.extras)];
+    const stopTexts = [cleanTitle, cleanDescription, cleanLocation, cleanCustom, extrasText(tpl.extras), cleanPayment(req.body).payFor || ''];
     const stop = checkStopWords(...stopTexts);
 
     const newEvent = await Event.create({
@@ -1392,8 +1404,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       extras: tpl.extras,
       badges: tpl.badges,
       photos: cleanPhotoIds(photos) || [],
-      isPaid: Boolean(isPaid),
-      price: isPaid ? cleanPrice(price) : undefined,
+      ...cleanPayment(req.body),
       byRequest: Boolean(req.body?.byRequest),
       locationName: cleanLocation,
       location: {
@@ -1773,8 +1784,12 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
     } = req.body;
 
     if (isPaid !== undefined) {
-      event.isPaid = Boolean(isPaid);
-      event.price = event.isPaid ? cleanPrice(price) : undefined;
+      const pay = cleanPayment(req.body);
+      event.isPaid = pay.isPaid;
+      event.price = pay.price;
+      event.payTo = pay.payTo;
+      event.donation = pay.donation;
+      event.payFor = pay.payFor;
     }
     // Включили «По записи» в уже созданной сходке: кто уже записался — подтверждён
     if (req.body?.byRequest !== undefined) {
@@ -1799,7 +1814,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
 
     const oldTime = event.dateTime.getTime();
     const oldPlace = event.locationName;
-    const textsOf = () => [event!.title, event!.description, event!.locationName, event!.customCategory, extrasText(event!.extras)];
+    const textsOf = () => [event!.title, event!.description, event!.locationName, event!.customCategory, extrasText(event!.extras), event!.payFor || ''];
     const oldTexts = textsOf().join('\n');
 
     const cleanTitle = cleanText(title, 100);

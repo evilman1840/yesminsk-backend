@@ -61,6 +61,9 @@ export interface IEvent extends Document {
   photos?: string[];        // до 5 фото (file_id в Telegram)
   isPaid?: boolean;         // платная сходка (по умолчанию бесплатная)
   price?: number;           // примерно сколько, BYN с человека
+  payTo?: 'venue' | 'host'; // кому платят: кассе/заведению (кино, кафе) или организатору (настолка, мастер-класс). Нет поля — заведению
+  donation?: boolean;       // взнос организатору — донат по желанию, а не фиксированная сумма
+  payFor?: string;          // за что взнос: «аренда игр», «чай и печеньки»
   byRequest?: boolean;      // «По записи»: организатор подтверждает каждого и меняет, сколько человек; сам отменить подтверждённую запись нельзя
   location: {
     type: 'Point';
@@ -125,6 +128,9 @@ const EventSchema = new Schema<IEvent>(
     ageMax: { type: Number, min: 18, max: 99 },
     isPaid: { type: Boolean, default: false },
     price: { type: Number, min: 0 },
+    payTo: { type: String, enum: ['venue', 'host'] },
+    donation: { type: Boolean },
+    payFor: { type: String, maxlength: 60 },
     byRequest: { type: Boolean, default: false },
     location: {
       type: { type: String, enum: ['Point'], default: 'Point' },

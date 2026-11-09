@@ -77,20 +77,38 @@ export const PHOTO_TEXTS = {
   failed: 'Не получилось сохранить фото, попробуй ещё раз'
 };
 
-// Цена сходки: бесплатно или платно (по умолчанию бесплатно)
+// Цена сходки: бесплатно, свои траты (кассе, заведению) или взнос организатору (фикс или донат)
+const byn = (n: number) => `${String(n).replace('.', ',')} BYN`;
+type PriceEv = { isPaid?: boolean; price?: number; payTo?: string; donation?: boolean; payFor?: string };
 export const PRICE_TEXTS = {
   free: '💚 Бесплатно',
-  paid: '💸 Платно',
-  paidAmount: (amount: number) => `💸 Платно, примерно ${String(amount).replace('.', ',')} BYN`,
+  venue: '🎟 Свои траты',
+  venueAmount: (n: number) => `🎟 Свои траты, примерно ${byn(n)}`,
+  host: '🙋 Взнос организатору',
+  hostAmount: (n: number) => `🙋 Взнос организатору ${byn(n)}`,
+  donation: '🙋 Донат организатору, сколько не жалко',
+  donationAmount: (n: number) => `🙋 Донат организатору, обычно ${byn(n)}`,
   freeShort: 'бесплатно',
-  paidShort: 'платно',
-  paidAmountShort: (amount: number) => `~${String(amount).replace('.', ',')} BYN`
+  venueShort: 'свои траты',
+  hostShort: 'взнос',
+  donationShort: 'донат'
 };
 
-export const priceLabel = (ev: { isPaid?: boolean; price?: number }) =>
-  !ev.isPaid ? PRICE_TEXTS.free : ev.price ? PRICE_TEXTS.paidAmount(ev.price) : PRICE_TEXTS.paid;
-export const priceShort = (ev: { isPaid?: boolean; price?: number }) =>
-  !ev.isPaid ? PRICE_TEXTS.freeShort : ev.price ? PRICE_TEXTS.paidAmountShort(ev.price) : PRICE_TEXTS.paidShort;
+export const priceLabel = (ev: PriceEv) => {
+  if (!ev.isPaid) return PRICE_TEXTS.free;
+  const base =
+    ev.payTo !== 'host'
+      ? ev.price ? PRICE_TEXTS.venueAmount(ev.price) : PRICE_TEXTS.venue
+      : ev.donation
+        ? ev.price ? PRICE_TEXTS.donationAmount(ev.price) : PRICE_TEXTS.donation
+        : ev.price ? PRICE_TEXTS.hostAmount(ev.price) : PRICE_TEXTS.host;
+  return ev.payTo === 'host' && ev.payFor ? `${base} (${ev.payFor})` : base;
+};
+export const priceShort = (ev: PriceEv) => {
+  if (!ev.isPaid) return PRICE_TEXTS.freeShort;
+  const kind = ev.payTo !== 'host' ? PRICE_TEXTS.venueShort : ev.donation ? PRICE_TEXTS.donationShort : PRICE_TEXTS.hostShort;
+  return ev.price ? `${kind} ~${byn(ev.price)}` : kind;
+};
 
 // «Хочу сходить»
 const people = (n: number) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? 'человек' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'человека' : 'человек'}`;
