@@ -31,17 +31,17 @@ export const BOARD = 10;
 const CELLS = BOARD * BOARD;
 const WIN = 5;
 
-const MIN = 60 * 1000;
-const DAY = 24 * 60 * MIN;
-const SEARCH_STALE_MS = 20 * 1000;      // ищущий не спрашивал о партии 20 секунд — закрыл приложение
-const LIVE_LEFT_MS = 45 * 1000;         // соперник пропал на 45 секунд (закрыл приложение, пропала связь) — ушёл, победа за тобой
+export const MIN = 60 * 1000;
+export const DAY = 24 * 60 * MIN;
+export const SEARCH_STALE_MS = 20 * 1000;      // ищущий не спрашивал о партии 20 секунд — закрыл приложение
+export const LIVE_LEFT_MS = 45 * 1000;         // соперник пропал на 45 секунд (закрыл приложение, пропала связь) — ушёл, победа за тобой
 const AWAY_MS = 15 * 1000;              // свернул приложение дольше чем на 15 секунд — тоже ушёл
-const HOST_GRACE_MS = 2 * MIN;          // знакомый принял приглашение, а позвавший уже не в приложении: ждём его 2 минуты
-const ONLINE_MS = 35 * 1000;            // «на месте» для значка в партии
-const INVITE_WAIT_MS = DAY;             // приглашение никто не принял за сутки — закрываем
-const REMATCH_MS = MIN;                 // «Ещё партию» ждём минуту
-const LONG_POLL_MS = 25 * 1000;         // сколько сервер держит вопрос «что нового»
-const SEARCH_POLL_MS = 6 * 1000;        // в поиске — короче: заодно ещё раз пробуем подобрать пару
+export const HOST_GRACE_MS = 2 * MIN;          // знакомый принял приглашение, а позвавший уже не в приложении: ждём его 2 минуты
+export const ONLINE_MS = 35 * 1000;            // «на месте» для значка в партии
+export const INVITE_WAIT_MS = DAY;             // приглашение никто не принял за сутки — закрываем
+export const REMATCH_MS = MIN;                 // «Ещё партию» ждём минуту
+export const LONG_POLL_MS = 25 * 1000;         // сколько сервер держит вопрос «что нового»
+export const SEARCH_POLL_MS = 6 * 1000;        // в поиске — короче: заодно ещё раз пробуем подобрать пару
 
 // Сколько хранить партии в базе (удаляет сама база по полю expireAt)
 const KEEP: Record<string, number> = { searching: DAY, cancelled: DAY, waiting: 2 * DAY, active: 4 * DAY, finished: 30 * DAY };
@@ -61,7 +61,7 @@ export const GAME_PHRASES: Record<string, string> = {
   onemore: 'Ещё одну и спать',
   nice: 'Хороший ход!'
 };
-const own = (o: Record<string, string>, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+export const own = (o: Record<string, string>, k: string) => Object.prototype.hasOwnProperty.call(o, k);
 
 // Ник в инкогнито: зверёк, один на партию
 const INCOGNITO_NICKS = [
@@ -142,7 +142,7 @@ const GameMatch = model(
 );
 
 // Сводка по дням для /stats: партии с ботом (считаются на телефоне) и пик игроков одновременно
-const GameDay = model(
+export const GameDay = model(
   'GameDay',
   new Schema({
     day: { type: String, unique: true }, // '2026-11-05' по Минску
@@ -153,7 +153,14 @@ const GameDay = model(
     humanPlayers: { type: [Number], default: undefined },
     peak: { type: Number, default: 0 },
     peakAt: { type: Date },
-    eveningSent: { type: Boolean } // «Час игр» сегодня уже позвали
+    eveningSent: { type: Boolean }, // «Час игр» сегодня уже позвали
+    // «Морской бой»: партии с людьми и с ботом за день
+    seaGames: { type: Number },
+    seaBotGames: { type: Number },
+    seaPlayers: { type: [Number], default: undefined },
+    seaBotPlayers: { type: [Number], default: undefined },
+    seaPeak: { type: Number },
+    seaPeakAt: { type: Date }
   })
 );
 
@@ -194,7 +201,7 @@ function finishIfOver(board: string, cell: number): any {
 const waiters = new Map<string, Set<() => void>>();
 
 // В партии что-то поменялось — будим всех, кто ждёт
-function changed(id: any) {
+export function changed(id: any) {
   const key = String(id);
   const set = waiters.get(key);
   if (!set) return;
@@ -205,7 +212,7 @@ function changed(id: any) {
 // Подписаться на изменения партии заранее, до чтения из базы: так не пропустим ход, сделанный между чтением и ожиданием.
 // wait(ms) — ждать не дольше ms; false — человек закрыл приложение и ответ не нужен. cancel() — не ждать.
 // Смотрим на закрытие ответа (res), а не запроса: у запроса «close» в Node приходит сразу после чтения
-function listen(id: string, res: Response) {
+export function listen(id: string, res: Response) {
   let set = waiters.get(id);
   if (!set) waiters.set(id, (set = new Set()));
   let fired = false;
@@ -247,12 +254,12 @@ function listen(id: string, res: Response) {
 
 // ---------- Вспомогательное ----------
 
-const randomNick = (taken?: string) => {
+export const randomNick = (taken?: string) => {
   const free = INCOGNITO_NICKS.filter(([, n]) => n !== taken);
   return free[Math.floor(Math.random() * free.length)];
 };
 
-async function makePlayer(telegramId: number, incognito: boolean, takenNick?: string): Promise<Player> {
+export async function makePlayer(telegramId: number, incognito: boolean, takenNick?: string): Promise<Player> {
   const u: any = await User.findOne({ telegramId }, { firstName: 1, avatarUrl: 1, photosHidden: 1 }).lean();
   const [nickEmoji, nick] = randomNick(takenNick);
   return {
@@ -307,7 +314,7 @@ function view(m: any, telegramId: number) {
 }
 
 // Подходят ли двое друг другу для подбора по анкете
-function compatible(a: any, aIncognito: boolean, b: any, bIncognito: boolean): boolean {
+export function compatible(a: any, aIncognito: boolean, b: any, bIncognito: boolean): boolean {
   const aId = a.telegramId, bId = b.telegramId;
   if (aId === bId) return false;
   // Заблокировал — не сводим никогда, даже в инкогнито
@@ -318,7 +325,7 @@ function compatible(a: any, aIncognito: boolean, b: any, bIncognito: boolean): b
 }
 
 // Чем больше общего, тем раньше сводим
-function closeness(a: any, b: any): number {
+export function closeness(a: any, b: any): number {
   const shared = (a.goals || []).filter((g: string) => (b.goals || []).includes(g)).length;
   return shared * 2 + (a.areaName && a.areaName === b.areaName && a.areaName !== 'Минск' ? 3 : 0);
 }
@@ -345,7 +352,7 @@ async function update(filter: any, set: any, extra: any = {}): Promise<any> {
 }
 
 // С какого момента игрок считается ушедшим из партии: закрыл приложение или свернул его надолго
-function leftAt(p: any): number {
+export function leftAt(p: any): number {
   const seen = new Date(p.seenAt).getTime() + LIVE_LEFT_MS;
   const away = p.awayAt ? new Date(p.awayAt).getTime() + AWAY_MS : Infinity;
   return Math.max(p.graceUntil ? new Date(p.graceUntil).getTime() : 0, Math.min(seen, away));
@@ -371,7 +378,7 @@ async function settle(m: any): Promise<any> {
   return (await update({ _id: m._id, status: m.status }, set)) || (await GameMatch.findById(m._id).lean());
 }
 
-const seekProfile = (u: any) => ({
+export const seekProfile = (u: any) => ({
   gender: u?.gender,
   age: u?.age,
   preferredGender: u?.preferredGender,
@@ -424,12 +431,12 @@ async function tryPair(mine: any): Promise<any | null> {
   return null;
 }
 
-const inviteCode = () => Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
+export const inviteCode = () => Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 6);
 
 // Пока игры проверяет автор: искать соперника и звать знакомых могут только админы.
 // По ссылке-приглашению от админа сыграть может любой. Открыть всем — GAMES_OPEN=1 на сервере
-const canStart = (telegramId: number) => process.env.GAMES_OPEN === '1' || isAdmin(telegramId);
-const CLOSED = 'Игры скоро появятся 🎲';
+export const canStart = (telegramId: number) => process.env.GAMES_OPEN === '1' || isAdmin(telegramId);
+export const CLOSED = 'Игры скоро появятся 🎲';
 
 // «Я на месте» и сама партия — одним запросом к базе
 // back — человек снова смотрит на партию: снимаем «свернул», сопернику об этом сообщаем
@@ -442,8 +449,8 @@ async function touch(id: string, telegramId: number, back = true): Promise<any> 
 // ---------- Статистика ----------
 
 const MINSK_OFFSET = 3 * 60 * 60 * 1000;
-const minskDay = (t = Date.now()) => new Date(t + MINSK_OFFSET).toISOString().slice(0, 10);
-const startOfMinskDay = () => {
+export const minskDay = (t = Date.now()) => new Date(t + MINSK_OFFSET).toISOString().slice(0, 10);
+export const startOfMinskDay = () => {
   const now = Date.now();
   return new Date(now - ((now + MINSK_OFFSET) % DAY));
 };
@@ -469,12 +476,17 @@ const NOTIFY_GAP_MS = DAY;
 const WAVE_GAP_MS = 10 * MIN;   // «кто-то ищет соперника» — волна не чаще раза в 10 минут
 const WAVE_SIZE = 25;           // и не больше 25 человек за раз
 export const EVENING_HOUR = 21;
-let lastWaveAt = 0;
+// Волны у каждой игры свои: «кто-то ищет» в Крестиках не мешает позвать в Морской бой
+const lastWaveAt: Record<string, number> = {};
+export type CallGame = 'five' | 'sea';
+// Кто сейчас играет в другие игры (Морской бой сообщает сам): таких не зовём
+const busySources: (() => Promise<number[]>)[] = [];
+export const registerBusyPlayers = (fn: () => Promise<number[]>) => busySources.push(fn);
 const minskHour = (t = Date.now()) => new Date(t + MINSK_OFFSET).getUTCHours();
 const quietNow = () => minskHour() >= 23 || minskHour() < 9;
 const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function callSubscribers(kind: 'wave' | 'evening', seeker?: any) {
+async function callSubscribers(kind: 'wave' | 'evening', seeker?: any, game: CallGame = 'five') {
   const since = new Date(Date.now() - NOTIFY_GAP_MS);
   const exclude = seeker ? [seeker.telegramId, ...(seeker.blockedUsers || [])] : [];
   const fresh = { $or: [{ gameNotifiedAt: { $exists: false } }, { gameNotifiedAt: { $lt: since } }] };
@@ -487,10 +499,19 @@ async function callSubscribers(kind: 'wave' | 'evening', seeker?: any) {
     .lean();
   // Кто и так сейчас в игре — не зовём
   const busy = new Set<number>(await GameMatch.distinct('players.telegramId', { status: { $in: ['searching', 'active'] }, updatedAt: { $gte: new Date(Date.now() - 2 * MIN) } }));
+  for (const more of busySources) (await more().catch(() => [] as number[])).forEach((id) => busy.add(id));
   const text =
-    kind === 'wave'
-      ? '🎲 Кто-то прямо сейчас ищет соперника в «Крестики-Нолики». Заходи, сыграйте!'
-      : `🎲 ${EVENING_HOUR}:00, час игр в ГУЛЯЙ! Вечером соперник находится быстрее. Сыграем в «Крестики-Нолики»?`;
+    kind === 'evening'
+      ? `🎲 ${EVENING_HOUR}:00, час игр в ГУЛЯЙ! Вечером соперник находится быстрее. Сыграем в «Крестики-Нолики» или «Морской бой»?`
+      : game === 'sea'
+        ? '🚢 Кто-то прямо сейчас ищет соперника в «Морской бой». Заходи, сыграйте!'
+        : '🎲 Кто-то прямо сейчас ищет соперника в «Крестики-Нолики». Заходи, сыграйте!';
+  const play =
+    kind === 'evening'
+      ? [{ text: '🎲 Крестики-Нолики', path: '?tab=games' }, { text: '🚢 Морской бой', path: '?play=sea' }]
+      : game === 'sea'
+        ? [{ text: '🚢 Играть', path: '?play=sea' }]
+        : [{ text: '🎲 Играть', path: '?tab=games' }];
   let sent = 0;
   for (const u of users) {
     if (kind === 'wave' && sent >= WAVE_SIZE) break;
@@ -499,18 +520,18 @@ async function callSubscribers(kind: 'wave' | 'evening', seeker?: any) {
     // Отмечаем до отправки: два сервера или две волны одного и того же не позовут
     const claimed = await User.updateOne({ telegramId: u.telegramId, ...fresh }, { $set: { gameNotifiedAt: new Date() } });
     if (!claimed.modifiedCount) continue;
-    await sendWithButtons(u.telegramId, text, [[{ text: '🎲 Играть', path: '?tab=games' }], [{ text: '🔕 Больше не звать', data: 'games:off' }]]).catch(() => false);
+    await sendWithButtons(u.telegramId, text, [play, [{ text: '🔕 Больше не звать', data: 'games:off' }]]).catch(() => false);
     sent++;
     await sleepMs(50); // Telegram: не больше ~30 сообщений в секунду
   }
-  if (sent) console.log(`🎲 Игры: позвал поиграть (${kind}) — ${sent} чел.`);
+  if (sent) console.log(`🎲 Игры: позвал поиграть (${kind}, ${game}) — ${sent} чел.`);
 }
 
 // Ищет соперника, а никого нет — зовём подписавшихся
-function callForSeeker(seeker: any) {
-  if (quietNow() || Date.now() - lastWaveAt < WAVE_GAP_MS) return;
-  lastWaveAt = Date.now();
-  callSubscribers('wave', seeker).catch((err) => console.warn('⚠️ Игры, позвать поиграть:', err?.message || err));
+export function callForSeeker(seeker: any, game: CallGame = 'five') {
+  if (quietNow() || Date.now() - (lastWaveAt[game] || 0) < WAVE_GAP_MS) return;
+  lastWaveAt[game] = Date.now();
+  callSubscribers('wave', seeker, game).catch((err) => console.warn('⚠️ Игры, позвать поиграть:', err?.message || err));
 }
 
 // Кнопка «🔕 Больше не звать» под сообщением бота

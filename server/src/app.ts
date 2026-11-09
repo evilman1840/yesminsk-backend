@@ -53,6 +53,7 @@ import { runPlaceImports } from './placesImport';
 import { setupAfishaRoutes, startAfishaLoop } from './afisha';
 import { setupGameRoutes, startGameStatsLoop } from './games';
 import { setupGameScoreRoutes } from './gameScores';
+import { setupSeaRoutes, startSeaStatsLoop } from './sea';
 import { startReminderLoop, notifyParticipants, eventSummaryHtml, eventAppPath, formatWhen, seatsTaken, companyNote, rsvpButtons } from './eventNotify';
 
 dotenv.config();
@@ -2154,6 +2155,7 @@ setupAfishaRoutes(app);
 // Мини-игры: «Крестики-Нолики» со случайным игроком или знакомым
 setupGameScoreRoutes(app); // раньше /api/games/:id, иначе «summary» примут за номер партии
 setupGameRoutes(app);
+setupSeaRoutes(app); // «Морской бой»
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);
@@ -2174,4 +2176,5 @@ app.listen(PORT, () => {
   startProposalLoop();
   startAfishaLoop();
   startGameStatsLoop();
+  startSeaStatsLoop();
 });

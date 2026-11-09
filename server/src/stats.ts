@@ -12,6 +12,7 @@ import { BOT_ACCESS_TEXTS, USERNAME_TEXTS } from './texts';
 import { wishStatsLines } from './wishes';
 import { nudgeStatsLines } from './nudges';
 import { gameStatsLines } from './games';
+import { seaStatsLines } from './sea';
 import { tractorStatsLines } from './gameScores';
 import { waveLimitStatsLines } from './waveLimit';
 import { buddyStatsLines } from './buddyInvites';
@@ -125,6 +126,7 @@ export async function buildStats(): Promise<string> {
   const nudgeLines = await nudgeStatsLines(ago(30));
   const gameLines = [
     ...(await gameStatsLines().catch(() => [] as string[])),
+    ...(await seaStatsLines().catch(() => [] as string[])),
     ...(await tractorStatsLines().catch(() => [] as string[]))
   ];
 
