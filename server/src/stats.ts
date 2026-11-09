@@ -16,6 +16,7 @@ import { tractorStatsLines } from './gameScores';
 import { waveLimitStatsLines } from './waveLimit';
 import { buddyStatsLines } from './buddyInvites';
 import { recruitStatsLines } from './recruitHelp';
+import { serialStatsLines } from './serial';
 
 /**
  * /stats — сводка по приложению для автора (только ADMIN_TELEGRAM_IDS)
@@ -130,6 +131,7 @@ export async function buildStats(): Promise<string> {
   const waveLimitLines = await waveLimitStatsLines().catch(() => [] as string[]);
   const buddyLines = await buddyStatsLines().catch(() => [] as string[]);
   const recruitLines = await recruitStatsLines().catch(() => [] as string[]);
+  const serialLines = await serialStatsLines().catch(() => [] as string[]);
 
   const date = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 
@@ -163,6 +165,7 @@ export async function buildStats(): Promise<string> {
     ``,
     ...wishLines,
     ``,
+    ...(serialLines.length ? [...serialLines, ``] : []),
     ...nudgeLines,
     ``,
     ...gameLines,

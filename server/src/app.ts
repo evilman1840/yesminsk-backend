@@ -26,6 +26,7 @@ import { setupTelegramBot, registerTelegramWebhook } from './bot';
 import { setupNewsRoutes, isAdmin, adminIds } from './news';
 import { setupFundRoutes } from './fund';
 import { setupPollRoutes } from './polls';
+import { setupSerialRoutes } from './serial';
 import { banGuard, setupModerationRoutes, reportStopWords, BANNED_ERROR } from './moderation';
 import { checkStopWords, extrasText } from './stopWords';
 import { markInviteJoined } from './invites';
@@ -2103,6 +2104,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
 setupNewsRoutes(app);
 setupFundRoutes(app);
 setupPollRoutes(app);
+setupSerialRoutes(app);
 
 // Жалобы и модерация
 setupModerationRoutes(app);
