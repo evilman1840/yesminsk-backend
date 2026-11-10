@@ -643,16 +643,20 @@ export function setupWishRoutes(app: Express) {
 /* ---------- /stats ---------- */
 
 export async function wishStatsLines(since: Date): Promise<string[]> {
-  const [created, byKind, groups, built, linkUsers, active] = await Promise.all([
+  const [created, byKind, groups, fulfilled, linkUsers, active] = await Promise.all([
     Wish.countDocuments({ createdAt: { $gte: since } }),
     Wish.aggregate([{ $match: { createdAt: { $gte: since } } }, { $group: { _id: '$kind', n: { $sum: 1 } } }, { $sort: { n: -1 } }]),
     WishGroup.countDocuments({ createdAt: { $gte: since } }),
-    WishGroup.countDocuments({ createdAt: { $gte: since }, status: 'fulfilled' }),
+    WishGroup.find({ createdAt: { $gte: since }, status: 'fulfilled' }, { meetupId: 1 }).lean(),
     Wish.distinct('telegramId', { source: 'link', createdAt: { $gte: since } }),
     Wish.countDocuments({ status: { $in: ['active', 'matched'] }, windowEnd: { $gt: new Date() } })
   ]);
   const names = new Map((await EventTemplate.find({}, { key: 1, emoji: 1 }).lean()).map((t) => [t.key, t.emoji]));
   const withProfile = linkUsers.length ? await User.countDocuments({ telegramId: { $in: linkUsers }, hasAgreedToRules: true }) : 0;
+  // Собрали — только если сходка жива: организатор мог её удалить (раньше это была почти каждая)
+  const meetupIds = fulfilled.map((g) => g.meetupId).filter((id): id is string => !!id && mongoose.Types.ObjectId.isValid(id));
+  const built = meetupIds.length ? await Event.countDocuments({ _id: { $in: meetupIds }, isActive: true }) : 0;
+  const deleted = fulfilled.length - built;
   const rate = groups ? `${Math.round((built / groups) * 100)}%` : '0%';
   // Открытые группы: на каком шаге стоят
   const open = await WishGroup.find({ status: 'open' }, { proposal: 1, askPlaceAt: 1, meetupId: 1 }).lean();
@@ -677,7 +681,7 @@ export async function wishStatsLines(since: Date): Promise<string[]> {
   return [
     T.statsTitle,
     T.statsCreated(created, byKind.map((k) => `${names.get(k._id) || k._id} ${k.n}`).join(' · ')),
-    T.statsGroups(groups, built, rate),
+    T.statsGroups(groups, built, rate, deleted),
     T.statsFunnel(waitPeople, waitPlace, proposedGroups.length, best, expired),
     T.statsLinks(linkUsers.length, withProfile),
     T.statsActive(active),

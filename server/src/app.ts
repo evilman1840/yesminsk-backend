@@ -32,6 +32,7 @@ import { checkStopWords, extrasText } from './stopWords';
 import { markInviteJoined } from './invites';
 import { joinEvent, isEventCreator, BY_REQUEST_LOCKED } from './eventJoin';
 import { setupBuddyRoutes, startBuddyLoop, buddyPairIds, inviteBuddyToNewEvent } from './buddyInvites';
+import { setupEventLeaveRoutes, logEventExit } from './eventLeave';
 import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
@@ -1905,6 +1906,7 @@ const handleDeleteEventLogic = async (req: AuthenticatedRequest, res: Response) 
       return res.status(403).json({ error: 'Только создатель может удалить сходку' });
     }
 
+    await logEventExit(event, 'deleted', tgUser.id);
     await Event.findByIdAndDelete(event._id);
 
     // Удалил модератор — организатору его текст, почему (а не «сходка отменена»)
@@ -2140,6 +2142,7 @@ setupWishRoutes(app);
 
 // «👯 Пойдём на сходку вместе»: позвать знакомого из «На связи»
 setupBuddyRoutes(app, formatEvent);
+setupEventLeaveRoutes(app, formatEvent);
 
 // Удаление аккаунта
 setupAccountRoutes(app);

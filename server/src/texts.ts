@@ -157,7 +157,8 @@ export const WISH_TEXTS = {
   // /stats
   statsTitle: '🙋 <b>«Хочу сходить» за 30 дней</b>',
   statsCreated: (n: number, list: string) => `Желаний: ${n}${list ? ` (${list})` : ''}`,
-  statsGroups: (groups: number, built: number, rate: string) => `Совпало групп: ${groups} · из них собрали сходку: ${built} (${rate})`,
+  statsGroups: (groups: number, built: number, rate: string, deleted: number) =>
+    `Совпало групп: ${groups} · из них собрали сходку: ${built} (${rate})${deleted ? ` · ещё ${deleted} собрали, но сходку потом удалили` : ''}`,
   // Где застревают открытые группы сейчас
   statsFunnel: (waitPeople: number, waitPlace: number, proposed: number, best: string, expired: number) =>
     `Сейчас в группах: ждут людей ${waitPeople} · ждут место ${waitPlace} · предложено время ${proposed}${best} · истекли без сходки (30 дн.) ${expired}`,
@@ -266,7 +267,7 @@ export const PROPOSAL_TEXTS = {
     `🎉 <b>Сходка собрана!</b>\n\n${title}\n🕒 ${when}\n📍 ${where}\n\nТы в списке участников. Если планы поменяются, отмени участие в приложении.`,
   openEvent: 'Открыть сходку',
   createdForHost: (title: string, when: string, where: string) =>
-    `🎉 <b>Встреча собрана, и ты её хозяин!</b>\n\n${title}\n🕒 ${when}\n📍 ${where}\n\nТвоё «Пойду» было первым. Ничего особенного делать не нужно: приди чуть раньше и займи столик. В приложении можно написать участникам или поменять детали.`,
+    `🎉 <b>Встреча собрана, и ты её хозяин!</b>\n\n${title}\n🕒 ${when}\n📍 ${where}\n\nТвоё «Пойду» было первым. Ничего особенного делать не нужно: приди чуть раньше и займи столик. В приложении можно написать участникам или поменять детали. Если не сможешь пойти, не удаляй сходку: нажми 🗑 и передай её следующему.`,
   // Напоминание тем, кто не ответил на предложение
   remind: (n: number, what: string, when: string, place: string) =>
     n > 0
@@ -521,6 +522,19 @@ export const BUDDY_TEXTS = {
 };
 
 // «Помощь в наборе»: до сходки меньше 48 часов, а идут меньше трёх (recruitHelp.ts)
+// Организатор уходит со своей сходки: передать следующему или удалить (eventLeave.ts)
+export const EVENT_LEAVE_TEXTS = {
+  notHost: 'Передать сходку может только организатор',
+  started: 'Сходка уже началась, передать её не получится',
+  nobody: 'Пока некому передать: кроме тебя никто не записался',
+  failed: 'Не получилось передать сходку, попробуй ещё раз',
+  newHost: (from: string, title: string, when: string, where: string) =>
+    `🙌 <b>Теперь ты организатор</b>\n\n${from} не сможет прийти и передаёт тебе сходку «${title}», ${when}, ${where}.\n\nДелать ничего особенного не нужно: просто прийти чуть раньше. Если тоже не получается, в приложении сходку можно передать дальше или отменить.`,
+  openBtn: 'Открыть сходку',
+  stats: (deleted: number, withPeople: number, fromWish: number, handed: number) =>
+    `🗑 Организаторы удалили до начала за 7 дней: ${deleted} (с записавшимися ${withPeople} · из «Хочу сходить» ${fromWish}) · передали другому: ${handed}`
+};
+
 export const RECRUIT_TEXTS = {
   // Тем, у кого желание «🙋 Хочу сходить» того же вида на эти дни
   wish: (what: string, title: string, when: string, where: string) =>

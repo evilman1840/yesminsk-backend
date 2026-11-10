@@ -16,6 +16,7 @@ import { seaStatsLines } from './sea';
 import { tractorStatsLines } from './gameScores';
 import { waveLimitStatsLines } from './waveLimit';
 import { buddyStatsLines } from './buddyInvites';
+import { eventExitStatsLines } from './eventLeave';
 import { recruitStatsLines } from './recruitHelp';
 import { serialStatsLines } from './serial';
 
@@ -133,6 +134,7 @@ export async function buildStats(): Promise<string> {
   const waveLimitLines = await waveLimitStatsLines().catch(() => [] as string[]);
   const buddyLines = await buddyStatsLines().catch(() => [] as string[]);
   const recruitLines = await recruitStatsLines().catch(() => [] as string[]);
+  const exitLines = await eventExitStatsLines().catch(() => [] as string[]);
   const serialLines = await serialStatsLines().catch(() => [] as string[]);
 
   const date = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
@@ -160,6 +162,7 @@ export async function buildStats(): Promise<string> {
     `🗓 <b>Сходки</b>`,
     `Предстоящих ${eventsUpcoming.length}, на них идут ${goingUpcoming} чел.`,
     `Создано за 7 дней ${plus(eventsCreated7)} · всего ${eventsTotal}`,
+    ...exitLines,
     ...(recruitLines.length ? [``, ...recruitLines] : []),
     ...(buddyLines.length ? [``, ...buddyLines] : []),
     ``,
