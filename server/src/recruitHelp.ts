@@ -273,6 +273,11 @@ export async function recruitStatsLines(): Promise<string[]> {
   const by = (s: PingStatus) => rows.find((r) => r._id === s)?.n || 0;
   const sent = rows.reduce((s, r) => s + r.n, 0) - by('undelivered');
 
+  // Сходки, про которые писали, но их уже удалили: из Event они пропали, и в «Попали в помощь» их не видно
+  const pingedIds: Types.ObjectId[] = await RecruitPing.distinct('eventId', { createdAt: { $gte: since } });
+  const aliveIds = new Set((await Event.find({ _id: { $in: pingedIds } }, { _id: 1 }).lean()).map((e) => String(e._id)));
+  const deleted = pingedIds.filter((id) => !aliveIds.has(String(id))).length;
+
   // Явка — только там, где организатор ответил «Все пришли?». Гостей не считаем: их не отметить
   const past = await Event.find(
     { isActive: true, dateTime: { $gte: since, $lte: new Date(now) } },
@@ -298,7 +303,7 @@ export async function recruitStatsLines(): Promise<string[]> {
 
   return [
     T.statsTitle,
-    T.statsHelp(helped.length, gathered, done.length, upcoming),
+    T.statsHelp(helped.length + deleted, gathered, done.length, upcoming, deleted),
     T.statsPings(sent, by('joined'), by('declined')),
     answered.length ? T.statsAttendance(pct(came, signed), came, signed, answered.length, asked.length) : T.statsAttendanceNone(asked.length),
     T.statsPairs(pairs, held.length)

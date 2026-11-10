@@ -373,7 +373,8 @@ export const EVENT_MESSAGE_TEXTS = {
 export const BOT_ACCESS_TEXTS = {
   welcome:
     '🔔 Готово! Теперь сюда будут приходить напоминания о сходках, совпадения по «Хочу сходить» и приветы 👋. Если надоест, можно выключить подборки в анкете.',
-  statsLine: (can: number, total: number, blocked: number) => `🔔 Бот может писать: ${can} из ${total}${blocked ? ` · не доходит: ${blocked}` : ''}`,
+  statsLine: (can: number, total: number, blocked: number) =>
+    `🔔 Бот может писать: ${can} из ${total}${blocked ? ` · не доходит: ${blocked}` : ''}${total - can - blocked > 0 ? ` · ещё неизвестно: ${total - can - blocked}` : ''}`,
   // Те, кто пользуется приложением, но пропускает совпадения и напоминания: их и стоит вернуть плашкой
   statsActiveLine: (blocked: number, never: number, active: number) =>
     `🔕 Заходили за 7 дней, но бот не пишет: ${blocked + never} из ${active} (остановили ${blocked} · не разрешали ${never})`
@@ -535,8 +536,8 @@ export const RECRUIT_TEXTS = {
   attendanceLate: 'Отметить уже не получится: прошло больше трёх дней',
   // /stats
   statsTitle: '🆘 <b>Помощь в наборе за 7 дней</b>',
-  statsHelp: (n: number, gathered: number, done: number, upcoming: number) =>
-    `Попали в помощь: ${n} · из прошедших (${done}) набрали 3+ человека: ${gathered}${upcoming ? ` · ещё не прошли ${upcoming}` : ''}`,
+  statsHelp: (n: number, gathered: number, done: number, upcoming: number, deleted: number) =>
+    `Попали в помощь: ${n} · из прошедших (${done}) набрали 3+ человека: ${gathered}${upcoming ? ` · ещё не прошли ${upcoming}` : ''}${deleted ? ` · удалены организатором ${deleted}` : ''}`,
   statsPings: (sent: number, joined: number, declined: number) => `«Компания собирается»: отправлено ${sent} · записались ${joined} · «Не подходит» ${declined}`,
   statsAttendance: (pct: string, came: number, signed: number, answered: number, asked: number) =>
     `Явка: ${pct} (пришли ${came} из ${signed}) · по сходкам, где организатор ответил «Все пришли?»: ${answered} из ${asked}`,
