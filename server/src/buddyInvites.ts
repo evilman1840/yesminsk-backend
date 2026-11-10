@@ -5,6 +5,7 @@ import { Event, IEvent } from './models/Event';
 import { User, IUser } from './models/User';
 import { Reaction } from './models/Reaction';
 import { Wish } from './models/Wish';
+import { CUSTOM_TEMPLATE_KEY } from './models/EventTemplate';
 import { joinEvent, joinBlockReason, freeSeats, isEventCreator } from './eventJoin';
 import { seatsTaken, formatWhen, eventAppPath } from './eventNotify';
 import { likes } from './eventRanking';
@@ -30,7 +31,7 @@ const OPTIONS_MAX = 5;
 const LOOKAHEAD_DAYS = 30;
 
 type BuddyStatus = 'pending' | 'accepted' | 'declined' | 'expired' | 'undelivered';
-type BuddySource = 'people' | 'event' | 'create';
+type BuddySource = 'people' | 'event' | 'create' | 'match';
 
 interface IBuddyInvite {
   _id: Types.ObjectId;
@@ -50,7 +51,7 @@ const BuddyInviteSchema = new Schema<IBuddyInvite>(
     eventId: { type: Schema.Types.ObjectId, required: true, index: true },
     fromId: { type: Number, required: true },
     toId: { type: Number, required: true, index: true },
-    source: { type: String, enum: ['people', 'event', 'create'], default: 'people' },
+    source: { type: String, enum: ['people', 'event', 'create', 'match'], default: 'people' }, // match — шторка из сообщения «Вы на связи»
     status: { type: String, enum: ['pending', 'accepted', 'declined', 'expired', 'undelivered'], default: 'pending', index: true },
     expiresAt: { type: Date, required: true, index: true },
     respondedAt: { type: Date },
@@ -330,6 +331,39 @@ async function sharedWishes(myId: number, friendId: number) {
   return out.slice(0, 3);
 }
 
+// Куда можно позвать знакомого: до 5 сходок, сначала те, что интересны обоим, потом ближайшие
+async function fitEventsFor(me: IUser, friend: IUser, limit = OPTIONS_MAX): Promise<{ ev: IEvent; bothLike: boolean }[]> {
+  const myId = me.telegramId;
+  const friendId = friend.telegramId;
+  const hidden = (me.hiddenEvents || []).filter((id) => mongoose.Types.ObjectId.isValid(id));
+  const [events, invited] = await Promise.all([
+    Event.find({ ...openQuery(), 'participants.telegramId': { $ne: friendId }, ...(hidden.length ? { _id: { $nin: hidden } } : {}) })
+      .sort({ dateTime: 1 })
+      .limit(300),
+    BuddyInvite.distinct('eventId', { fromId: myId, toId: friendId })
+  ]);
+  const invitedSet = new Set(invited.map(String));
+  const both = (ev: IEvent) => likes(goalsOf(me), ev.category) && likes(goalsOf(friend), ev.category);
+  return events
+    .filter((ev) => !invitedSet.has(String(ev._id)) && !inviteBlock(ev, me, friend))
+    .map((ev) => ({ ev, bothLike: both(ev) }))
+    .sort((a, b) => Number(b.bothLike) - Number(a.bothLike) || a.ev.dateTime.getTime() - b.ev.dateTime.getTime())
+    .slice(0, limit);
+}
+
+/**
+ * Мостик «На связи → сходка» для сообщения «Вы на связи!»: строка про общее «Хочу сходить»
+ * или про сходку, интересную обоим. null — сказать нечего, пишем только общую подсказку
+ */
+export async function matchBridgeLine(me: IUser, friend: IUser): Promise<string | null> {
+  const wishes = await sharedWishes(me.telegramId, friend.telegramId);
+  if (wishes.length) return T.bridgeWish(wishes[0].what, wishes[0].when);
+  // Только сходки по шаблонам: у «Своей идеи» категорию выбирает организатор, и она часто случайная
+  const pick = (await fitEventsFor(me, friend, 50)).find(({ ev, bothLike }) => bothLike && ev.templateId && ev.templateId !== CUSTOM_TEMPLATE_KEY);
+  if (pick) return T.bridgeEvent(escapeHtml(pick.ev.title), formatWhen(pick.ev.dateTime));
+  return null;
+}
+
 export function setupBuddyRoutes(app: Express, formatEvent: Formatter) {
   // Из «На связи»: куда позвать этого человека — до 5 сходок, общие желания
   app.get('/api/buddies/:friendId/options', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
@@ -339,23 +373,11 @@ export function setupBuddyRoutes(app: Express, formatEvent: Formatter) {
       const [me, friend] = await Promise.all([User.findOne({ telegramId: myId }), Number.isSafeInteger(friendId) ? User.findOne({ telegramId: friendId }) : null]);
       if (!me || !friend || blockedEither(me, friend) || !(await isMatch(myId, friendId))) return res.status(403).json({ error: T.notMatch });
 
-      const hidden = (me.hiddenEvents || []).filter((id) => mongoose.Types.ObjectId.isValid(id));
-      const [events, invited] = await Promise.all([
-        Event.find({ ...openQuery(), 'participants.telegramId': { $ne: friendId }, ...(hidden.length ? { _id: { $nin: hidden } } : {}) })
-          .sort({ dateTime: 1 })
-          .limit(300),
-        BuddyInvite.distinct('eventId', { fromId: myId, toId: friendId })
-      ]);
-      const invitedSet = new Set(invited.map(String));
-      const both = (ev: IEvent) => likes(goalsOf(me), ev.category) && likes(goalsOf(friend), ev.category);
-      const fit = events
-        .filter((ev) => !invitedSet.has(String(ev._id)) && !inviteBlock(ev, me, friend))
-        .sort((a, b) => Number(both(b)) - Number(both(a)) || a.dateTime.getTime() - b.dateTime.getTime())
-        .slice(0, OPTIONS_MAX);
+      const fit = await fitEventsFor(me, friend);
 
       res.json({
         friend: personOut(friend),
-        events: fit.map((ev) => ({ ...formatEvent(ev, myId), bothLike: both(ev) })),
+        events: fit.map(({ ev, bothLike }) => ({ ...formatEvent(ev, myId), bothLike })),
         wishes: await sharedWishes(myId, friendId),
         left: await invitesLeft(myId),
         limit: BUDDY_DAILY_LIMIT
@@ -405,7 +427,7 @@ export function setupBuddyRoutes(app: Express, formatEvent: Formatter) {
       const myId = req.telegramUser!.id;
       const eventId = String(req.body?.eventId || '');
       const toId = Number(req.body?.toId);
-      const source: BuddySource = req.body?.source === 'event' ? 'event' : 'people';
+      const source: BuddySource = req.body?.source === 'event' ? 'event' : req.body?.source === 'match' ? 'match' : 'people';
       const [me, ev] = await Promise.all([User.findOne({ telegramId: myId }), mongoose.Types.ObjectId.isValid(eventId) ? Event.findById(eventId) : null]);
       if (!me || !ev) return res.status(404).json({ error: 'Сходка не найдена' });
       const { delivered } = await sendBuddyInvite(ev, me, toId, source);
@@ -448,9 +470,16 @@ export async function buddyStatsLines(): Promise<string[]> {
   const scores = came.map((c) => c.score).filter((s): s is number => typeof s === 'number');
   const avg = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1).replace('.', ',') : '';
 
+  // Сколько отправили из шторки, открытой по кнопке в сообщении «Вы на связи»
+  const fromMatch = await BuddyInvite.aggregate([
+    { $match: { createdAt: { $gte: week }, source: 'match' } },
+    { $group: { _id: null, n: { $sum: 1 }, accepted: { $sum: { $cond: [{ $eq: ['$status', 'accepted'] }, 1, 0] } } } }
+  ]);
+
   return [
     T.statsTitle,
     T.statsSent(sent, by('accepted'), by('declined'), by('expired'), by('pending'), by('undelivered')),
+    ...(fromMatch[0]?.n ? [T.statsFromMatch(fromMatch[0].n, fromMatch[0].accepted)] : []),
     T.statsCame(came.length, first),
     ...(scores.length ? [T.statsScore(avg, scores.length)] : [])
   ];

@@ -1,10 +1,12 @@
-import { USERNAME_TEXTS as U } from './texts';
+import { USERNAME_TEXTS as U, BUDDY_TEXTS as B } from './texts';
 import { IUser } from './models/User';
 import { Reaction } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { preferencesAllow } from './preferences';
 import { waveQuota, markWaveLimitHit, WaveLimitError } from './waveLimit';
 import { noteIncomingWave } from './waveNotify';
+import { matchBridgeLine } from './buddyInvites';
+import { sendWithButtons } from './wishes';
 
 /**
  * 👋 «Пообщаться» от одного человека другому. Если в ответ уже было 👋 — оба «На связи», бот пишет обоим.
@@ -57,19 +59,17 @@ export async function sendLike(
 
   if (isNewLike) {
     if (isMatch) {
-      // Оба нажали 👋 — уведомляем обоих, что они на связи
-      sendTelegramMessage(
-        target.telegramId,
-        `🤝 <b>Вы на связи!</b>\n\nВы и ${userMentionHtml(me)} оба хотите пообщаться. Можно написать прямо сейчас!`,
-        'Открыть анкету',
-        `?user=${me.telegramId}`
-      );
-      sendTelegramMessage(
-        me.telegramId,
-        `🤝 <b>Вы на связи!</b>\n\nВы и ${userMentionHtml(target)} оба хотите пообщаться. Можно написать прямо сейчас!`,
-        'Открыть анкету',
-        `?user=${target.telegramId}`
-      );
+      // Оба нажали 👋 — уведомляем обоих, что они на связи, и сразу мостик к сходке компанией:
+      // общее «Хочу сходить» или сходка, интересная обоим. «👯 Пойдём вместе» открывает шторку выбора
+      const notify = async (to: IUser, other: IUser) => {
+        const bridge = await matchBridgeLine(to, other).catch(() => null);
+        await sendWithButtons(to.telegramId, `${B.matched(userMentionHtml(other))}\n\n${bridge || B.bridgeAny}`, [
+          [{ text: B.togetherBtn, path: `?user=${other.telegramId}&together=1` }],
+          [{ text: B.profileBtn, path: `?user=${other.telegramId}` }]
+        ]);
+      };
+      notify(target, me).catch(() => {});
+      notify(me, target).catch(() => {});
       // Без @username второй человек не сможет написать первым — подсказываем завести
       if (!target.username) sendTelegramMessage(target.telegramId, U.noUsernameMatch(escapeHtml(me.firstName), Boolean(me.username)), 'Открыть анкету', `?user=${me.telegramId}`);
       if (!me.username) sendTelegramMessage(me.telegramId, U.noUsernameMatch(escapeHtml(target.firstName), Boolean(target.username)), 'Открыть анкету', `?user=${target.telegramId}`);

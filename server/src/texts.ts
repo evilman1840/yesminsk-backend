@@ -508,6 +508,14 @@ export const BUDDY_TEXTS = {
   statsTitle: '👯 <b>«Пойдём вместе» за 7 дней</b>',
   statsSent: (sent: number, accepted: number, declined: number, expired: number, pending: number, undelivered: number) =>
     `Отправлено ${sent} · приняли ${accepted} · отказались ${declined} · истекли ${expired}${pending ? ` · ждут ответа ${pending}` : ''}${undelivered ? ` · не дошли ${undelivered}` : ''}`,
+  statsFromMatch: (n: number, accepted: number) => `Из сообщения «Вы на связи»: отправлено ${n} · приняли ${accepted}`,
+  // Сообщение «Вы на связи!»: мостик к сходке компанией (дружба, не свидание)
+  matched: (name: string) => `🤝 <b>Вы на связи!</b>\n\nВы и ${name} оба хотите пообщаться. Можно написать прямо сейчас!`,
+  bridgeWish: (what: string, when: string) => `🙋 Вы оба хотите ${what} ${when}. Можно сходить вместе, компанией 👯`,
+  bridgeEvent: (title: string, when: string) => `📅 Вам обоим может понравиться «${title}», ${when}. Можно пойти вместе 👯`,
+  bridgeAny: '👯 На сходку можно пойти вместе: компанией знакомиться проще.',
+  togetherBtn: '👯 Пойдём вместе',
+  profileBtn: 'Открыть анкету',
   statsCame: (came: number, first: number) => `Пришли по приглашению (сходки за 30 дней) ${came} · из них впервые на сходке ${first}`,
   statsScore: (avg: string, n: number) => `«Как прошло?» у пришедших по приглашению: ${avg} из 3 (оценок ${n})`
 };
