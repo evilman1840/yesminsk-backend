@@ -9,7 +9,7 @@ import { isAdmin } from './news';
  * Одна запись на человека и серию
  */
 
-const SOURCES = ['intro', 'joy', 'strip', 'shelf', 'tv', 'next', 'link'] as const;
+const SOURCES = ['intro', 'joy', 'strip', 'shelf', 'tv', 'next', 'link', 'notice'] as const;
 
 const SerialView = model(
   'SerialView',
