@@ -43,8 +43,21 @@ export async function handleStatsCommand(message: any): Promise<boolean> {
   if (!/^\/stats\b/i.test(text)) return false;
   if (!isAdmin(message.from?.id)) return false;
 
+  // Сборка идёт ~полминуты — сразу говорим, что считаем, чтобы не было тишины
+  sendTelegramMessage(message.chat.id, '⏳ Считаю статистику, это до минуты…');
   try {
-    sendTelegramMessage(message.chat.id, await buildStats());
+    // Telegram принимает до 4096 символов — длинную сводку режем по строкам (пустая строка = граница блока)
+    const parts: string[] = [];
+    let cur = '';
+    for (const block of (await buildStats()).split('\n\n')) {
+      if (cur && cur.length + block.length + 2 > 4000) {
+        parts.push(cur);
+        cur = '';
+      }
+      cur = cur ? `${cur}\n\n${block}` : block;
+    }
+    if (cur) parts.push(cur);
+    for (const part of parts) await sendTelegramMessage(message.chat.id, part);
   } catch (err: any) {
     sendTelegramMessage(message.chat.id, `Не получилось собрать статистику: ${err?.message || err}`);
   }

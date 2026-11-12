@@ -268,6 +268,23 @@ export async function nudgeStatsLines(since: Date): Promise<string[]> {
   if (!logs.length) return [...title, T.statsSent(0, 0), ...profileLines];
   const now = Date.now();
   const lines = [...title, T.statsSent(logs.filter((l) => l.n === 1).length, logs.filter((l) => l.n === 2).length)];
+  // Что люди сделали за окно — берём разом и считаем в памяти: напоминаний тысячи, по запросу на каждое /stats висел десятки минут
+  const ids = [...new Set(logs.map((l) => l.telegramId))];
+  const [wishes, created, joined] = await Promise.all([
+    Wish.find({ telegramId: { $in: ids }, createdAt: { $gte: since } }, { telegramId: 1, createdAt: 1 }).lean(),
+    Event.find({ 'creator.telegramId': { $in: ids }, createdAt: { $gte: since } }, { 'creator.telegramId': 1, createdAt: 1 }).lean(),
+    Event.find({ 'participants.joinedAt': { $gte: since } }, { participants: 1 }).lean()
+  ]);
+  const actions = new Map<number, number[]>();
+  const addAction = (id: number, at?: Date) => {
+    if (!at) return;
+    const list = actions.get(id) || [];
+    list.push(new Date(at).getTime());
+    actions.set(id, list);
+  };
+  for (const w of wishes) addAction(w.telegramId, w.createdAt);
+  for (const e of created) addAction((e as any).creator?.telegramId, e.createdAt);
+  for (const e of joined) for (const p of e.participants || []) addAction(p.telegramId, (p as any).joinedAt);
   for (const v of ['A', 'B', 'C', 'second']) {
     // Считаем только те, у которых уже прошло 48 часов
     const done = logs.filter((l) => l.variant === v && now - l.sentAt.getTime() >= 2 * DAY);
@@ -275,13 +292,9 @@ export async function nudgeStatsLines(since: Date): Promise<string[]> {
     if (!sent) continue;
     let acted = 0;
     for (const l of done) {
-      const from = l.sentAt;
-      const to = new Date(from.getTime() + 2 * DAY);
-      const did =
-        (await Wish.exists({ telegramId: l.telegramId, createdAt: { $gte: from, $lte: to } })) ||
-        (await Event.exists({ 'creator.telegramId': l.telegramId, createdAt: { $gte: from, $lte: to } })) ||
-        (await Event.exists({ participants: { $elemMatch: { telegramId: l.telegramId, joinedAt: { $gte: from, $lte: to } } } }));
-      if (did) acted++;
+      const from = l.sentAt.getTime();
+      const to = from + 2 * DAY;
+      if ((actions.get(l.telegramId) || []).some((t) => t >= from && t <= to)) acted++;
     }
     lines.push(T.statsVariant(T.variantNames[v], sent, done.length, acted));
   }
