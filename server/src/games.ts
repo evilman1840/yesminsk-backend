@@ -8,6 +8,8 @@ import { sendWithButtons } from './wishes';
 import { escapeHtml } from './utils/telegramNotify';
 import { isAdmin } from './news';
 import { recordFiveMatch, recordFiveBot } from './gameScores';
+import { isMatch, blockedEither } from './buddyInvites';
+import { DUEL_TEXTS as D } from './texts';
 
 /**
  * Мини-игры: «Крестики-Нолики» на поле 10×10, пять в ряд.
@@ -80,6 +82,7 @@ interface Player {
   awayAt?: Date;     // свернул приложение
   graceUntil?: Date; // до этого времени не считаем ушедшим
   rematch?: boolean;
+  username?: string; // только в партиях из «На связи»: «Написать» после партии
 }
 
 const PlayerSchema = new Schema(
@@ -93,7 +96,8 @@ const PlayerSchema = new Schema(
     seenAt: { type: Date, default: Date.now },
     awayAt: { type: Date },
     graceUntil: { type: Date },
-    rematch: { type: Boolean }
+    rematch: { type: Boolean },
+    username: { type: String }
   },
   { _id: false }
 );
@@ -106,6 +110,10 @@ const GameMatch = model(
       mode: { type: String, enum: ['random', 'invite'], required: true },
       status: { type: String, enum: ['searching', 'waiting', 'active', 'finished', 'cancelled'], required: true, index: true },
       inviteCode: { type: String, index: true, sparse: true },
+      // Партия из «На связи»: кого позвали (бот написал ему) и кто после партии нажал «Написать»
+      source: { type: String, enum: ['link', 'match'] },
+      toTelegramId: { type: Number, index: true, sparse: true },
+      wroteAfter: { type: [Number], default: undefined },
       players: { type: [PlayerSchema], default: [] }, // [0] ходит крестиками и первым
       board: { type: String, default: () => '.'.repeat(CELLS) },
       turn: { type: Number, default: 0 },
@@ -259,8 +267,8 @@ export const randomNick = (taken?: string) => {
   return free[Math.floor(Math.random() * free.length)];
 };
 
-export async function makePlayer(telegramId: number, incognito: boolean, takenNick?: string): Promise<Player> {
-  const u: any = await User.findOne({ telegramId }, { firstName: 1, avatarUrl: 1, photosHidden: 1 }).lean();
+export async function makePlayer(telegramId: number, incognito: boolean, takenNick?: string, withUsername = false): Promise<Player> {
+  const u: any = await User.findOne({ telegramId }, { firstName: 1, avatarUrl: 1, photosHidden: 1, username: 1 }).lean();
   const [nickEmoji, nick] = randomNick(takenNick);
   return {
     telegramId,
@@ -269,9 +277,62 @@ export async function makePlayer(telegramId: number, incognito: boolean, takenNi
     avatar: u && !u.photosHidden ? avatarFor(telegramId, u.avatarUrl) : '',
     nick,
     nickEmoji,
-    seenAt: new Date()
+    seenAt: new Date(),
+    ...(withUsername && u?.username ? { username: u.username } : {})
   };
 }
+
+/* ---------- Партия с человеком «На связи» ---------- */
+
+// Ждущие приглашения пары в других играх (регистрирует «Морской бой»): не больше одного на пару
+const pendingSources: ((a: number, b: number) => Promise<'mine' | 'theirs' | null>)[] = [];
+export const registerDuelPending = (fn: (a: number, b: number) => Promise<'mine' | 'theirs' | null>) => pendingSources.push(fn);
+
+async function fivePending(a: number, b: number): Promise<'mine' | 'theirs' | null> {
+  const fresh = { status: 'waiting', source: 'match', createdAt: { $gte: new Date(Date.now() - INVITE_WAIT_MS) } };
+  if (await GameMatch.exists({ ...fresh, 'players.0.telegramId': a, toTelegramId: b })) return 'mine';
+  if (await GameMatch.exists({ ...fresh, 'players.0.telegramId': b, toTelegramId: a })) return 'theirs';
+  return null;
+}
+
+export class DuelError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+// Можно ли позвать этого человека: взаимный 👋, никто никого не скрыл, у пары нет ждущего приглашения
+export async function checkDuel(myId: number, toId: number) {
+  if (!Number.isSafeInteger(toId) || toId <= 0 || toId === myId) throw new DuelError(400, D.notMatch);
+  const [me, friend] = await Promise.all([User.findOne({ telegramId: myId }), User.findOne({ telegramId: toId })]);
+  if (!me || !friend || friend.isBanned || blockedEither(me, friend) || !(await isMatch(myId, toId))) throw new DuelError(403, D.notMatch);
+  for (const check of [fivePending, ...pendingSources]) {
+    const pending = await check(myId, toId);
+    if (pending === 'mine') throw new DuelError(409, D.pending);
+    if (pending === 'theirs') throw new DuelError(409, D.pendingThem);
+  }
+  return { me, friend };
+}
+
+// Бот пишет позванному: «{имя} зовёт сыграть». Кнопка — вход по коду, как по ссылке
+export async function notifyDuel(friend: any, me: any, game: CallGame, code: string): Promise<boolean> {
+  if (friend.canMessage === false) return false;
+  const path = game === 'sea' ? `?seaCode=${code}` : `?gameCode=${code}`;
+  return sendWithButtons(friend.telegramId, D.invite(escapeHtml(me.firstName), game === 'sea' ? D.sea : D.five), [[{ text: D.playBtn, path }]]).catch(() => false);
+}
+
+// Для /stats: партии из «На связи» за 7 дней
+export async function duelCounts(Model: any) {
+  const week = { source: 'match', createdAt: { $gte: new Date(Date.now() - 7 * DAY) } };
+  const [sent, accepted, finished, wrote] = await Promise.all([
+    Model.countDocuments(week),
+    Model.countDocuments({ ...week, 'players.1': { $exists: true } }),
+    Model.countDocuments({ ...week, status: 'finished', reason: { $in: ['win', 'draw'] } }),
+    Model.countDocuments({ ...week, 'wroteAfter.0': { $exists: true } })
+  ]);
+  return { sent, accepted, finished, wrote };
+}
+export const fiveDuelCounts = () => duelCounts(GameMatch);
 
 const meIndex = (m: any, telegramId: number) => m.players.findIndex((p: any) => p.telegramId === telegramId);
 
@@ -282,6 +343,7 @@ function view(m: any, telegramId: number) {
     id: String(m._id),
     game: m.game,
     mode: m.mode,
+    source: m.source === 'match' ? 'match' : undefined,
     status: m.status,
     v: m.v || 0,
     inviteCode: m.status === 'waiting' && me === 0 ? m.inviteCode : undefined,
@@ -304,6 +366,7 @@ function view(m: any, telegramId: number) {
         name: p.incognito ? p.nick : p.firstName,
         avatar: p.incognito ? '' : p.avatar,
         emoji: p.incognito ? p.nickEmoji : '',
+        username: m.source === 'match' && !p.incognito ? p.username || undefined : undefined,
         rematch: Boolean(p.rematch),
         online: !p.awayAt && Date.now() - new Date(p.seenAt).getTime() < ONLINE_MS,
         away: Boolean(p.awayAt)
@@ -711,10 +774,24 @@ export function setupGameRoutes(app: Express) {
       if (!canStart(myId)) return res.status(403).json({ error: CLOSED });
       const waiting = await GameMatch.countDocuments({ mode: 'invite', status: 'waiting', 'players.0.telegramId': myId });
       if (waiting >= 5) return res.status(429).json({ error: 'У тебя уже 5 приглашений ждут ответа. Отмени старые или подожди, пока примут' });
-      const me = await makePlayer(myId, Boolean(req.body?.incognito));
-      const m: any = (await GameMatch.create({ mode: 'invite', status: 'waiting', inviteCode: inviteCode(), players: [me], expireAt: expireAt('waiting') })).toObject();
-      res.json(view(m, myId));
+      // Позвать человека из «На связи»: бот напишет ему сам. Без инкогнито — вы же знакомы
+      const toId = req.body?.toTelegramId ? Number(req.body.toTelegramId) : 0;
+      const duel = toId ? await checkDuel(myId, toId) : null;
+      const me = await makePlayer(myId, duel ? false : Boolean(req.body?.incognito), undefined, Boolean(duel));
+      const m: any = (
+        await GameMatch.create({
+          mode: 'invite',
+          status: 'waiting',
+          inviteCode: inviteCode(),
+          players: [me],
+          ...(duel ? { source: 'match', toTelegramId: toId } : {}),
+          expireAt: expireAt('waiting')
+        })
+      ).toObject();
+      const delivered = duel ? await notifyDuel(duel.friend, duel.me, 'five', m.inviteCode) : undefined;
+      res.json({ ...view(m, myId), ...(duel ? { delivered } : {}) });
     } catch (err: any) {
+      if (err instanceof DuelError) return res.status(err.status).json({ error: err.message });
       console.warn('⚠️ Игры, приглашение:', err?.message || err);
       res.status(500).json({ error: 'Не получилось создать приглашение' });
     }
@@ -732,7 +809,8 @@ export function setupGameRoutes(app: Express) {
       const host: any = await User.findOne({ telegramId: m.players[0].telegramId }, { blockedUsers: 1 }).lean();
       const meUser: any = await User.findOne({ telegramId: myId }, { blockedUsers: 1 }).lean();
       if (host?.blockedUsers?.includes(myId) || meUser?.blockedUsers?.includes(m.players[0].telegramId)) return res.status(404).json({ error: 'Приглашение не найдено' });
-      const guest = await makePlayer(myId, Boolean(req.body?.incognito), m.players[0].nick);
+      const duel = m.source === 'match';
+      const guest = await makePlayer(myId, duel ? false : Boolean(req.body?.incognito), m.players[0].nick, duel);
       // Позвавший, скорее всего, уже в чате с тобой: ждём его пару минут и один раз зовём ботом
       const hostP: any = { ...m.players[0], awayAt: undefined };
       const hostHere = Date.now() - new Date(hostP.seenAt).getTime() < ONLINE_MS && !m.players[0].awayAt;
@@ -911,6 +989,18 @@ export function setupGameRoutes(app: Express) {
   });
 
   // «Ещё партию» с тем же соперником: когда нажали оба — новая партия, первым ходит другой
+  // После партии из «На связи» нажали «Написать {имя}» — для /stats
+  app.post('/api/games/:id/wrote', auth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const myId = req.telegramUser!.id;
+      if (!validId(req)) return res.sendStatus(404);
+      await GameMatch.updateOne({ _id: String(req.params.id), source: 'match', 'players.telegramId': myId }, { $addToSet: { wroteAfter: myId } });
+      res.json({ ok: true });
+    } catch {
+      res.status(500).json({ error: 'Не получилось' });
+    }
+  });
+
   app.post('/api/games/:id/rematch', auth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const myId = req.telegramUser!.id;
@@ -926,7 +1016,7 @@ export function setupGameRoutes(app: Express) {
       m = await update({ _id: m._id }, { [`players.${i}.rematch`]: true, [`players.${i}.seenAt`]: new Date() });
       if (m.players.every((p: any) => p.rematch) && !m.nextId) {
         const players = [m.players[1], m.players[0]].map((p: any) => ({ ...p, rematch: undefined, awayAt: undefined, graceUntil: undefined, seenAt: new Date() }));
-        const created: any = await GameMatch.create({ game: m.game, mode: m.mode, status: 'active', players, lastMoveAt: new Date(), expireAt: expireAt('active') });
+        const created: any = await GameMatch.create({ game: m.game, mode: m.mode, ...(m.source === 'match' ? { source: 'match' } : {}), status: 'active', players, lastMoveAt: new Date(), expireAt: expireAt('active') });
         const linked = await update({ _id: m._id, nextId: { $exists: false } }, { nextId: created._id });
         if (!linked) await GameMatch.deleteOne({ _id: created._id }); // второй успел первым
         m = await GameMatch.findById(m._id).lean();

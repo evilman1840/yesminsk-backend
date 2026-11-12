@@ -42,7 +42,8 @@ import { PeopleSeen } from './models/PeopleSeen';
 import { cleanAudience, audienceError, audienceFeedQuery, audienceUsersQuery, audienceNote } from './eventAudience';
 import { setupPhotoRoutes, cleanPhotoIds, photoUrl } from './photos';
 import { setupWishRoutes, startWishLoop, onMeetupFromWish, notifyWishersOfMeetup, inviteToMeetup, INVITE_MAX, sendWithButtons, Btn, CUSTOM_WISH } from './wishes';
-import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS } from './texts';
+import { EVENT_MESSAGE_TEXTS, BOT_ACCESS_TEXTS, WAVE_GATE_TEXTS } from './texts';
+import { setupHelloRoutes, startHelloLoop } from './hello';
 import { Wish, WishGroup, WISH_WINDOWS, WishWindow } from './models/Wish';
 import { theirPreferencesAllow } from './preferences';
 import { refreshFaceCheck, backfillFaceChecks } from './faceCheck';
@@ -312,7 +313,10 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
       user.lastActiveAt = new Date();
       const set: Record<string, any> = { lastActiveAt: user.lastActiveAt };
       // Завёл или сменил @username в Telegram — запоминаем (иначе ему нельзя написать)
-      if ((tgUser.username || '') !== (user.username || '')) {
+      // Но: initData в открытом приложении не обновляется. Если username только что подхватили через «Готово, проверь»
+      // (Bot API), а initData ещё старый, без username, — не стираем
+      const checkedFresh = user.usernameCheckedAt && Date.now() - new Date(user.usernameCheckedAt).getTime() < 24 * 60 * 60 * 1000;
+      if ((tgUser.username || '') !== (user.username || '') && !(checkedFresh && !tgUser.username)) {
         user.username = tgUser.username || undefined;
         set.username = tgUser.username || '';
       }
@@ -1018,6 +1022,11 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
       return res.json({ success: true, isMatch: false });
     }
 
+    // Перед первым 👋: пол (можно «не указывать») и @username — иначе ответить будет некуда.
+    // Приложение спрашивает об этом само; здесь — на случай старой версии приложения
+    if (!me.genderConfirmed) return res.status(409).json({ error: WAVE_GATE_TEXTS.needGender, code: 'NEED_GENDER' });
+    if (!me.username) return res.status(409).json({ error: WAVE_GATE_TEXTS.needUsername, code: 'NEED_USERNAME' });
+
     const liked = await sendLike(me, target);
     if (!liked) return res.status(403).json({ error: 'Этому человеку нельзя передать привет' });
     const { isMatch } = liked;
@@ -1025,6 +1034,8 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
     res.json({
       success: true,
       isMatch,
+      // Жребий «кто пишет первым» — приложение покажет, как падает монетка
+      firstMove: liked.firstMove == null ? null : liked.firstMove === me.telegramId ? 'me' : 'them',
       user: formatPublicUser(target, me, { iLiked: true, likedMe: isMatch, isMatch }),
       waves: await waveQuota(me) // сколько 👋 осталось на сегодня
     });
@@ -1034,6 +1045,54 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
       return res.status(429).json({ error: 'На сегодня «👋» закончились', code: 'DAILY_WAVE_LIMIT', limit: err.quota.limit, waves: err.quota });
     }
     res.status(500).json({ error: 'Ошибка сохранения реакции' });
+  }
+});
+
+// «Готово, проверь» в шторке «Без @username тебе не смогут ответить»: initData в открытом приложении старый,
+// поэтому спрашиваем username у Bot API (getChat) и сохраняем
+app.post('/api/users/me/username-check', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const myId = req.telegramUser!.id;
+    let username = req.telegramUser!.username || '';
+    if (!username && process.env.TELEGRAM_BOT_TOKEN) {
+      const r: any = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getChat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: myId })
+      })
+        .then((x) => x.json())
+        .catch(() => null);
+      if (r?.ok) username = r.result?.username || '';
+    }
+    const set: Record<string, any> = { usernameCheckedAt: new Date() };
+    if (username) {
+      set.username = username;
+      set['waveGate.usernameDoneAt'] = new Date();
+    }
+    await User.updateOne({ telegramId: myId }, { $set: set });
+    res.json({ username: username || null });
+  } catch (err: any) {
+    console.warn('⚠️ /api/users/me/username-check:', err?.message || err);
+    res.status(500).json({ error: 'Не получилось проверить' });
+  }
+});
+
+// Шторки перед первым 👋: показали / ответили / «Потом» — для /stats (первый раз каждого события)
+const WAVE_GATE_EVENTS: Record<string, string> = {
+  gender_shown: 'genderShownAt',
+  gender_done: 'genderDoneAt',
+  username_shown: 'usernameShownAt',
+  username_done: 'usernameDoneAt',
+  left: 'leftAt'
+};
+app.post('/api/users/me/wave-gate', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  const field = WAVE_GATE_EVENTS[String(req.body?.event || '')];
+  if (!field) return res.sendStatus(400);
+  try {
+    await User.updateOne({ telegramId: req.telegramUser!.id, [`waveGate.${field}`]: { $exists: false } }, { $set: { [`waveGate.${field}`]: new Date() } });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'Не получилось' });
   }
 });
 
@@ -2159,6 +2218,7 @@ setupAfishaRoutes(app);
 setupGameScoreRoutes(app); // раньше /api/games/:id, иначе «summary» примут за номер партии
 setupGameRoutes(app);
 setupSeaRoutes(app); // «Морской бой»
+setupHelloRoutes(app); // «✍️ Что написать» после жребия «кто пишет первым»
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);
@@ -2174,6 +2234,7 @@ app.listen(PORT, () => {
   startFeedbackLoop();
   startWishLoop();
   startBuddyLoop();
+  startHelloLoop();
   startRecruitLoop();
   startNudgeLoop();
   startProposalLoop();

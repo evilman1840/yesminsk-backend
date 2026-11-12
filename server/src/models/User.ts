@@ -73,6 +73,9 @@ export interface IUser extends Document {
   nudgeOptedOut?: boolean;   // нажал «Не сейчас» — больше не пишем
   profileNudgeSentAt?: Date; // разовое напоминание «заполни анкету подробнее»
   usernameNudgeSentAt?: Date; // разовое напоминание «заведи @username»
+  usernameCheckedAt?: Date;   // «Готово, проверь»: username спросили у Bot API (initData в открытом приложении старый)
+  // Шторки перед первым 👋: когда впервые показали и когда человек ответил (для /stats)
+  waveGate?: { genderShownAt?: Date; genderDoneAt?: Date; usernameShownAt?: Date; usernameDoneAt?: Date; leftAt?: Date };
   hiddenPlaces?: string[];   // места, смахнутые «Неинтересно»
   hiddenEvents?: string[];   // сходки, смахнутые «Неинтересно»
   hiddenByReports?: boolean; // скрыт после 3 жалоб до решения модератора
@@ -159,6 +162,14 @@ const UserSchema = new Schema<IUser>(
     nudgeOptedOut: { type: Boolean },
     profileNudgeSentAt: { type: Date },
     usernameNudgeSentAt: { type: Date },
+    usernameCheckedAt: { type: Date },
+    waveGate: {
+      genderShownAt: { type: Date },
+      genderDoneAt: { type: Date },
+      usernameShownAt: { type: Date },
+      usernameDoneAt: { type: Date },
+      leftAt: { type: Date }
+    },
     hiddenPlaces: { type: [String], default: [] },
     hiddenEvents: { type: [String], default: [] },
     hiddenByReports: { type: Boolean, default: false },

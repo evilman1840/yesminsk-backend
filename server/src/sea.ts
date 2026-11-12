@@ -31,7 +31,12 @@ import {
   minskDay,
   startOfMinskDay,
   callForSeeker,
-  registerBusyPlayers
+  registerBusyPlayers,
+  registerDuelPending,
+  checkDuel,
+  notifyDuel,
+  DuelError,
+  duelCounts
 } from './games';
 
 /**
@@ -68,7 +73,8 @@ const PlayerSchema = new Schema(
     awayAt: { type: Date },
     graceUntil: { type: Date },
     rematch: { type: Boolean },
-    ready: { type: Boolean }
+    ready: { type: Boolean },
+    username: { type: String } // только в партиях из «На связи»
   },
   { _id: false }
 );
@@ -82,6 +88,10 @@ const SeaMatch = model(
       phase: { type: String, enum: ['placing', 'battle'], default: 'placing' },
       placeUntil: { type: Date },
       inviteCode: { type: String, index: true, sparse: true },
+      // Партия из «На связи»: кого позвали и кто после партии нажал «Написать»
+      source: { type: String, enum: ['link', 'match'] },
+      toTelegramId: { type: Number, index: true, sparse: true },
+      wroteAfter: { type: [Number], default: undefined },
       players: { type: [PlayerSchema], default: [] }, // [0] стреляет первым
       // fleets[i] — корабли игрока i: '.' вода, '0'…'9' номер корабля
       fleets: { type: [String], default: () => ['', ''] },
@@ -216,6 +226,7 @@ function view(m: any, telegramId: number) {
     id: String(m._id),
     game: 'sea',
     mode: m.mode,
+    source: m.source === 'match' ? 'match' : undefined,
     status: m.status,
     phase: m.phase || 'placing',
     placeLeft: m.status === 'active' && m.phase === 'placing' && m.placeUntil ? Math.max(0, new Date(m.placeUntil).getTime() - Date.now()) : undefined,
@@ -241,6 +252,7 @@ function view(m: any, telegramId: number) {
       name: p.incognito ? p.nick : p.firstName,
       avatar: p.incognito ? '' : p.avatar,
       emoji: p.incognito ? p.nickEmoji : '',
+      username: m.source === 'match' && !p.incognito ? p.username || undefined : undefined,
       rematch: Boolean(p.rematch),
       ready: Boolean(p.ready),
       online: !p.awayAt && Date.now() - new Date(p.seenAt).getTime() < ONLINE_MS,
@@ -380,6 +392,15 @@ export function startSeaStatsLoop() {
 }
 
 // Строки для /stats — как у Крестиков-Ноликов
+// Не больше одного ждущего приглашения на пару — и с учётом «Крестиков-Ноликов»
+registerDuelPending(async (a, b) => {
+  const fresh = { status: 'waiting', source: 'match', createdAt: { $gte: new Date(Date.now() - INVITE_WAIT_MS) } };
+  if (await SeaMatch.exists({ ...fresh, 'players.0.telegramId': a, toTelegramId: b })) return 'mine';
+  if (await SeaMatch.exists({ ...fresh, 'players.0.telegramId': b, toTelegramId: a })) return 'theirs';
+  return null;
+});
+export const seaDuelCounts = () => duelCounts(SeaMatch);
+
 export async function seaStatsLines(): Promise<string[]> {
   const today = startOfMinskDay();
   const started = { status: { $in: ['active', 'finished'] }, createdAt: { $gte: today } };
@@ -448,12 +469,38 @@ export function setupSeaRoutes(app: Express) {
       if (!canStart(myId)) return res.status(403).json({ error: CLOSED });
       const waiting = await SeaMatch.countDocuments({ mode: 'invite', status: 'waiting', 'players.0.telegramId': myId });
       if (waiting >= 5) return res.status(429).json({ error: 'У тебя уже 5 приглашений ждут ответа. Отмени старые или подожди, пока примут' });
-      const me = await makePlayer(myId, Boolean(req.body?.incognito));
-      const m: any = (await SeaMatch.create({ mode: 'invite', status: 'waiting', inviteCode: inviteCode(), players: [me], expireAt: expireAt('waiting') })).toObject();
-      res.json(view(m, myId));
+      // Позвать человека из «На связи»: бот напишет ему сам, без инкогнито
+      const toId = req.body?.toTelegramId ? Number(req.body.toTelegramId) : 0;
+      const duel = toId ? await checkDuel(myId, toId) : null;
+      const me = await makePlayer(myId, duel ? false : Boolean(req.body?.incognito), undefined, Boolean(duel));
+      const m: any = (
+        await SeaMatch.create({
+          mode: 'invite',
+          status: 'waiting',
+          inviteCode: inviteCode(),
+          players: [me],
+          ...(duel ? { source: 'match', toTelegramId: toId } : {}),
+          expireAt: expireAt('waiting')
+        })
+      ).toObject();
+      const delivered = duel ? await notifyDuel(duel.friend, duel.me, 'sea', m.inviteCode) : undefined;
+      res.json({ ...view(m, myId), ...(duel ? { delivered } : {}) });
     } catch (err: any) {
+      if (err instanceof DuelError) return res.status(err.status).json({ error: err.message });
       console.warn('⚠️ Морской бой, приглашение:', err?.message || err);
       res.status(500).json({ error: 'Не получилось создать приглашение' });
+    }
+  });
+
+  // После партии из «На связи» нажали «Написать {имя}» — для /stats
+  app.post('/api/sea/:id/wrote', auth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const myId = req.telegramUser!.id;
+      if (!validId(req)) return res.sendStatus(404);
+      await SeaMatch.updateOne({ _id: String(req.params.id), source: 'match', 'players.telegramId': myId }, { $addToSet: { wroteAfter: myId } });
+      res.json({ ok: true });
+    } catch {
+      res.status(500).json({ error: 'Не получилось' });
     }
   });
 
@@ -468,7 +515,8 @@ export function setupSeaRoutes(app: Express) {
       const host: any = await User.findOne({ telegramId: m.players[0].telegramId }, { blockedUsers: 1 }).lean();
       const meUser: any = await User.findOne({ telegramId: myId }, { blockedUsers: 1 }).lean();
       if (host?.blockedUsers?.includes(myId) || meUser?.blockedUsers?.includes(m.players[0].telegramId)) return res.status(404).json({ error: 'Приглашение не найдено' });
-      const guest = await makePlayer(myId, Boolean(req.body?.incognito), m.players[0].nick);
+      const duel = m.source === 'match';
+      const guest = await makePlayer(myId, duel ? false : Boolean(req.body?.incognito), m.players[0].nick, duel);
       const hostP: any = { ...m.players[0], awayAt: undefined };
       const hostHere = Date.now() - new Date(hostP.seenAt).getTime() < ONLINE_MS && !m.players[0].awayAt;
       if (!hostHere) hostP.graceUntil = new Date(Date.now() + HOST_GRACE_MS);
@@ -684,7 +732,7 @@ export function setupSeaRoutes(app: Express) {
       m = await update({ _id: m._id }, { [`players.${i}.rematch`]: true, [`players.${i}.seenAt`]: new Date() });
       if (m.players.every((p: any) => p.rematch) && !m.nextId) {
         const players = [m.players[1], m.players[0]].map((p: any) => ({ ...p, rematch: undefined, ready: undefined, awayAt: undefined, graceUntil: undefined, seenAt: new Date() }));
-        const created: any = await SeaMatch.create({ mode: m.mode, ...startPlacing(), players, expireAt: expireAt('active') });
+        const created: any = await SeaMatch.create({ mode: m.mode, ...(m.source === 'match' ? { source: 'match' } : {}), ...startPlacing(), players, expireAt: expireAt('active') });
         const linked = await update({ _id: m._id, nextId: { $exists: false } }, { nextId: created._id });
         if (!linked) await SeaMatch.deleteOne({ _id: created._id });
         m = await SeaMatch.findById(m._id).lean();

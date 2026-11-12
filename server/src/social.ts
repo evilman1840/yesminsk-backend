@@ -7,6 +7,9 @@ import { waveQuota, markWaveLimitHit, WaveLimitError } from './waveLimit';
 import { noteIncomingWave } from './waveNotify';
 import { matchBridgeLine } from './buddyInvites';
 import { sendWithButtons } from './wishes';
+import { tossCoin, coinLine, helloPath } from './hello';
+import { canStart } from './games';
+import { HELLO_TEXTS as H, DUEL_TEXTS as D } from './texts';
 
 /**
  * 👋 «Пообщаться» от одного человека другому. Если в ответ уже было 👋 — оба «На связи», бот пишет обоим.
@@ -21,7 +24,7 @@ export async function sendLike(
   target: IUser,
   context = '',
   opts: { free?: boolean; bulk?: boolean } = {}
-): Promise<{ isMatch: boolean; isNewLike: boolean } | null> {
+): Promise<{ isMatch: boolean; isNewLike: boolean; firstMove?: number | null } | null> {
   if (me.telegramId === target.telegramId) return null;
   if ((me.blockedUsers || []).includes(target.telegramId) || (target.blockedUsers || []).includes(me.telegramId)) return null;
   const [previous, reverse] = await Promise.all([
@@ -57,15 +60,23 @@ export async function sendLike(
     if (lastOne) markWaveLimitHit(me.telegramId);
   }
 
+  let firstMove: number | null | undefined;
   if (isNewLike) {
     if (isMatch) {
       // Оба нажали 👋 — уведомляем обоих, что они на связи, и сразу мостик к сходке компанией:
-      // общее «Хочу сходить» или сходка, интересная обоим. «👯 Пойдём вместе» открывает шторку выбора
+      // общее «Хочу сходить» или сходка, интересная обоим. «👯 Пойдём вместе» открывает шторку выбора.
+      // Монетка решает, кто пишет первым; тому, кому выпало, — «✍️ Что написать» с готовыми фразами
+      const first = await tossCoin(me, target).catch(() => null);
+      firstMove = first;
       const notify = async (to: IUser, other: IUser) => {
         const bridge = await matchBridgeLine(to, other).catch(() => null);
-        await sendWithButtons(to.telegramId, `${B.matched(userMentionHtml(other))}\n\n${bridge || B.bridgeAny}`, [
+        const coin = coinLine(to.telegramId, first, `<b>${escapeHtml(other.firstName)}</b>`);
+        await sendWithButtons(to.telegramId, `${B.matched(userMentionHtml(other))}${coin ? `\n\n${coin}` : ''}\n\n${bridge || B.bridgeAny}`, [
+          ...(first === to.telegramId ? [[{ text: H.helloBtn, path: helloPath(other.telegramId) }]] : []),
           [{ text: B.togetherBtn, path: `?user=${other.telegramId}&together=1` }],
-          [{ text: B.profileBtn, path: `?user=${other.telegramId}` }]
+          [{ text: B.profileBtn, path: `?user=${other.telegramId}` }],
+          // Партия как повод начать разговор (пока игры открыты не всем — только тем, у кого есть раздел)
+          ...(canStart(to.telegramId) ? [[{ text: D.duelBtn, path: `?user=${other.telegramId}&duel=1` }]] : [])
         ]);
       };
       notify(target, me).catch(() => {});
@@ -83,5 +94,5 @@ export async function sendLike(
       );
     }
   }
-  return { isMatch, isNewLike };
+  return { isMatch, isNewLike, firstMove };
 }

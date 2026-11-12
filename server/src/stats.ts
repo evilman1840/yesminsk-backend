@@ -19,6 +19,34 @@ import { buddyStatsLines } from './buddyInvites';
 import { eventExitStatsLines } from './eventLeave';
 import { recruitStatsLines } from './recruitHelp';
 import { serialStatsLines } from './serial';
+import { helloStatsLines } from './hello';
+import { fiveDuelCounts } from './games';
+import { seaDuelCounts } from './sea';
+import { DUEL_TEXTS, WAVE_GATE_TEXTS } from './texts';
+
+// Партии из «На связи» за 7 дней: по строке на игру
+async function duelStatsLines(): Promise<string[]> {
+  const [five, sea] = await Promise.all([fiveDuelCounts(), seaDuelCounts()]);
+  if (!five.sent && !sea.sent) return [];
+  return [
+    DUEL_TEXTS.statsTitle,
+    DUEL_TEXTS.stats('Крестики-Нолики', five.sent, five.accepted, five.finished, five.wrote),
+    DUEL_TEXTS.stats('Морской бой', sea.sent, sea.accepted, sea.finished, sea.wrote)
+  ];
+}
+
+// Шторки пола и @username перед первым 👋 (за всё время: первый показ у каждого человека)
+async function waveGateStatsLines(): Promise<string[]> {
+  const [gShown, gDone, uShown, uDone, left] = await Promise.all([
+    User.countDocuments({ 'waveGate.genderShownAt': { $exists: true } }),
+    User.countDocuments({ 'waveGate.genderShownAt': { $exists: true }, genderConfirmed: true }),
+    User.countDocuments({ 'waveGate.usernameShownAt': { $exists: true } }),
+    User.countDocuments({ 'waveGate.usernameShownAt': { $exists: true }, username: { $nin: [null, ''] } }),
+    User.countDocuments({ 'waveGate.leftAt': { $exists: true } })
+  ]);
+  if (!gShown && !uShown) return [];
+  return [WAVE_GATE_TEXTS.statsTitle, WAVE_GATE_TEXTS.stats(gShown, gDone, uShown, uDone, left)];
+}
 
 /**
  * /stats — сводка по приложению для автора (только ADMIN_TELEGRAM_IDS)
@@ -149,6 +177,9 @@ export async function buildStats(): Promise<string> {
   const recruitLines = await recruitStatsLines().catch(() => [] as string[]);
   const exitLines = await eventExitStatsLines().catch(() => [] as string[]);
   const serialLines = await serialStatsLines().catch(() => [] as string[]);
+  const helloLines = await helloStatsLines().catch(() => [] as string[]);
+  const duelLines = await duelStatsLines().catch(() => [] as string[]);
+  const gateLines = await waveGateStatsLines().catch(() => [] as string[]);
 
   const date = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 
@@ -171,6 +202,9 @@ export async function buildStats(): Promise<string> {
     `🤝 На связи (взаимно): ${matches}`,
     `🙈 Скрыли навсегда (кнопкой): ${hides} · ⏭ пропусков сейчас: ${skipsNow}`,
     ...waveLimitLines,
+    ...(gateLines.length ? [``, ...gateLines] : []),
+    ...(helloLines.length ? [``, ...helloLines] : []),
+    ...(duelLines.length ? [``, ...duelLines] : []),
     ``,
     `🗓 <b>Сходки</b>`,
     `Предстоящих ${eventsUpcoming.length}, на них идут ${goingUpcoming} чел.`,

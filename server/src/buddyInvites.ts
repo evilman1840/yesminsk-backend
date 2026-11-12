@@ -91,7 +91,7 @@ export async function matchIdsOf(myId: number): Promise<number[]> {
   const back = new Set(toMe.map(Number));
   return mine.map(Number).filter((id) => back.has(id));
 }
-async function isMatch(a: number, b: number) {
+export async function isMatch(a: number, b: number) {
   const n = await Reaction.countDocuments({
     type: 'like',
     $or: [
@@ -115,7 +115,7 @@ const isGoing = (ev: IEvent, id: number) => ev.participants.some((p) => p.telegr
 // Хватает мест на обоих: отправителю (если ещё не записан) и знакомому
 const seatsNeeded = (ev: IEvent, senderId: number) => (isGoing(ev, senderId) ? 1 : 2);
 
-const goalsOf = (u: any): string[] => (u?.goals?.length ? u.goals : u?.goal ? [u.goal] : []);
+export const goalsOf = (u: any): string[] => (u?.goals?.length ? u.goals : u?.goal ? [u.goal] : []);
 
 // Почему сюда нельзя позвать этого человека; null — можно
 function inviteBlock(ev: IEvent, sender: IUser, friend: IUser | null): string | null {
@@ -129,7 +129,7 @@ function inviteBlock(ev: IEvent, sender: IUser, friend: IUser | null): string | 
   return null;
 }
 
-const blockedEither = (a: IUser, b: IUser) => (a.blockedUsers || []).includes(b.telegramId) || (b.blockedUsers || []).includes(a.telegramId);
+export const blockedEither = (a: IUser, b: IUser) => (a.blockedUsers || []).includes(b.telegramId) || (b.blockedUsers || []).includes(a.telegramId);
 
 /* ---------- Отправка ---------- */
 
@@ -319,7 +319,7 @@ const personOut = (u: any) => ({
 });
 
 // Общие «Хочу сходить»: один вид (вид спорта может отличаться — это «похожее»)
-async function sharedWishes(myId: number, friendId: number) {
+export async function sharedWishes(myId: number, friendId: number) {
   const live = { status: { $in: ['active', 'matched'] }, windowEnd: { $gt: new Date() } };
   const [mine, theirs] = await Promise.all([Wish.find({ telegramId: myId, ...live }).lean(), Wish.find({ telegramId: friendId, ...live }).lean()]);
   const out: { kind: string; sport: string | null; what: string; when: string; timeWindow: string }[] = [];
@@ -332,7 +332,7 @@ async function sharedWishes(myId: number, friendId: number) {
 }
 
 // Куда можно позвать знакомого: до 5 сходок, сначала те, что интересны обоим, потом ближайшие
-async function fitEventsFor(me: IUser, friend: IUser, limit = OPTIONS_MAX): Promise<{ ev: IEvent; bothLike: boolean }[]> {
+export async function fitEventsFor(me: IUser, friend: IUser, limit = OPTIONS_MAX): Promise<{ ev: IEvent; bothLike: boolean }[]> {
   const myId = me.telegramId;
   const friendId = friend.telegramId;
   const hidden = (me.hiddenEvents || []).filter((id) => mongoose.Types.ObjectId.isValid(id));
