@@ -1,17 +1,19 @@
 import mongoose from 'mongoose';
 import { IUser, User } from './models/User';
 import { Reaction } from './models/Reaction';
-import { quietCount } from './quietSort';
+import { quietCount, isOftenHidden, oftenHiddenCount } from './quietSort';
 
 /**
  * Дневной лимит 👋 «Пообщаться».
  * Считаем 👋, отправленные за календарный день по Минску (сброс в 00:00 по Минску).
  * Не в счёт: ответ на чужой 👋 (сразу «На связи») и привет участникам после сходки — это и есть то, к чему ведём.
  * 15 в день; 25 — первые сутки после регистрации или если на ≥25% из ≥10 отправленных 👋 ответили взаимно.
+ * 5 — тем, кого часто скрывают (quietSort.ts): правило важнее остальных, в том числе для новой анкеты.
  */
 
 export const WAVE_LIMIT_BASE = 15;
 export const WAVE_LIMIT_BOOSTED = 25;
+export const WAVE_LIMIT_LOW = 5;
 const BOOST_MIN_SENT = 10;
 const BOOST_MIN_SHARE = 0.25;
 
@@ -50,6 +52,7 @@ async function usedToday(telegramId: number): Promise<number> {
 
 // Повышенный лимит: новичок (меньше суток) или на его 👋 часто отвечают взаимно
 async function dailyLimit(me: IUser): Promise<number> {
+  if (isOftenHidden(me.telegramId)) return WAVE_LIMIT_LOW;
   const created = (me as any).createdAt ? new Date((me as any).createdAt).getTime() : 0;
   if (created && Date.now() - created < DAY) return WAVE_LIMIT_BOOSTED;
   const sent = await Reaction.find({ fromTelegramId: me.telegramId, type: { $in: ['like', 'unmatch'] } }, { toTelegramId: 1 }).lean();
@@ -100,7 +103,8 @@ export async function waveLimitStatsLines(): Promise<string[]> {
     `Упёрлись в лимит 👋: сегодня ${today} чел., за 7 дней ${week} чел.`,
     reciprocity,
     `🙈 «Скрыть навсегда» за 7 дней: ${hides7}`,
-    `🔇 В тихой сортировке: ${quietCount()} чел.`
+    `🔇 В тихой сортировке: ${quietCount()} чел.`,
+    `🙈 Часто скрывают (конец ленты, лимит ${WAVE_LIMIT_LOW} 👋): ${oftenHiddenCount()} чел.`
   ];
 }
 

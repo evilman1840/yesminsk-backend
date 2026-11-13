@@ -26,6 +26,7 @@ import { handleInviteStart } from './invites';
 import { markCanMessage } from './utils/telegramNotify';
 import { handlePlaceMessage, handlePlaceCallback } from './places';
 import { handleCsvMessage, handleCsvCallback } from './csvImport';
+import { handleHiddenCallback } from './quietSort';
 import { handleFeedbackCallback, handleFeedbackText, handleFeedbackCommand } from './feedback';
 import { eventSummaryHtml, eventAppPath } from './eventNotify';
 
@@ -64,7 +65,7 @@ export function setupTelegramBot(app: Express) {
     // Нажатие кнопки под жалобой (бан / всё в порядке)
     if (req.body?.callback_query) {
       const q = req.body.callback_query;
-      (async () => (await handleBuddyCallback(q)) || (await handleRecruitCallback(q)) || (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handleNudgeCallback(q)) || (await handleProposalCallback(q)) || (await handleSuggestionCallback(q)) || (await handleAfishaCallback(q)) || (await handlePhotoModerationCallback(q, banUser)) || (await handlePlaceCallback(q)) || (await handleModerationCallback(q)) || (await handleGameCallback(q)))().catch((err) =>
+      (async () => (await handleBuddyCallback(q)) || (await handleRecruitCallback(q)) || (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handleNudgeCallback(q)) || (await handleProposalCallback(q)) || (await handleSuggestionCallback(q)) || (await handleAfishaCallback(q)) || (await handlePhotoModerationCallback(q, banUser)) || (await handlePlaceCallback(q)) || (await handleHiddenCallback(q)) || (await handleModerationCallback(q)) || (await handleGameCallback(q)))().catch((err) =>
         console.warn('⚠️ Ошибка обработки кнопки:', err?.message || err)
       );
       return;

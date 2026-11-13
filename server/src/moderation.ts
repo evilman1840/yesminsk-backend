@@ -78,7 +78,7 @@ async function callBot(method: string, body: any) {
   return res.json().catch(() => ({}));
 }
 
-function notifyAdmins(html: string, buttons: { text: string; data: string }[]) {
+export function notifyAdmins(html: string, buttons: { text: string; data: string }[]) {
   for (const id of adminIds()) {
     callBot('sendMessage', {
       chat_id: id,
