@@ -13,9 +13,11 @@ import { formatWhen } from './eventNotify';
 import { ACCOUNT_TEXTS as T } from './texts';
 import { deleteAvatar } from './avatars';
 import { PlaceSuggestion } from './placeSuggestions';
+import { rememberDeletedAccount } from './deletedAccounts';
 
 /**
- * Удалить себя из приложения: анкета, фото, желания, реакции, советы и жалобы удаляются;
+ * Удалить себя из приложения: анкета, фото, желания, реакции, советы и жалобы удаляются
+ * (остаётся короткая запись без анкеты — deletedAccounts.ts);
  * свои сходки отменяются (участникам пишет бот), из чужих — выписываем.
  * Если открыть приложение снова — начнётся с чистого листа
  */
@@ -41,6 +43,14 @@ export function setupAccountRoutes(app: Express) {
       // Из чужих сходок — выписываем (и убираем мои отзывы «Как прошло?»)
       await Event.updateMany({ 'participants.telegramId': myId }, { $pull: { participants: { telegramId: myId } } });
       await Event.updateMany({ 'feedback.telegramId': myId }, { $pull: { feedback: { telegramId: myId } } });
+
+      // Короткая запись о прежней анкете: чтобы удаление не обнуляло жалобы и счётчик 👋. Сбой здесь удалению не мешает
+      try {
+        const reportsOnMe = await Report.find({ targetType: 'user', targetId: String(myId) }, { reason: 1, status: 1 }).lean();
+        await rememberDeletedAccount({ telegramId: myId, createdAt: (me as any).createdAt }, reportsOnMe);
+      } catch (err: any) {
+        console.warn('⚠️ Запись об удалённом аккаунте:', err?.message || err);
+      }
 
       await Promise.all([
         Reaction.deleteMany({ $or: [{ fromTelegramId: myId }, { toTelegramId: myId }] }),

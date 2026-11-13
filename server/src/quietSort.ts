@@ -1,7 +1,8 @@
 import mongoose from 'mongoose';
 import { Reaction } from './models/Reaction';
 import { User } from './models/User';
-import { notifyAdmins } from './moderation';
+import { notifyAdmins, pastAccountLine } from './moderation';
+import { DeletedAccount } from './deletedAccounts';
 import { isAdmin } from './news';
 import { escapeHtml, userMentionHtml } from './utils/telegramNotify';
 
@@ -40,6 +41,7 @@ export interface HiddenStat {
   mutual: number;
   hiddenBy: number;  // у скольких человек он в чёрном списке
   hiddenNow: number; // из них скрыли нынешнюю анкету (есть реакция «Скрыть»)
+  past?: { times: number; reports: number; reasons: string[] }; // удалял(а) аккаунт (deletedAccounts.ts)
 }
 
 // Решения модератора и отметки «карточка отправлена»
@@ -57,6 +59,13 @@ export async function computeQuietSort(): Promise<{ quiet: Set<number>; hidden: 
     if (liked.has(`${w.toTelegramId}:${w.fromTelegramId}`)) s.mutual++;
     stats.set(w.fromTelegramId, s);
   }
+  // 👋 с прежних, удалённых анкет тоже в счёт: удаление аккаунта счётчик не обнуляет
+  const pastOf = new Map<number, any>();
+  for (const p of await DeletedAccount.find({}, { telegramId: 1, sent: 1, mutual: 1, times: 1, reports: 1, reasons: 1 }).lean()) {
+    pastOf.set(p.telegramId, p);
+    const s = stats.get(p.telegramId) || { sent: 0, mutual: 0 };
+    stats.set(p.telegramId, { sent: s.sent + (p.sent || 0), mutual: s.mutual + (p.mutual || 0) });
+  }
   const nextQuiet = new Set<number>();
   for (const [id, s] of stats) if (s.sent >= MIN_SENT && s.mutual / s.sent < MAX_MUTUAL_SHARE) nextQuiet.add(id);
 
@@ -70,7 +79,7 @@ export async function computeQuietSort(): Promise<{ quiet: Set<number>; hidden: 
     const s = stats.get(b._id);
     if (!s || s.sent < HIDDEN_MIN_SENT) continue;
     if (b.n / s.sent < HIDDEN_MIN_SHARE || b.n < HIDDEN_PER_MUTUAL * s.mutual) continue;
-    hidden.push({ telegramId: b._id, sent: s.sent, mutual: s.mutual, hiddenBy: b.n, hiddenNow: hiddenNow.get(b._id) || 0 });
+    hidden.push({ telegramId: b._id, sent: s.sent, mutual: s.mutual, hiddenBy: b.n, hiddenNow: hiddenNow.get(b._id) || 0, past: pastOf.get(b._id) });
   }
   return { quiet: nextQuiet, hidden };
 }
@@ -83,7 +92,7 @@ export function hiddenCardHtml(u: { telegramId: number; firstName: string; usern
     `${userMentionHtml(u)}${u.age ? `, ${u.age}` : ''} · в приложении с ${escapeHtml(since)}`,
     '',
     `Помахал(а): ${s.sent} · ответили взаимно: ${s.mutual} · скрыли: ${s.hiddenBy}`,
-    ...(before >= 5 ? [`⚠️ ${before} из них скрыли раньше, чем появилась эта анкета: похоже, аккаунт удаляли и завели заново.`] : []),
+    ...(s.past?.times ? [pastAccountLine(s.past)] : before >= 5 ? [`⚠️ ${before} из них скрыли раньше, чем появилась эта анкета: похоже, аккаунт удаляли и завели заново.`] : []),
     '',
     'Уже в конце ленты, лимит 5 👋 в день. Человеку ничего не писали.'
   ].join('\n');

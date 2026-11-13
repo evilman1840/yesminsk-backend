@@ -27,7 +27,8 @@ import { setupNewsRoutes, isAdmin, adminIds } from './news';
 import { setupFundRoutes } from './fund';
 import { setupPollRoutes } from './polls';
 import { setupSerialRoutes } from './serial';
-import { banGuard, setupModerationRoutes, reportStopWords, BANNED_ERROR } from './moderation';
+import { banGuard, setupModerationRoutes, reportStopWords, BANNED_ERROR, notifyAdmins, pastAccountLine } from './moderation';
+import { pastAccount } from './deletedAccounts';
 import { checkStopWords, extrasText } from './stopWords';
 import { markInviteJoined } from './invites';
 import { joinEvent, isEventCreator, BY_REQUEST_LOCKED } from './eventJoin';
@@ -395,7 +396,18 @@ app.post('/api/users/agree-rules', telegramAuthMiddleware as any, async (req: Au
     const tgUser = req.telegramUser!;
     const legalVersion = String(req.body?.legalVersion || '').slice(0, 20);
     // Запись создаём только сейчас, после согласия
-    if (!(await User.exists({ telegramId: tgUser.id }))) await User.create(newUserFields(tgUser));
+    if (!(await User.exists({ telegramId: tgUser.id }))) {
+      await User.create(newUserFields(tgUser));
+      // Вернулся после удаления аккаунта, а на прежнюю анкету жаловались — показываем модератору
+      pastAccount(tgUser.id)
+        .then((past) => {
+          if (!past?.reports) return;
+          notifyAdmins(`♻️ <b>Вернулся после удаления</b>\n${userMentionHtml({ telegramId: tgUser.id, firstName: tgUser.first_name, username: tgUser.username })} · ID ${tgUser.id}\n\n${pastAccountLine(past)}`, [
+            { text: '🚫 Забанить', data: `ban:${tgUser.id}` }
+          ]);
+        })
+        .catch(() => {});
+    }
     const user = await User.findOneAndUpdate(
       { telegramId: tgUser.id },
       { hasAgreedToRules: true, ...(legalVersion ? { legalVersion, legalAcceptedAt: new Date() } : {}) },

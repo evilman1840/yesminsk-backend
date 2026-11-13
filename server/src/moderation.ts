@@ -10,6 +10,7 @@ import { formatWhen, eventSummaryHtml, eventAppPath } from './eventNotify';
 import { audienceNote } from './eventAudience';
 import { removeUserPhotos, removeEventPhotos } from './photoModeration';
 import { StopHit } from './stopWords';
+import { pastAccount } from './deletedAccounts';
 
 /**
  * Модерация: жалобы на анкеты и сходки, автоскрытие после 3 жалоб, бан через кнопки в боте.
@@ -36,6 +37,13 @@ const NEW_ACCOUNT_DAYS = 7;
 const isNewAccount = (u: any) => {
   const created = u?.createdAt ? new Date(u.createdAt).getTime() : u?._id?.getTimestamp?.().getTime();
   return !created || Date.now() - created < NEW_ACCOUNT_DAYS * 24 * 60 * 60 * 1000;
+};
+
+/** Строка для карточек модератора: человек уже удалял аккаунт. Пустая, если не удалял */
+export const pastAccountLine = (past?: { times: number; reports: number; reasons: string[] } | null): string => {
+  if (!past?.times) return '';
+  const reasons = past.reasons.map((r) => REASONS[r as ReportReason] || r).join(', ');
+  return `♻️ Удалял(а) аккаунт: ${past.times} раз${past.times > 1 && past.times < 5 ? 'а' : ''}` + (past.reports ? ` · жалоб на прежние анкеты: ${past.reports}${reasons ? ` (${escapeHtml(reasons)})` : ''}` : '');
 };
 
 interface IReport extends Document {
@@ -352,7 +360,10 @@ export function setupModerationRoutes(app: Express) {
         const isPhoto = reason === 'photo';
         const photoHidden = isPhoto && isNewAccount(target);
         if (photoHidden) await User.updateOne({ telegramId: targetIdNum }, { $set: { photosHidden: true } });
-        const autoHidden = openCount >= AUTO_HIDE_AFTER && !target?.hiddenByReports;
+        // Жалобы на прежние анкеты того же человека тоже в счёт: удаление аккаунта их не обнуляет
+        const past = await pastAccount(targetIdNum);
+        const pastLine = pastAccountLine(past);
+        const autoHidden = openCount + (past?.reports || 0) >= AUTO_HIDE_AFTER && !target?.hiddenByReports;
         if (autoHidden) await User.updateOne({ telegramId: targetIdNum }, { $set: { hiddenByReports: true } });
 
         notifyAdmins(
@@ -361,6 +372,7 @@ export function setupModerationRoutes(app: Express) {
             `${target?.username ? ` · @${escapeHtml(target.username)}` : ''} · ID ${targetIdNum}\n` +
             `📝 ${escapeHtml(target?.bio || 'без описания')}\n\n` +
             `Причина: ${REASONS[reason as ReportReason]}${commentLine}\n${reporterLine}` +
+            (pastLine ? `\n${pastLine}` : '') +
             (autoHidden ? `\n\n🙈 Анкета скрыта автоматически (${AUTO_HIDE_AFTER}+ жалоб) до твоего решения.` : '') +
             (isPhoto
               ? photoHidden
