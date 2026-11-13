@@ -67,6 +67,8 @@ import { avatarFor, setupAvatarRoutes, storeAvatar, isOwnAvatarLink, moveAvatars
 import { legalVisibleQuery, removeNonConsented } from './legal';
 import { registerAvatarUpload } from './photoModeration';
 import { needsRecruitHelp, startRecruitLoop } from './recruitHelp';
+import { startNearbyLoop, setupNearbyRoutes, nearbySettingsOf } from './nearbyInvite';
+import { comfortFor } from './eventComfort';
 
 const app = express();
 // Render стоит перед нами прокси: настоящий IP человека — в X-Forwarded-For
@@ -355,6 +357,7 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     userObj.isAdmin = isAdmin(user.telegramId); // модератор: может удалять любые сходки
     userObj.gamesOpen = process.env.GAMES_OPEN === '1' || userObj.isAdmin; // вкладка «Игры» и человечки на карте
     if (!isDraft) userObj.waves = await waveQuota(user).catch(() => undefined); // дневной лимит 👋: сколько осталось
+    userObj.nearby = nearbySettingsOf(user); // блок «Сходки рядом» в анкете
 
     res.json(userObj);
   } catch (err: any) {
@@ -1331,7 +1334,7 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
     const category = typeof req.query.category === 'string' ? req.query.category : undefined;
 
     const now = Date.now();
-    const me = await User.findOne({ telegramId: tgUser.id }, { hiddenEvents: 1, isEmpath: 1, goals: 1, goal: 1, locationExact: 1, gender: 1, age: 1 }).lean();
+    const me = await User.findOne({ telegramId: tgUser.id }, { hiddenEvents: 1, isEmpath: 1, goals: 1, goal: 1, locationExact: 1, gender: 1, age: 1, areaName: 1 }).lean();
     const mineQuery = { $or: [{ 'creator.telegramId': tgUser.id }, { 'participants.telegramId': tgUser.id }] };
     // Старое приложение просит прежний общий тип («Кафе и бар», «Арт, кино») — отдаём и новые, на которые его разделили
     const split = category ? SPLIT_CATEGORIES[category as EventCategory] : undefined;
@@ -1405,10 +1408,13 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
       ev.creator.telegramId === tgUser.id
         ? null
         : audienceError(ev, me) || ((ev.tags || []).includes('empaths') && !me?.isEmpath ? 'Эта сходка только для эмпатов' : null);
+    // «Стесняешься идти?» — тем, кто ещё не был на сходках (eventComfort.ts). Не получилось посчитать — лента важнее
+    const comfort = await comfortFor(feed, me, tgUser.id, { now, force: admin }).catch(() => new Map());
     res.json(
       ranked.map(({ ev, distanceMeters }) => {
         const reason = notForMe(ev);
-        return { ...formatEvent(ev, tgUser.id), ...(distanceMeters !== null ? { distanceMeters } : {}), ...(reason ? { notForMe: reason } : {}) };
+        const calm = reason ? undefined : comfort.get(String(ev._id));
+        return { ...formatEvent(ev, tgUser.id), ...(distanceMeters !== null ? { distanceMeters } : {}), ...(reason ? { notForMe: reason } : {}), ...(calm ? { comfort: calm } : {}) };
       })
     );
   } catch (err: any) {
@@ -2231,6 +2237,7 @@ setupGameScoreRoutes(app); // раньше /api/games/:id, иначе «summary�
 setupGameRoutes(app);
 setupSeaRoutes(app); // «Морской бой»
 setupHelloRoutes(app); // «✍️ Что написать» после жребия «кто пишет первым»
+setupNearbyRoutes(app); // «Сходки рядом»: настройки из анкеты и отметка «открыл приглашение»
 
 // Telegram-бот (/start с кнопкой открытия приложения)
 setupTelegramBot(app);
@@ -2248,6 +2255,7 @@ app.listen(PORT, () => {
   startBuddyLoop();
   startHelloLoop();
   startRecruitLoop();
+  startNearbyLoop();
   startNudgeLoop();
   startProposalLoop();
   startAfishaLoop();

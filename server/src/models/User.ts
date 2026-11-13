@@ -40,6 +40,10 @@ export interface IUser extends Document {
   customGoal?: string;     // своя идея, когда среди целей есть 'other'
   goesWith?: GoesWith;     // «Обычно хожу»: один, парой, компанией, с детьми
   digest?: DigestFrequency; // подборки от бота; не выбрано — «на выходные»
+  // «Сходки рядом» (nearbyInvite.ts): бот зовёт, когда недалеко создали сходку. Не задано — включено, до 3 в день, 3 км
+  nearbyNotify?: boolean;
+  nearbyPerDay?: number;    // 1 / 3 / 5, 0 — сколько угодно
+  nearbyRadiusKm?: number;  // 1 / 3 / 5, 0 — весь Минск
   isEmpath?: boolean;      // «🫶 Эмпат» — человек отметил сам в анкете
   isSupporter?: boolean;   // «🥧 Кормлю ГУЛЯЙ-Печку» — сам отметил после доната (на честном слове)
   thanksOk?: boolean;      // разрешил сказать спасибо по имени (список /thanks)
@@ -129,6 +133,9 @@ const UserSchema = new Schema<IUser>(
     customGoal: { type: String, trim: true, maxlength: 30, default: '' },
     goesWith: { type: String, enum: GOES_WITH },
     digest: { type: String, enum: DIGEST_FREQUENCIES },
+    nearbyNotify: { type: Boolean },
+    nearbyPerDay: { type: Number },
+    nearbyRadiusKm: { type: Number },
     isEmpath: { type: Boolean, default: false },
     isSupporter: { type: Boolean },
     thanksOk: { type: Boolean },

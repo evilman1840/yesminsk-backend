@@ -73,7 +73,7 @@ export function nearestArea(coords?: number[]): string | null {
 
 const DEFAULT_LNG = 27.5615;
 const DEFAULT_LAT = 53.9045;
-const isDefaultPoint = (c?: number[]) => Boolean(c && c.length === 2 && Math.abs(c[0] - DEFAULT_LNG) < 1e-4 && Math.abs(c[1] - DEFAULT_LAT) < 1e-4);
+export const isDefaultPoint = (c?: number[]) => Boolean(c && c.length === 2 && Math.abs(c[0] - DEFAULT_LNG) < 1e-4 && Math.abs(c[1] - DEFAULT_LAT) < 1e-4);
 const areaPoint = (u: any): [number, number] | null => {
   const p = AREA_POINTS[u?.areaName];
   return p ? [p[1], p[0]] : null; // [lng, lat]
@@ -84,6 +84,20 @@ export function realPoint(u: any): [number, number] | null {
   const exact = u?.locationExact?.coordinates;
   if (exact?.length === 2 && !isDefaultPoint(exact)) return [exact[0], exact[1]];
   return areaPoint(u) || (exact?.length === 2 ? [exact[0], exact[1]] : null);
+}
+
+// Выбран ли настоящий район (не «Минск» по умолчанию и не «проездом»)
+export const isKnownArea = (name?: string | null) => Boolean(name && AREA_POINTS[name]);
+
+/**
+ * Точка для «Сходок рядом»: своя метка или центр района. Кто в Минске проездом и метку не ставил — центр города.
+ * Район не выбран и метки нет — null: что для человека «рядом», мы не знаем. [lng, lat]
+ */
+export function invitePoint(u: any): [number, number] | null {
+  const p = realPoint(u);
+  if (!p) return null;
+  if (isDefaultPoint(p) && !isKnownArea(u?.areaName) && !u?.isTourist) return null;
+  return p;
 }
 
 // Смещение 500–800 м, одно и то же для человека (из telegramId), чтобы метка не прыгала между загрузками

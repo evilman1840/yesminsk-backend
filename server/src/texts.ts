@@ -626,3 +626,62 @@ export const WAVE_GATE_TEXTS = {
   stats: (gShown: number, gDone: number, uShown: number, uDone: number, left: number) =>
     `Пол: показали ${gShown} → выбрали ${gDone} · @username: показали ${uShown} → завели ${uDone} · ушли без 👋 ${left}`
 };
+
+// «Сходки рядом» (nearbyInvite.ts): через полчаса после создания сходки бот зовёт тех, кто недалеко
+const nearDistance = (m: number) => (m < 950 ? `${Math.max(100, Math.round(m / 100) * 100)} м` : `${(Math.round(m / 100) / 10).toFixed(1).replace('.', ',').replace(',0', '')} км`);
+export const NEARBY_TEXTS = {
+  // Первая строка приглашения. meters — от точки человека; null — точки нет (выбрал «весь Минск»)
+  head: (o: { meters: number | null; sameArea: boolean; touristCenter: boolean }) =>
+    '📍 Может, тебя заинтересует: ' +
+    (o.meters === null
+      ? 'в Минске собирают новую сходку'
+      : o.touristCenter
+        ? 'недалеко от центра Минска собирают сходку'
+        : o.sameArea
+          ? 'в твоём районе собирают сходку'
+          : o.meters <= 5000
+            ? `рядом с тобой собирают сходку, в ${nearDistance(o.meters)}`
+            : `в Минске собирают сходку, в ${nearDistance(o.meters)} от тебя`),
+  seatsLeft: (n: number) => ` · осталось ${n} ${n % 10 === 1 && n % 100 !== 11 ? 'место' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'места' : 'мест'}`,
+  // Опрос 13.11.2026: «стесняюсь идти к незнакомым» отметили 49%
+  comfort: 'Приходи, даже если никого не знаешь: каждый второй у нас тоже стесняется идти к незнакомым.',
+  halfHour: ' Можно зайти на полчаса.',
+  openBtn: 'Открыть сходку',
+  settingsBtn: '⚙️ Настроить или выключить',
+  // Организатору — после рассылки
+  host: (title: string, n: number, post: string) =>
+    `📣 Позвал на «<b>${title}</b>» тех, кто рядом: ${people(n)}. Запишутся — бот напишет.\n\n` +
+    'Хочешь, чтобы пришло больше? Расскажи о сходке в Тредсе: её увидят те, кого ещё нет в приложении. ' +
+    'Стесняться нечего: ты зовёшь людей хорошо провести время, на такое откликаются охотно. Текст готов, поправь под себя:\n\n' +
+    `<i>${post}</i>`,
+  // Пост для Тредса — обычный текст, без разметки
+  post: (title: string, when: string, where: string, link: string) =>
+    `Собираю компанию: «${title}», ${when}, ${where}. Приходите, даже если никого не знаете, познакомимся на месте. Записаться: ${link}`,
+  copyBtn: '📋 Скопировать текст',
+  threadsBtn: 'Открыть Тредс с текстом',
+  // /stats
+  statsTitle: '📍 <b>Сходки рядом за 7 дней</b>',
+  stats: (events: number, sent: number, opened: number, joined: number) => `Сходок с рассылкой: ${events} · позвали ${sent} · открыли ${opened} · записались ${joined}`,
+  statsOff: (off: number, tuned: number) => `Выключили «Сходки рядом»: ${off} · поменяли частоту или расстояние: ${tuned}`
+};
+
+// Блок «Стесняешься идти?» на карточке сходки — тем, кто ещё не был ни на одной сходке
+const GOAL_LIKES: Record<string, string> = {
+  walk: 'прогулки',
+  cafe_bar: 'кафе и бары',
+  expo_cinema: 'выставки и кино',
+  trip_outdoors: 'выезды за город',
+  boardgames: 'настолки',
+  sport: 'спорт'
+};
+export const COMFORT_TEXTS = {
+  // Опрос 13.11.2026: 49%
+  notAlone: 'Каждый второй у нас стесняется идти к незнакомым, так что ты в хорошей компании',
+  notAloneShort: 'Стесняешься? Каждый второй у нас тоже',
+  firstTimers: (n: number, total: number) => `${n} из ${total} ${n === 1 ? 'идёт' : 'идут'} на сходку впервые`,
+  firstTimersShort: (n: number, total: number) => `${n} из ${total} ${n === 1 ? 'идёт' : 'идут'} впервые`,
+  sameArea: (n: number) => `${n} из идущих ${n === 1 ? 'живёт' : 'живут'} в твоём районе`,
+  sameGoal: (n: number, goal: string) => (GOAL_LIKES[goal] ? `${n} из идущих тоже ${n === 1 ? 'любит' : 'любят'} ${GOAL_LIKES[goal]}` : ''),
+  halfHour: 'Можно зайти на полчаса и уйти, если не понравится',
+  halfHourShort: 'можно на полчаса'
+};

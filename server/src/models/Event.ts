@@ -96,6 +96,9 @@ export interface IEvent extends Document {
   // «Помощь в наборе» (recruitHelp.ts): до начала меньше 48 часов, а идут меньше трёх
   recruitHelpAt?: Date;          // когда сходка впервые попала в помощь (для /stats)
   recruitHostTipAt?: Date;       // организатору подсказали позвать кого-то из «На связи»
+  // «Сходки рядом» (nearbyInvite.ts): через полчаса после создания бот зовёт тех, кто недалеко
+  nearbyInvitedAt?: Date;        // рассылка прошла (или сходка под неё не подошла)
+  nearbyInvitedCount?: number;   // скольким написали
   // «Все, кто записался, пришли?» после сходки: all — «Да, все», marked — отметил не пришедших в приложении
   attendanceAnswer?: 'all' | 'marked';
   attendanceAnsweredAt?: Date;
@@ -189,6 +192,8 @@ const EventSchema = new Schema<IEvent>(
     feedbackSummarySentAt: { type: Date },
     recruitHelpAt: { type: Date, index: true },
     recruitHostTipAt: { type: Date },
+    nearbyInvitedAt: { type: Date },
+    nearbyInvitedCount: { type: Number },
     attendanceAnswer: { type: String, enum: ['all', 'marked'] },
     attendanceAnsweredAt: { type: Date }
   },
