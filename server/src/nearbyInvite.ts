@@ -86,7 +86,7 @@ NearbyPingSchema.index({ eventId: 1, toId: 1 }, { unique: true });
 NearbyPingSchema.index({ toId: 1, createdAt: -1 });
 NearbyPingSchema.index({ createdAt: -1 });
 
-const NearbyPing = model<INearbyPing>('NearbyPing', NearbyPingSchema);
+export const NearbyPing = model<INearbyPing>('NearbyPing', NearbyPingSchema);
 
 /* ---------- Отправка ---------- */
 
@@ -310,9 +310,19 @@ export async function nearbyStatsLines(): Promise<string[]> {
     const mine = byId.get(String(p.eventId))?.participants?.find((x) => x.telegramId === p.toId);
     return Boolean(mine && new Date(mine.joinedAt).getTime() >= new Date(p.createdAt).getTime());
   }).length;
+  // Не вредит ли рассылка: до скольких позванных бот потом перестал доходить (остановили или заблокировали).
+  // Узнаём об этом не сразу, а когда следующее сообщение не дошло, поэтому число растёт с опозданием
+  const lastPing = new Map<number, number>();
+  for (const p of pings) lastPing.set(p.toId, Math.max(lastPing.get(p.toId) || 0, new Date(p.createdAt).getTime()));
+  const [stopped, stoppedAll] = await Promise.all([
+    User.find({ telegramId: { $in: [...lastPing.keys()] }, canMessage: false, botBlockedAt: { $gte: since } }, { telegramId: 1, botBlockedAt: 1 }).lean(),
+    User.countDocuments({ canMessage: false, botBlockedAt: { $gte: since } })
+  ]);
+  const stoppedAfter = stopped.filter((u) => new Date(u.botBlockedAt!).getTime() > (lastPing.get(u.telegramId) || Infinity)).length;
   return [
     T.statsTitle,
     T.stats(new Set(pings.map((p) => String(p.eventId))).size, pings.length, pings.filter((p) => p.status === 'opened').length, joined),
-    T.statsOff(off, tuned)
+    T.statsOff(off, tuned),
+    T.statsStopped(stoppedAfter, lastPing.size, stoppedAll)
   ];
 }

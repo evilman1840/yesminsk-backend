@@ -1,6 +1,6 @@
 import { Event, IEvent } from './models/Event';
 import { User } from './models/User';
-import { halfHourOk } from './nearbyInvite';
+import { halfHourOk, NearbyPing } from './nearbyInvite';
 import { isKnownArea } from './utils/userLocation';
 import { COMFORT_TEXTS as T } from './texts';
 
@@ -60,4 +60,55 @@ export async function comfortFor(events: IEvent[], me: Me, viewerId: number, opt
     out.set(String(ev._id), { short, lines });
   }
   return out;
+}
+
+/* ---------- /stats ---------- */
+
+const DAY = 24 * 60 * 60 * 1000;
+const MINSK = 3 * 60 * 60 * 1000;
+// Блок выложен вечером 13.11.2026. День запуска не берём ни в «до», ни в «после»
+const LAUNCH = Date.UTC(2026, 10, 13) - MINSK;
+const BEFORE_DAYS = 14;
+const dm = (t: number) => new Date(t + MINSK).toISOString().slice(5, 10).split('-').reverse().join('.');
+
+/**
+ * Работает ли блок: сколько людей впервые в жизни записались на чужую сходку за две недели до него и после.
+ * В тот же день заработали «Сходки рядом», поэтому отдельно — сколько первых записей пришло по приглашению бота.
+ * Удалённые сходки в счёт не попадают (их нет в базе)
+ */
+export async function comfortStatsLines(): Promise<string[]> {
+  const now = Date.now();
+  const before = { from: LAUNCH - BEFORE_DAYS * DAY, to: LAUNCH };
+  const after = { from: LAUNCH + DAY, to: now };
+
+  // Первая запись каждого человека: и те, кто идёт, и те, кто потом отменил
+  const events = await Event.find({}, { 'creator.telegramId': 1, 'participants.telegramId': 1, 'participants.joinedAt': 1, 'cancellations.telegramId': 1, 'cancellations.joinedAt': 1 }).lean();
+  const first = new Map<number, { at: number; eventId: string }>();
+  for (const ev of events) {
+    for (const p of [...(ev.participants || []), ...(ev.cancellations || [])]) {
+      if (!p.joinedAt || p.telegramId === ev.creator?.telegramId) continue;
+      const at = new Date(p.joinedAt).getTime();
+      if (at < (first.get(p.telegramId)?.at ?? Infinity)) first.set(p.telegramId, { at, eventId: String(ev._id) });
+    }
+  }
+  const inWindow = (w: { from: number; to: number }) => [...first.entries()].filter(([, f]) => f.at >= w.from && f.at < w.to);
+  const firstBefore = inWindow(before);
+  const firstAfter = inWindow(after);
+
+  const newUsers = (w: { from: number; to: number }) => User.countDocuments({ hasAgreedToRules: true, createdAt: { $gte: new Date(w.from), $lt: new Date(w.to) } });
+  const [usersBefore, usersAfter, pings] = await Promise.all([
+    newUsers(before),
+    newUsers(after),
+    NearbyPing.find({ toId: { $in: firstAfter.map(([id]) => id) }, status: { $ne: 'undelivered' } }, { toId: 1, eventId: 1, createdAt: 1 }).lean()
+  ]);
+  // Первая запись — на ту самую сходку, куда позвал бот, и уже после приглашения
+  const viaNearby = firstAfter.filter(([id, f]) => pings.some((p) => p.toId === id && String(p.eventId) === f.eventId && new Date(p.createdAt).getTime() <= f.at)).length;
+
+  const afterDays = (after.to - after.from) / DAY;
+  const perDay = (n: number, days: number) => (n / days).toFixed(1).replace('.', ',');
+  return [
+    T.statsTitle,
+    T.statsRow(`До (${dm(before.from)}–${dm(before.to - DAY)})`, firstBefore.length, perDay(firstBefore.length, BEFORE_DAYS), usersBefore),
+    afterDays >= 1 ? T.statsRow(`После (с ${dm(after.from)})`, firstAfter.length, perDay(firstAfter.length, afterDays), usersAfter, viaNearby) : T.statsEarly
+  ];
 }

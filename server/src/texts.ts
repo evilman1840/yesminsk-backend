@@ -662,6 +662,8 @@ export const NEARBY_TEXTS = {
   // /stats
   statsTitle: '📍 <b>Сходки рядом за 7 дней</b>',
   stats: (events: number, sent: number, opened: number, joined: number) => `Сходок с рассылкой: ${events} · позвали ${sent} · открыли ${opened} · записались ${joined}`,
+  statsStopped: (after: number, invited: number, all: number) =>
+    `Бот перестал доходить после приглашения: ${after} из ${invited} позванных · всего за 7 дней бота остановили ${all}`,
   statsOff: (off: number, tuned: number) => `Выключили «Сходки рядом»: ${off} · поменяли частоту или расстояние: ${tuned}`
 };
 
@@ -683,5 +685,10 @@ export const COMFORT_TEXTS = {
   sameArea: (n: number) => `${n} из идущих ${n === 1 ? 'живёт' : 'живут'} в твоём районе`,
   sameGoal: (n: number, goal: string) => (GOAL_LIKES[goal] ? `${n} из идущих тоже ${n === 1 ? 'любит' : 'любят'} ${GOAL_LIKES[goal]}` : ''),
   halfHour: 'Можно зайти на полчаса и уйти, если не понравится',
-  halfHourShort: 'можно на полчаса'
+  halfHourShort: 'можно на полчаса',
+  // /stats: первые в жизни записи на чужую сходку — две недели до блока и всё время после
+  statsTitle: '🫣 <b>Новички на сходках: до и после «Стесняешься идти?»</b>',
+  statsRow: (label: string, firsts: number, perDay: string, newUsers: number, viaNearby?: number) =>
+    `${label}: первых записей ${firsts}${perDay ? ` (${perDay} в день)` : ''} · новых людей ${newUsers}${viaNearby !== undefined ? ` · из первых записей по приглашению «Сходки рядом» ${viaNearby}` : ''}`,
+  statsEarly: 'После запуска прошло меньше суток, сравнивать рано'
 };

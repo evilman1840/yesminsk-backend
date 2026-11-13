@@ -19,6 +19,7 @@ import { buddyStatsLines } from './buddyInvites';
 import { eventExitStatsLines } from './eventLeave';
 import { recruitStatsLines } from './recruitHelp';
 import { nearbyStatsLines } from './nearbyInvite';
+import { comfortStatsLines } from './eventComfort';
 import { serialStatsLines } from './serial';
 import { helloStatsLines } from './hello';
 import { fiveDuelCounts } from './games';
@@ -177,6 +178,7 @@ export async function buildStats(): Promise<string> {
   const buddyLines = await buddyStatsLines().catch(() => [] as string[]);
   const recruitLines = await recruitStatsLines().catch(() => [] as string[]);
   const nearbyLines = await nearbyStatsLines().catch(() => [] as string[]);
+  const comfortLines = await comfortStatsLines().catch(() => [] as string[]);
   const exitLines = await eventExitStatsLines().catch(() => [] as string[]);
   const serialLines = await serialStatsLines().catch(() => [] as string[]);
   const helloLines = await helloStatsLines().catch(() => [] as string[]);
@@ -214,6 +216,7 @@ export async function buildStats(): Promise<string> {
     ...exitLines,
     ...(recruitLines.length ? [``, ...recruitLines] : []),
     ...(nearbyLines.length ? [``, ...nearbyLines] : []),
+    ...(comfortLines.length ? [``, ...comfortLines] : []),
     ...(buddyLines.length ? [``, ...buddyLines] : []),
     ``,
     ...meetupLines,
