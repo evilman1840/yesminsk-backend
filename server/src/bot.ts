@@ -12,6 +12,7 @@ import mongoose from 'mongoose';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
 import { Event } from './models/Event';
 import { Donation } from './models/Donation';
+import { User } from './models/User';
 import { handleNewsMessage } from './news';
 import { handleModerationCallback, handleModerationCommand, handleEventLookupCommand, banUser } from './moderation';
 import { handlePhotoModerationCallback, handlePhotosCommand } from './photoModeration';
@@ -177,10 +178,12 @@ async function handleDonation(chatId: number, telegramId: number, payment: any) 
       { upsert: true }
     );
     console.log(`💛 Донат: ${payment.total_amount} ⭐ от ${telegramId}`);
+    // Звёзды — настоящий донат, поэтому отметку «🥧 Кормлю ГУЛЯЙ-Печку» ставим сами
+    if (telegramId) await User.updateOne({ telegramId }, { $set: { isSupporter: true } });
   } catch (err: any) {
     console.warn('⚠️ Не удалось сохранить донат:', err?.message || err);
   }
-  sendTelegramMessage(chatId, `💛 <b>Спасибо за поддержку!</b>\n\nТвои ${payment.total_amount} ⭐ помогают «ГУЛЯЙ!» оставаться бесплатным и становиться лучше.`);
+  sendTelegramMessage(chatId, `💛 <b>Спасибо за поддержку!</b>\n\nТвои ${payment.total_amount} ⭐ помогают «ГУЛЯЙ!» оставаться бесплатным и становиться лучше.\n\nВ профиле теперь горит отметка «🍩 Кормлю ГУЛЯЙ-Печку».`);
 }
 
 // Ответ на ссылку-приглашение: карточка сходки и кнопка, открывающая её в приложении
