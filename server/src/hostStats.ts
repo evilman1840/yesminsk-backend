@@ -31,6 +31,7 @@ export interface HostInfo {
 
 export interface MonthHost extends HostInfo {
   telegramId: number;
+  excellent?: number;  // сколько раз участники поставили его сходкам «😍 Отлично» (своя оценка не в счёт); нет — поля нет
   name: string;
   avatarUrl: string;
 }
@@ -42,17 +43,19 @@ async function compute() {
   const now = Date.now();
   const events = await Event.find(
     { dateTime: { $lt: new Date(now) }, isActive: { $ne: false } },
-    { dateTime: 1, 'creator.telegramId': 1, 'participants.telegramId': 1, 'participants.noShowAt': 1 }
+    { dateTime: 1, 'creator.telegramId': 1, 'participants.telegramId': 1, 'participants.noShowAt': 1, 'feedback.telegramId': 1, 'feedback.score': 1 }
   ).lean();
 
-  const byHost = new Map<number, { held: number; recent: number; month: number; monthPeople: number }>();
+  const byHost = new Map<number, { held: number; recent: number; month: number; monthPeople: number; excellent: number }>();
   for (const e of events) {
     const came = new Set((e.participants || []).filter((p) => !p.noShowAt).map((p) => p.telegramId));
     const hostId = Number(e.creator?.telegramId);
     if (came.size < 2 || !hostId) continue;
-    const h = byHost.get(hostId) || { held: 0, recent: 0, month: 0, monthPeople: 0 };
+    const h = byHost.get(hostId) || { held: 0, recent: 0, month: 0, monthPeople: 0, excellent: 0 };
     const age = now - new Date(e.dateTime).getTime();
     h.held++;
+    // Только хорошее: «Нормально» и «Не очень» организатор видит в личной сводке, публично их не показываем
+    h.excellent += (e.feedback || []).filter((f) => f.score === 3 && Number(f.telegramId) !== hostId).length;
     if (age <= ACTIVE_DAYS * DAY) h.recent++;
     if (age <= MONTH_DAYS * DAY) {
       h.month++;
@@ -79,10 +82,10 @@ async function compute() {
   ).lean();
   const userById = new Map(users.map((u) => [u.telegramId, u]));
   const month: MonthHost[] = [];
-  for (const [id] of top) {
+  for (const [id, h] of top) {
     const u = userById.get(id);
     if (!u || month.length >= MONTH_TOP) continue;
-    month.push({ telegramId: id, name: u.firstName, avatarUrl: u.photosHidden ? '' : avatarFor(id, u.avatarUrl), ...info.get(id)! });
+    month.push({ telegramId: id, name: u.firstName, avatarUrl: u.photosHidden ? '' : avatarFor(id, u.avatarUrl), ...info.get(id)!, ...(h.excellent ? { excellent: h.excellent } : {}) });
   }
 
   cache = { at: now, info, month: month.length >= MONTH_MIN_HOSTS ? month : [] };
