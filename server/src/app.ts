@@ -25,6 +25,7 @@ import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegr
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
 import { setupNewsRoutes, isAdmin, adminIds } from './news';
 import { setupFundRoutes } from './fund';
+import { setupHostRoutes, ensureHostStats, hostInfo } from './hostStats';
 import { setupPollRoutes } from './polls';
 import { setupSerialRoutes } from './serial';
 import { banGuard, setupModerationRoutes, reportStopWords, BANNED_ERROR, notifyAdmins, pastAccountLine } from './moderation';
@@ -982,6 +983,9 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     goesWith: u.goesWith,
     isEmpath: Boolean(u.isEmpath),
     isSupporter: Boolean(u.isSupporter) || undefined,
+    // Сколько сходок провёл и «🔥 Активный организатор» (hostStats.ts)
+    hostedCount: hostInfo(u.telegramId)?.held || undefined,
+    hostActive: hostInfo(u.telegramId)?.active || undefined,
     // «Хочется поныть» — только для эмпатов (и не прошедший)
     ventUntil: currentUser?.isEmpath && u.ventUntil && new Date(u.ventUntil).getTime() > Date.now() ? u.ventUntil : undefined,
     bio: u.bio,
@@ -1258,7 +1262,9 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     // Организатору после сходки: ответил ли «Все, кто записался, пришли?»
     ...(isEventCreator(ev, viewerId) && ev.attendanceAnswer ? { attendanceAnswer: ev.attendanceAnswer } : {}),
     // «⭐ От ГУЛЯЙ!» — сходки автора проекта
-    isOfficial: isAdmin(ev.creator.telegramId)
+    isOfficial: isAdmin(ev.creator.telegramId),
+    // Организатор: сколько сходок провёл, «🔥 Активный организатор», «🍩 Кормит Печку» (hostStats.ts)
+    ...(hostInfo(ev.creator.telegramId) ? { host: hostInfo(ev.creator.telegramId) } : {})
   };
 };
 
@@ -1410,6 +1416,7 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
         : audienceError(ev, me) || ((ev.tags || []).includes('empaths') && !me?.isEmpath ? 'Эта сходка только для эмпатов' : null);
     // «Стесняешься идти?» — тем, кто ещё не был на сходках (eventComfort.ts). Не получилось посчитать — лента важнее
     const comfort = await comfortFor(feed, me, tgUser.id, { now, force: admin }).catch(() => new Map());
+    await ensureHostStats();
     res.json(
       ranked.map(({ ev, distanceMeters }) => {
         const reason = notForMe(ev);
@@ -1541,6 +1548,21 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
   } catch (err: any) {
     console.warn('⚠️ Создание сходки:', err?.message || err);
     res.status(500).json({ error: 'Ошибка создания события' });
+  }
+});
+
+// «Прошедшие» в «⭐ Мои»: последние свои сходки за три месяца — чтобы собрать такую же ещё раз («Повторить»)
+const PAST_MINE_DAYS = 90;
+const PAST_MINE_MAX = 10;
+app.get('/api/events/past-mine', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tgUser = req.telegramUser!;
+    const events = await Event.find({ isActive: true, 'creator.telegramId': tgUser.id, dateTime: { $lt: new Date(), $gte: new Date(Date.now() - PAST_MINE_DAYS * DAY) } })
+      .sort({ dateTime: -1 })
+      .limit(PAST_MINE_MAX);
+    res.json(events.map((ev) => formatEvent(ev, tgUser.id)));
+  } catch {
+    res.status(500).json({ error: 'Ошибка загрузки прошедших сходок' });
   }
 });
 
@@ -2198,6 +2220,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
 // Новости проекта
 setupNewsRoutes(app);
 setupFundRoutes(app);
+setupHostRoutes(app);
 setupPollRoutes(app);
 setupSerialRoutes(app);
 
@@ -2252,6 +2275,7 @@ app.listen(PORT, () => {
   startQuietSortLoop();
   startFeedbackLoop();
   startWishLoop();
+  ensureHostStats();
   startBuddyLoop();
   startHelloLoop();
   startRecruitLoop();

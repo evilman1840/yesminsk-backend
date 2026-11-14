@@ -18,6 +18,7 @@ import { handleModerationCallback, handleModerationCommand, handleEventLookupCom
 import { handlePhotoModerationCallback, handlePhotosCommand } from './photoModeration';
 import { handleStatsCommand } from './stats';
 import { handleFundCommand } from './fund';
+import { handlePechkaCommand } from './hostStats';
 import { handlePollCommand } from './polls';
 import { handleCoffeeCommand } from './coffee';
 import { handleIdeasCommand } from './ideas';
@@ -115,6 +116,7 @@ async function handleMessage(message: any, chatId: number) {
   if (await handlePhotosCommand(message)) return;
   if (await handleStatsCommand(message)) return;
   if (await handleFundCommand(message)) return;
+  if (await handlePechkaCommand(message)) return;
   if (await handlePollCommand(message)) return;
   if (await handleCoffeeCommand(message)) return;
   if (await handleIdeasCommand(message)) return;
@@ -233,6 +235,7 @@ async function registerBotCommands(botToken: string) {
     { command: 'news', description: 'Опубликовать новость: /news текст' },
     { command: 'fund', description: 'Донаты: /fund всего котёл люди' },
     { command: 'goal', description: 'Цель месяца: /goal 500' },
+    { command: 'pechka', description: 'Отметка 🍩 вручную: /pechka @ник' },
     { command: 'thanks', description: 'Кому сказать спасибо по имени' },
     { command: 'sent', description: 'Перевод приюту: /sent 15 Приют «Хвостики»' },
     { command: 'delsent', description: 'Удалить последний перевод приюту' },
