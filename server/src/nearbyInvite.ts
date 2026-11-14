@@ -18,10 +18,11 @@ import { NEARBY_TEXTS as T } from './texts';
  * «Сходки рядом»: через полчаса после создания сходки бот зовёт тех, кто живёт недалеко.
  * Полчаса — чтобы организатор успел поправить или удалить сходку.
  *
- * Кому: район из анкеты или своя метка в пределах выбранного расстояния (по умолчанию 3 км, можно «весь Минск»);
+ * Кому: район из анкеты или своя метка в пределах выбранного расстояния. По умолчанию «мой район»: сходка в том же районе
+ * или не дальше 1,5 км (соседи через границу района). Можно 1 / 3 / 5 км или «весь Минск»;
  * кто в Минске проездом и метку не ставил — считаем от центра; район не выбран — только при «весь Минск».
  * Заходил за 21 день, подходит по условиям сходки, не организатор и не записан.
- * Сколько: не больше выбранного в день (по умолчанию 3, общим счётом с «Помощью в наборе»), не больше 30 человек
+ * Сколько: не больше выбранного в день (по умолчанию 3, общим счётом с «Помощью в наборе»), не больше 60 человек
  * на сходку — сначала самые близкие. Только с 10 до 22: ночную сходку разошлём утром.
  * Настройки — в анкете, блок «Сходки рядом» (кнопка под каждым приглашением ведёт туда)
  */
@@ -34,11 +35,15 @@ const DELAY = 30 * MIN;          // ждём после создания
 const MAX_WAIT = 36 * HOUR;      // старше — уже не рассылаем
 const MIN_AHEAD = HOUR;          // до начала меньше часа — звать поздно
 const ACTIVE_DAYS = 21;
-const PER_EVENT_MAX = 30;
+const PER_EVENT_MAX = 60; // было 30: из 206 позванных за первые сутки бота остановил 1
 export const NEARBY_PER_DAY = [1, 3, 5, 0];   // 0 — сколько угодно
-export const NEARBY_RADIUS_KM = [1, 3, 5, 0]; // 0 — весь Минск
+export const NEARBY_RADIUS_KM = [-1, 1, 3, 5, 0]; // -1 — мой район, 0 — весь Минск
+export const MY_AREA = -1;
+const MY_AREA_EXTRA_M = 1500; // «мой район» захватывает и соседей не дальше 1,5 км
 const DEFAULT_PER_DAY = 3;
-const DEFAULT_RADIUS_KM = 3;
+const DEFAULT_RADIUS_KM = MY_AREA;
+// Район, который ставится сам, если человек не выбрал. Таким в приглашении — строка «живёшь в другом? поменяй»
+const DEFAULT_AREA = 'Немига / Центр';
 // «Можно зайти на полчаса» — только там, где это правда: не кино, не выезд и не встреча вдвоём
 const HALF_HOUR_OK = new Set(['walk', 'cafe', 'bar', 'restaurant', 'cafe_bar', 'boardgames', 'talk']);
 export const halfHourOk = (ev: { category: string; maxParticipants?: number }) => HALF_HOUR_OK.has(ev.category) && ev.maxParticipants !== 2;
@@ -50,6 +55,18 @@ const isDaytime = (now = Date.now()) => {
 
 const perDayOf = (u: any) => (NEARBY_PER_DAY.includes(u?.nearbyPerDay) ? (u.nearbyPerDay as number) : DEFAULT_PER_DAY);
 const radiusOf = (u: any) => (NEARBY_RADIUS_KM.includes(u?.nearbyRadiusKm) ? (u.nearbyRadiusKm as number) : DEFAULT_RADIUS_KM);
+
+// Район человека для «мой район»: по метке, если ставил её сам или он проездом, иначе из анкеты
+const userAreaOf = (u: any, point: [number, number] | null): string | null =>
+  u?.locationManual || u?.isTourist ? nearestArea(point || undefined) : isKnownArea(u?.areaName) ? u.areaName : null;
+
+const fits = (u: any, meters: number | null, area: string | null, evArea: string | null) => {
+  const r = radiusOf(u);
+  if (r === 0) return true;
+  if (meters === null) return false;
+  if (r === MY_AREA) return Boolean(evArea && area === evArea) || meters <= MY_AREA_EXTRA_M;
+  return meters <= r * 1000;
+};
 
 // Настройки для приложения. hasPoint — знаем ли, что для человека «рядом»
 export const nearbySettingsOf = (u: any) => ({
@@ -175,9 +192,9 @@ async function inviteNearby(ev: IEvent, now: number) {
     .map((u) => {
       const p = invitePoint(u);
       const meters = p ? calculateDistanceMeters(p[1], p[0], evLat, evLng) : null;
-      return { u, meters, point: p };
+      return { u, meters, point: p, area: p ? userAreaOf(u, p) : null };
     })
-    .filter(({ u, meters }) => radiusOf(u) === 0 || (meters !== null && meters <= radiusOf(u) * 1000))
+    .filter(({ u, meters, area }) => fits(u, meters, area, evArea))
     .sort((a, b) => (a.meters ?? Infinity) - (b.meters ?? Infinity));
   if (!near.length) return;
 
@@ -193,7 +210,7 @@ async function inviteNearby(ev: IEvent, now: number) {
   const free = freeSeats(ev);
   const body = `${eventSummaryHtml(ev)}${Number.isFinite(free) ? T.seatsLeft(free) : ''}\n\n${T.comfort}${halfHourOk(ev) ? T.halfHour : ''}`;
   let sent = 0;
-  for (const { u, meters, point } of fit) {
+  for (const { u, meters, point, area } of fit) {
     let ping: INearbyPing;
     try {
       ping = (await NearbyPing.create({ eventId: ev._id, toId: u.telegramId, ...(meters !== null ? { meters } : {}) })).toObject();
@@ -203,12 +220,14 @@ async function inviteNearby(ev: IEvent, now: number) {
     }
     const head = T.head({
       meters,
-      sameArea: Boolean(evArea && !u.locationManual && isKnownArea(u.areaName) && u.areaName === evArea),
+      sameArea: Boolean(evArea && area === evArea && !(u.isTourist && point && isDefaultPoint(point))),
       touristCenter: Boolean(u.isTourist && point && isDefaultPoint(point))
     });
+    // Район «Немига / Центр» стоит у половины людей сам собой: просим поставить настоящий
+    const areaHint = !u.locationManual && !u.isTourist && u.areaName === DEFAULT_AREA ? `\n\n${T.centerHint}` : '';
     const res = await tg('sendMessage', {
       chat_id: u.telegramId,
-      text: `${head}\n\n${body}`,
+      text: `${head}\n\n${body}${areaHint}`,
       parse_mode: 'HTML',
       disable_web_page_preview: true,
       ...(url
@@ -216,7 +235,7 @@ async function inviteNearby(ev: IEvent, now: number) {
             reply_markup: {
               inline_keyboard: [
                 [{ text: T.openBtn, web_app: { url: `${url}/${eventAppPath(ev)}&near=${ping._id}` } }],
-                [{ text: T.settingsBtn, web_app: { url: `${url}/?settings=nearby` } }]
+                [{ text: areaHint ? T.areaBtn : T.settingsBtn, web_app: { url: `${url}/?settings=nearby` } }]
               ]
             }
           }

@@ -40,10 +40,10 @@ export interface IUser extends Document {
   customGoal?: string;     // своя идея, когда среди целей есть 'other'
   goesWith?: GoesWith;     // «Обычно хожу»: один, парой, компанией, с детьми
   digest?: DigestFrequency; // подборки от бота; не выбрано — «на выходные»
-  // «Сходки рядом» (nearbyInvite.ts): бот зовёт, когда недалеко создали сходку. Не задано — включено, до 3 в день, 3 км
+  // «Сходки рядом» (nearbyInvite.ts): бот зовёт, когда недалеко создали сходку. Не задано — включено, до 3 в день, мой район + 1,5 км
   nearbyNotify?: boolean;
   nearbyPerDay?: number;    // 1 / 3 / 5, 0 — сколько угодно
-  nearbyRadiusKm?: number;  // 1 / 3 / 5, 0 — весь Минск
+  nearbyRadiusKm?: number;  // -1 — мой район (по умолчанию), 1 / 3 / 5, 0 — весь Минск
   isEmpath?: boolean;      // «🫶 Эмпат» — человек отметил сам в анкете
   isSupporter?: boolean;   // «🥧 Кормлю ГУЛЯЙ-Печку» — сам отметил после доната (на честном слове)
   thanksOk?: boolean;      // разрешил сказать спасибо по имени (список /thanks)
