@@ -68,9 +68,9 @@ async function compute() {
     if (!info.has(id)) info.set(id, { held: 0, supporter: true });
   });
 
-  // Месяц: больше сходок — раньше, при равенстве — у кого было больше людей. Автор проекта в список не идёт
+  // Месяц: больше сходок — раньше, при равенстве — у кого было больше людей. Автор проекта тоже в списке
   const top = [...byHost.entries()]
-    .filter(([id, h]) => h.month >= MONTH_MIN && !isAdmin(id))
+    .filter(([, h]) => h.month >= MONTH_MIN)
     .sort((a, b) => b[1].month - a[1].month || b[1].monthPeople - a[1].monthPeople)
     .slice(0, MONTH_TOP * 2); // с запасом: часть анкет может быть скрыта или удалена
   const users = await User.find(
