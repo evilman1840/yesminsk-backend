@@ -1,4 +1,5 @@
 import { Schema, model, Document } from 'mongoose';
+import type { Questionnaire } from '../profile/questionnaire';
 
 export type ActivityGoal = 'walk' | 'cafe_bar' | 'expo_cinema' | 'trip_outdoors' | 'boardgames' | 'sport' | 'other';
 // Подборки от бота: как часто присылать
@@ -18,6 +19,8 @@ export interface IUser extends Document {
   avatarUrl: string;
   photos?: string[]; // ещё до 5 фото в анкете (file_id в Telegram)
   bio: string;
+  questionnaire?: Questionnaire;
+  profileInviteSeenVersion?: number;
   age: number;
   ageConfirmed?: boolean; // человек сам указал возраст (по умолчанию стоит 25)
   skipped?: { telegramId: number; until: Date }[]; // «Пропустить» свайпом: не показываем до until
@@ -101,6 +104,8 @@ const UserSchema = new Schema<IUser>(
     avatarUrl: { type: String, required: true },
     photos: { type: [String], default: undefined },
     bio: { type: String, maxlength: 200, default: '' },
+    questionnaire: { type: Schema.Types.Mixed, default: undefined },
+    profileInviteSeenVersion: { type: Number },
     age: { type: Number, default: 25, min: 16, max: 99 },
     ageConfirmed: { type: Boolean },
     profileCompleted: { type: Boolean, index: true },

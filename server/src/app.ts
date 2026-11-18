@@ -1,3 +1,5 @@
+import { cleanQuestionnaire, publicQuestionnaire } from './profile/validation';
+import { QUESTIONNAIRE_VERSION, legacyActivities } from './profile/questionnaire';
 import dns from 'dns';
 import express, { Request, Response } from 'express';
 
@@ -367,6 +369,15 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
   }
 });
 
+// Remember the invitation on the account, not only on this device. Does not alter questionnaire completion.
+app.post('/api/users/profile-invite-seen', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = await User.findOneAndUpdate({ telegramId: req.telegramUser!.id }, { $set: { profileInviteSeenVersion: QUESTIONNAIRE_VERSION } });
+    if (!user) return res.status(400).json({ error: 'Сначала заполни основную анкету' });
+    res.json({ version: QUESTIONNAIRE_VERSION });
+  } catch { res.status(500).json({ error: 'Не получилось сохранить' }); }
+});
+
 // Человек разрешил боту писать (системное окно в мини-приложении) — бот сразу пишет, чтобы появился диалог
 app.post('/api/users/bot-access', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -459,6 +470,10 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     } = req.body;
 
     const updateData: any = {};
+    if (req.body.questionnaire !== undefined) {
+      try { updateData.questionnaire = cleanQuestionnaire(req.body.questionnaire); }
+      catch (err: any) { return res.status(400).json({ error: err.message }); }
+    }
     // Ещё до 5 фото в анкете (id из /api/photos)
     if (cleanPhotoIds(photos)) updateData.photos = cleanPhotoIds(photos);
     const cleanName = cleanText(firstName || name, 40);
@@ -486,6 +501,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       }
     }
     if (customGoal !== undefined) updateData.customGoal = String(customGoal).trim().slice(0, 30);
+    if (updateData.questionnaire?.activities?.length) Object.assign(updateData, legacyActivities(updateData.questionnaire.activities));
     if (GOES_WITH.includes(goesWith)) updateData.goesWith = goesWith;
     if (DIGEST_FREQUENCIES.includes(digest)) updateData.digest = digest;
     if (age !== undefined) {
@@ -541,6 +557,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     const textKeys = ['firstName', 'bio', 'customGoal', 'guideAbout', 'areaName'].filter((k) => typeof updateData[k] === 'string' && updateData[k]);
     const prevTexts: any = textKeys.length ? await User.findOne({ telegramId: tgUser.id }, Object.fromEntries(textKeys.map((k) => [k, 1]))).lean() : null;
     const changedTexts = textKeys.filter((k) => prevTexts?.[k] !== updateData[k]).map((k) => updateData[k] as string);
+    if (updateData.questionnaire) changedTexts.push(updateData.questionnaire.wantDetails || '', updateData.questionnaire.offerDetails || '');
     const stop = changedTexts.length ? checkStopWords(...changedTexts) : null;
 
     // Без upsert: запись появляется только после согласия с Соглашением (agree-rules)
@@ -754,7 +771,7 @@ const PEOPLE_PAGE = 300;
 const FEED_USER_FIELDS = {
   telegramId: 1, firstName: 1, username: 1, avatarUrl: 1, photos: 1, photosHidden: 1, age: 1, gender: 1, goal: 1, goals: 1,
   customGoal: 1, goesWith: 1, isEmpath: 1, isSupporter: 1, ventUntil: 1, bio: 1, areaName: 1, isTourist: 1, isGuide: 1, guideAbout: 1,
-  availableUntil: 1, lastActiveAt: 1, createdAt: 1, locationExact: 1, locationFuzzy: 1
+  questionnaire: 1, availableUntil: 1, lastActiveAt: 1, createdAt: 1, locationExact: 1, locationFuzzy: 1
 };
 
 // Сколько всего людей в приложении (прошли приветствие, не забанены). Считаем раз в 5 минут
@@ -989,6 +1006,7 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     // «Хочется поныть» — только для эмпатов (и не прошедший)
     ventUntil: currentUser?.isEmpath && u.ventUntil && new Date(u.ventUntil).getTime() > Date.now() ? u.ventUntil : undefined,
     bio: u.bio,
+    questionnaire: publicQuestionnaire(u.questionnaire),
     areaName: u.areaName,
     isTourist: u.isTourist,
     coordinates: [fuzzyCoords[1], fuzzyCoords[0]], // [lat, lng]
@@ -2214,7 +2232,7 @@ app.get('/api/users/seed', async (_req: Request, res: Response) => {
 
 // Проверка, что сервер жив (для «будильника», который не даёт серверу уснуть)
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ ok: true, time: new Date().toISOString() });
+  res.json({ ok: true, questionnaireVersion: QUESTIONNAIRE_VERSION, time: new Date().toISOString() });
 });
 
 // Новости проекта
