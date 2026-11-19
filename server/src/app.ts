@@ -29,7 +29,7 @@ import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegr
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
 import { setupNewsRoutes, isAdmin, adminIds } from './news';
 import { setupFundRoutes } from './fund';
-import { setupHostRoutes, ensureHostStats, hostInfo } from './hostStats';
+import { setupHostRoutes, ensureHostStats, hostInfo, attendedCount } from './hostStats';
 import { setupPollRoutes } from './polls';
 import { setupSerialRoutes } from './serial';
 import { banGuard, setupModerationRoutes, reportStopWords, BANNED_ERROR, notifyAdmins, pastAccountLine } from './moderation';
@@ -816,6 +816,7 @@ app.get('/api/users/nearby-count', telegramAuthMiddleware as any, async (req: Au
 
 app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    await ensureHostStats();
     const tgUser = req.telegramUser!;
     const currentUser = await User.findOne({ telegramId: tgUser.id });
     const query = nearbyQuery(tgUser, currentUser, typeof req.query.goal === 'string' ? req.query.goal : undefined);
@@ -881,6 +882,7 @@ const visibleUserQuery = (me: any, targetId: number) => ({
 // Одна анкета — для ссылки «Посмотреть анкету» из сообщения бота
 app.get('/api/users/:telegramId/public', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    await ensureHostStats();
     const targetId = Number(req.params.telegramId);
     if (!Number.isFinite(targetId)) return res.sendStatus(404);
     const me = await User.findOne({ telegramId: req.telegramUser!.id });
@@ -1014,6 +1016,7 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     // Сколько сходок провёл и «🔥 Активный организатор» (hostStats.ts)
     hostedCount: hostInfo(u.telegramId)?.held || undefined,
     hostActive: hostInfo(u.telegramId)?.active || undefined,
+    attendedCount: attendedCount(u.telegramId),
     // «Хочется поныть» — только для эмпатов (и не прошедший)
     ventUntil: currentUser?.isEmpath && u.ventUntil && new Date(u.ventUntil).getTime() > Date.now() ? u.ventUntil : undefined,
     bio: u.bio,

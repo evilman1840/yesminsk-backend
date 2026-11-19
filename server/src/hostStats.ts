@@ -5,6 +5,7 @@ import { User } from './models/User';
 import { avatarFor } from './avatars';
 import { isAdmin } from './news';
 import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
+import { countAttendance } from './attendanceStats';
 
 /**
  * Организаторы: сколько сходок человек провёл, значки «🌱 Организатор» (held ≥ 1, рисует приложение) и «🔥 Активный организатор»,
@@ -36,7 +37,7 @@ export interface MonthHost extends HostInfo {
   avatarUrl: string;
 }
 
-let cache: { at: number; info: Map<number, HostInfo>; month: MonthHost[] } | null = null;
+let cache: { at: number; info: Map<number, HostInfo>; attended: Map<number, number>; month: MonthHost[] } | null = null;
 let running: Promise<void> | null = null;
 
 async function compute() {
@@ -88,7 +89,7 @@ async function compute() {
     month.push({ telegramId: id, name: u.firstName, avatarUrl: u.photosHidden ? '' : avatarFor(id, u.avatarUrl), ...info.get(id)!, ...(h.excellent ? { excellent: h.excellent } : {}) });
   }
 
-  cache = { at: now, info, month: month.length >= MONTH_MIN_HOSTS ? month : [] };
+  cache = { at: now, info, attended: countAttendance(events, now), month: month.length >= MONTH_MIN_HOSTS ? month : [] };
 }
 
 /**
@@ -108,6 +109,9 @@ export async function ensureHostStats(): Promise<void> {
 
 // Для карточки сходки и анкеты: ничего не провёл и Печку не кормит — поля нет
 export const hostInfo = (telegramId: number): HostInfo | undefined => cache?.info.get(Number(telegramId));
+
+// Организатор тоже участник, если остался в составе. Нет данных — не выдаём ноль за проверенный результат.
+export const attendedCount = (telegramId: number): number | undefined => cache ? cache.attended.get(Number(telegramId)) || 0 : undefined;
 
 /**
  * «/pechka @ник» — автор проекта сам ставит отметку «🍩 Кормит ГУЛЯЙ-Печку» тому, кто задонатил, но не отметился.
