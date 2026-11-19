@@ -1,3 +1,4 @@
+import { captureAnalytics } from './analytics';
 import { USERNAME_TEXTS as U, BUDDY_TEXTS as B } from './texts';
 import { IUser } from './models/User';
 import { Reaction } from './models/Reaction';
@@ -57,6 +58,8 @@ export async function sendLike(
       { $set: { type: 'like', likedAt: new Date(), likeFree: free } },
       { upsert: true }
     );
+    captureAnalytics(me.telegramId,'gulyai_wave_sent');
+    if (isMatch) captureAnalytics(me.telegramId,'gulyai_connection_created');
     if (lastOne) markWaveLimitHit(me.telegramId);
   }
 

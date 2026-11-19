@@ -1,3 +1,5 @@
+import { setupAnalyticsRoutes, analyticsAvailableFor, invalidateAnalyticsUser, captureAnalytics } from './analytics';
+import { questionnaireCount } from './profile/questionnaire';
 import { cleanQuestionnaire, publicQuestionnaire } from './profile/validation';
 import { QUESTIONNAIRE_VERSION, legacyActivities } from './profile/questionnaire';
 import dns from 'dns';
@@ -357,6 +359,7 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     delete userObj.faceCheckedFor;
     delete userObj.hasFacePhoto;
     if (!isDraft && userObj.faceStatus === 'pending') refreshFaceCheck(user.telegramId).catch(() => {});
+    userObj.analyticsAvailable = analyticsAvailableFor(user.telegramId);
     userObj.isAdmin = isAdmin(user.telegramId); // модератор: может удалять любые сходки
     userObj.gamesOpen = process.env.GAMES_OPEN === '1' || userObj.isAdmin; // вкладка «Игры» и человечки на карте
     if (!isDraft) userObj.waves = await waveQuota(user).catch(() => undefined); // дневной лимит 👋: сколько осталось
@@ -398,6 +401,7 @@ app.post('/api/users/accept-legal', telegramAuthMiddleware as any, async (req: A
     const version = String(req.body?.version || '').slice(0, 20);
     if (!version) return res.status(400).json({ error: 'Нет версии' });
     await User.updateOne({ telegramId: req.telegramUser!.id }, { $set: { legalVersion: version, legalAcceptedAt: new Date() } });
+    invalidateAnalyticsUser(req.telegramUser!.id);
     res.sendStatus(204);
   } catch (err: any) {
     console.warn('⚠️ /api/users/accept-legal:', err?.message || err);
@@ -430,6 +434,7 @@ app.post('/api/users/agree-rules', telegramAuthMiddleware as any, async (req: Au
     );
     // Пришёл по приглашению друга — благодарим того, кто позвал
     markInviteJoined(tgUser.id, user?.firstName || tgUser.first_name).catch(() => {});
+    invalidateAnalyticsUser(tgUser.id);
     res.json({ success: true, user });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка обновления правил' });
@@ -555,7 +560,7 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
 
     // Тексты анкеты: проверяем только изменившиеся, чтобы не писать модератору при каждом сохранении
     const textKeys = ['firstName', 'bio', 'customGoal', 'guideAbout', 'areaName'].filter((k) => typeof updateData[k] === 'string' && updateData[k]);
-    const prevTexts: any = textKeys.length ? await User.findOne({ telegramId: tgUser.id }, Object.fromEntries(textKeys.map((k) => [k, 1]))).lean() : null;
+    const prevTexts: any = textKeys.length || updateData.questionnaire ? await User.findOne({ telegramId: tgUser.id }, { ...Object.fromEntries(textKeys.map((k) => [k, 1])), questionnaire: 1 }).lean() : null;
     const changedTexts = textKeys.filter((k) => prevTexts?.[k] !== updateData[k]).map((k) => updateData[k] as string);
     if (updateData.questionnaire) changedTexts.push(updateData.questionnaire.wantDetails || '', updateData.questionnaire.offerDetails || '');
     const stop = changedTexts.length ? checkStopWords(...changedTexts) : null;
@@ -572,6 +577,12 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     // Новое фото — проверяем, видно ли на нём лицо (для «Только с теми, у кого есть фото»)
     if (updateData.avatarUrl) refreshFaceCheck(tgUser.id).catch(() => {});
 
+    captureAnalytics(tgUser.id,'gulyai_profile_saved');
+    if (updateData.questionnaire && questionnaireCount(updateData.questionnaire)>0 && JSON.stringify(prevTexts?.questionnaire)!==JSON.stringify(updateData.questionnaire)) {
+      const answered_count=questionnaireCount(updateData.questionnaire);
+      captureAnalytics(tgUser.id,'gulyai_questionnaire_saved',{answered_count,completed:answered_count===8});
+      if(answered_count===8 && questionnaireCount(prevTexts?.questionnaire)<8) captureAnalytics(tgUser.id,'gulyai_questionnaire_completed',{answered_count:8,completed:true});
+    }
     const f = updatedUser?.locationFuzzy?.coordinates;
     res.json({ success: true, user: updatedUser, shownCoordinates: f?.length === 2 ? [f[1], f[0]] : null, locationManual: Boolean(updatedUser?.locationManual) });
   } catch (err: any) {
@@ -1542,6 +1553,7 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
       if (stop.level === 'ban') return res.status(403).json({ error: BANNED_ERROR });
     }
 
+    captureAnalytics(tgUser.id,'gulyai_meetup_created');
     res.status(201).json(formatEvent(newEvent, tgUser.id));
 
     // Организатору: по желанию свой чат для участников и приветствие через «Написать участникам»
@@ -1763,6 +1775,7 @@ app.post('/api/events/:id/participant', telegramAuthMiddleware as any, async (re
     const target = event.participants.find((p) => p.telegramId === Number(req.body?.telegramId));
     if (!target) return res.status(404).json({ error: 'Этого человека уже нет в списке' });
 
+    const analyticsNewApproval = Boolean(req.body?.approve && !target.approvedAt);
     const notes: string[] = [];
     if (req.body?.people !== undefined) {
       const people = Math.min(50, Math.max(1, Math.floor(Number(req.body.people) || 1)));
@@ -1776,6 +1789,8 @@ app.post('/api/events/:id/participant', telegramAuthMiddleware as any, async (re
       notes.unshift('✅ <b>Организатор подтвердил твою запись!</b>');
     }
     await event.save();
+
+    if (analyticsNewApproval) captureAnalytics(target.telegramId,'gulyai_meetup_joined');
 
     if (notes.length && target.telegramId !== tgUser.id) {
       sendTelegramMessage(target.telegramId, `${notes.join('\n')}\n\n${eventSummaryHtml(event)}`, 'Открыть сходку', eventAppPath(event));
@@ -2234,6 +2249,9 @@ app.get('/api/users/seed', async (_req: Request, res: Response) => {
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ ok: true, questionnaireVersion: QUESTIONNAIRE_VERSION, time: new Date().toISOString() });
 });
+
+// Product analytics: authenticated, allowlisted, and opt-in through the current privacy notice.
+setupAnalyticsRoutes(app);
 
 // Новости проекта
 setupNewsRoutes(app);

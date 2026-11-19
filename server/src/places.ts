@@ -1,3 +1,4 @@
+import { captureAnalytics } from './analytics';
 import { avatarFor } from './avatars';
 import { PHOTO_URL_VERSION } from './photos';
 import { Express, Request, Response } from 'express';
@@ -127,7 +128,8 @@ export function setupPlacesRoutes(app: Express) {
       }
       const me = await User.findOne({ telegramId: req.telegramUser!.id }, { savedPlaces: 1 });
       const isSaved = Boolean(me?.savedPlaces?.includes(id));
-      await User.updateOne({ telegramId: req.telegramUser!.id }, isSaved ? { $pull: { savedPlaces: id } } : { $addToSet: { savedPlaces: id } });
+      const savedResult = await User.updateOne({ telegramId: req.telegramUser!.id }, isSaved ? { $pull: { savedPlaces: id } } : { $addToSet: { savedPlaces: id } });
+      if(!isSaved && savedResult.modifiedCount>0)captureAnalytics(req.telegramUser!.id,'gulyai_place_saved');
       res.json({ saved: !isSaved });
     } catch {
       res.status(500).json({ error: 'Не удалось сохранить место' });

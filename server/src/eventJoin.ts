@@ -1,3 +1,4 @@
+import { captureAnalytics } from './analytics';
 import { IEvent } from './models/Event';
 import { audienceError } from './eventAudience';
 import { seatsTaken, companyNote, eventSummaryHtml, eventAppPath } from './eventNotify';
@@ -85,6 +86,10 @@ export async function joinEvent(
   }
 
   await event.save();
+  if (!mine && !isEventCreator(event,tg.id)) {
+    captureAnalytics(tg.id,'gulyai_meetup_signup_saved');
+    captureAnalytics(tg.id,event.byRequest?'gulyai_meetup_join_requested':'gulyai_meetup_joined');
+  }
 
   // Организатору — кто идёт и с кем
   if (changed && !isEventCreator(event, tg.id)) {

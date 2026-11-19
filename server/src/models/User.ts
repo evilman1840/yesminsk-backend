@@ -19,6 +19,7 @@ export interface IUser extends Document {
   avatarUrl: string;
   photos?: string[]; // ещё до 5 фото в анкете (file_id в Telegram)
   bio: string;
+  analyticsId?: string;
   questionnaire?: Questionnaire;
   profileInviteSeenVersion?: number;
   age: number;
@@ -104,6 +105,7 @@ const UserSchema = new Schema<IUser>(
     avatarUrl: { type: String, required: true },
     photos: { type: [String], default: undefined },
     bio: { type: String, maxlength: 200, default: '' },
+    analyticsId: { type: String, select: false },
     questionnaire: { type: Schema.Types.Mixed, default: undefined },
     profileInviteSeenVersion: { type: Number },
     age: { type: Number, default: 25, min: 16, max: 99 },

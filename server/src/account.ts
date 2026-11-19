@@ -1,3 +1,4 @@
+import { forgetAnalyticsUser } from './analytics';
 import { Express, Response } from 'express';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import { User } from './models/User';
@@ -62,6 +63,7 @@ export function setupAccountRoutes(app: Express) {
         deleteAvatar(myId),
         PlaceSuggestion.deleteMany({ telegramId: myId, status: 'pending' })
       ]);
+      await forgetAnalyticsUser(myId).catch(() => {});
       await User.deleteOne({ telegramId: myId });
       console.log(`🗑 Аккаунт удалён по просьбе пользователя: ${myId}`);
       res.sendStatus(204);

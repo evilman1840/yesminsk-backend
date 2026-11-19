@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/app.ts",
     "build": "tsc",
-    "start": "node --max-old-space-size=380 dist/app.js"
+    "start": "node --max-old-space-size=380 dist/app.js",
+    "test:analytics": "node --test tests/analytics.test.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.5.0",

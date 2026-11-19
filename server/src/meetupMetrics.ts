@@ -1,3 +1,4 @@
+import { captureAnalytics } from './analytics';
 import { Express, Response } from 'express';
 import { Schema, model } from 'mongoose';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
@@ -58,6 +59,7 @@ export function setupMeetupMetricsRoutes(app: Express) {
         missing: Array.isArray(missing) ? missing.filter((f: any) => FORM_FIELDS.includes(f)) : undefined,
         error: FORM_ERRORS.includes(error) ? error : undefined
       });
+      captureAnalytics(req.telegramUser!.id,`gulyai_meetup_form_${step}` as any);
       res.sendStatus(204);
     } catch {
       res.sendStatus(500);
