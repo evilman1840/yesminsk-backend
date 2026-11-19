@@ -2250,7 +2250,7 @@ app.get('/api/users/seed', async (_req: Request, res: Response) => {
 
 // Проверка, что сервер жив (для «будильника», который не даёт серверу уснуть)
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ ok: true, questionnaireVersion: QUESTIONNAIRE_VERSION, analyticsSchema: 1, analyticsReady: analyticsConfigured(), time: new Date().toISOString() });
+  res.json({ ok: true, questionnaireVersion: QUESTIONNAIRE_VERSION, analyticsSchema: 1, analyticsReady: analyticsConfigured(), meetupExperienceSchema: 1, time: new Date().toISOString() });
 });
 
 // Product analytics: authenticated, allowlisted, and opt-in through the current privacy notice.
