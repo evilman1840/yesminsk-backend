@@ -630,6 +630,7 @@ export const WAVE_GATE_TEXTS = {
 // «Сходки рядом» (nearbyInvite.ts): через полчаса после создания сходки бот зовёт тех, кто недалеко
 const nearDistance = (m: number) => (m < 950 ? `${Math.max(100, Math.round(m / 100) * 100)} м` : `${(Math.round(m / 100) / 10).toFixed(1).replace('.', ',').replace(',0', '')} км`);
 export const NEARBY_TEXTS = {
+  organizer: (name: string) => `🙋 Организатор: ${name || 'участник ГУЛЯЙ!'}`,
   // Первая строка приглашения. meters — от точки человека; null — точки нет (выбрал «весь Минск»)
   head: (o: { meters: number | null; sameArea: boolean; touristCenter: boolean }) =>
     '📍 Может, тебя заинтересует: ' +

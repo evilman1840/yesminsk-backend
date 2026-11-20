@@ -13,6 +13,8 @@ import { calculateDistanceMeters } from './utils/geoUtils';
 import { escapeHtml, markCannotMessage } from './utils/telegramNotify';
 import { minskDayStart } from './waveLimit';
 import { NEARBY_TEXTS as T } from './texts';
+import { Wish } from './models/Wish';
+import { nearbyMatchScore, nearbyDescription } from './nearbyMatch';
 
 /**
  * «Сходки рядом»: через полчаса после создания сходки бот зовёт тех, кто живёт недалеко.
@@ -23,7 +25,7 @@ import { NEARBY_TEXTS as T } from './texts';
  * кто в Минске проездом и метку не ставил — считаем от центра; район не выбран — только при «весь Минск».
  * Заходил за 21 день, подходит по условиям сходки, не организатор и не записан.
  * Сколько: не больше выбранного в день (по умолчанию 3, общим счётом с «Помощью в наборе»), не больше 60 человек
- * на сходку — сначала самые близкие. Только с 10 до 22: ночную сходку разошлём утром.
+ * на сходку — сначала с подходящими интересами, затем по близости. Только с 10 до 22: ночную сходку разошлём утром.
  * Настройки — в анкете, блок «Сходки рядом» (кнопка под каждым приглашением ведёт туда)
  */
 
@@ -183,7 +185,9 @@ async function inviteNearby(ev: IEvent, now: number) {
       ...audienceUsersQuery(ev), // пол и возраст
       $and: theirPreferencesAllow(host) // не пишем тем, кто не хочет общаться с полом или возрастом организатора
     },
-    { telegramId: 1, gender: 1, age: 1, isEmpath: 1, areaName: 1, isTourist: 1, locationExact: 1, locationManual: 1, nearbyPerDay: 1, nearbyRadiusKm: 1 }
+    { telegramId: 1, gender: 1, age: 1, isEmpath: 1, areaName: 1, isTourist: 1, locationExact: 1, locationManual: 1, nearbyPerDay: 1, nearbyRadiusKm: 1,
+      goal: 1, goals: 1, 'questionnaire.activities': 1, 'questionnaire.favouriteActivity': 1,
+      'questionnaire.availability': 1, 'questionnaire.meetingAreas': 1, 'questionnaire.budget': 1 }
   ).lean();
 
   const [evLng, evLat] = ev.location.coordinates;
@@ -199,16 +203,36 @@ async function inviteNearby(ev: IEvent, now: number) {
   if (!near.length) return;
 
   const today = await sentToday(near.map((x) => x.u.telegramId), now);
+  // An explicit wish counts only for this template/place and the actual event time.
+  const wishes = ev.templateId && ev.templateId !== 'custom' ? await Wish.find({
+    telegramId: { $in: near.map(x => x.u.telegramId) },
+    status: { $in: ['active', 'matched'] }, kind: ev.templateId,
+    windowStart: { $lte: ev.dateTime }, windowEnd: { $gte: ev.dateTime },
+    ...(ev.placeId ? { $or: [{ placeId: { $exists: false } }, { placeId: null }, { placeId: '' }, { placeId: String(ev.placeId) }] }
+      : { $or: [{ placeId: { $exists: false } }, { placeId: null }, { placeId: '' }] }),
+    ...(ev.category === 'sport' ? { sport: ev.extras?.sport || null } : {})
+  }, { telegramId: 1 }).lean().catch(() => {
+    // Optional priority must not lose a claimed invitation when wishes are unavailable.
+    console.warn('⚠️ «Сходки рядом»: не получилось учесть желания, подбираем по анкете');
+    return [];
+  }) : [];
+  const wishIds = new Set(wishes.map(w => w.telegramId));
   const fit = near
     .filter(({ u }) => perDayOf(u) === 0 || (today.get(u.telegramId) || 0) < perDayOf(u))
     // «Только эмпаты», отказ организатора — как при записи
     .filter(({ u }) => !joinBlockReason(ev, u as any, u.telegramId))
+    .map(x => ({ ...x, score: nearbyMatchScore(ev, x.u, evArea, wishIds.has(x.u.telegramId)) }))
+    .sort((a, b) => b.score - a.score || (a.meters ?? Infinity) - (b.meters ?? Infinity) || a.u.telegramId - b.u.telegramId)
     .slice(0, PER_EVENT_MAX);
   if (!fit.length) return;
 
   const url = appUrl();
   const free = freeSeats(ev);
-  const body = `${eventSummaryHtml(ev)}${Number.isFinite(free) ? T.seatsLeft(free) : ''}\n\n${T.comfort}${halfHourOk(ev) ? T.halfHour : ''}`;
+  const description = nearbyDescription(ev.description);
+  const body = `${eventSummaryHtml(ev)}${Number.isFinite(free) ? T.seatsLeft(free) : ''}` +
+    `\n${T.organizer(escapeHtml(nearbyDescription(ev.creator.name)))}` +
+    (description ? `\n\n${escapeHtml(description)}` : '') +
+    `\n\n${T.comfort}${halfHourOk(ev) ? T.halfHour : ''}`;
   let sent = 0;
   for (const { u, meters, point, area } of fit) {
     let ping: INearbyPing;
