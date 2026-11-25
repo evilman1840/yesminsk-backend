@@ -2,6 +2,8 @@
 export const ANALYTICS_PRIVACY_VERSION = '2026-11-19';
 export const SCREENS = ['map','people','meetups','places','news','games','profile','registration'] as const;
 export type AnalyticsScreen = typeof SCREENS[number];
+export const NOTICE_KINDS = ['bot','username','meetup','create','wish','poll','author','serial','buddy','profile','pin','nearby','safety'] as const;
+export type AnalyticsNotice = typeof NOTICE_KINDS[number];
 export const ELEMENTS = [
   'nav_map','nav_people','nav_meetups','nav_places','nav_news','nav_games','nav_profile',
   'people_filters','meetup_create','meetup_join','person_wave','chat_open',
@@ -13,7 +15,8 @@ export const CLIENT_EVENTS = [
   'gulyai_screen_viewed','gulyai_screen_active','gulyai_element_seen','gulyai_element_clicked',
   'gulyai_person_opened','gulyai_meetup_opened','gulyai_place_opened','gulyai_filters_opened','gulyai_filters_applied',
   'gulyai_questionnaire_started','gulyai_profile_invite_shown','gulyai_profile_invite_later','gulyai_profile_invite_continue',
-  'gulyai_donation_opened','gulyai_donation_checkout','gulyai_chat_opened'
+  'gulyai_donation_opened','gulyai_donation_checkout','gulyai_chat_opened',
+  'gulyai_notice_seen','gulyai_notice_clicked','gulyai_notice_dismissed'
 ] as const;
 export const SERVER_EVENTS = [
   'gulyai_profile_saved','gulyai_questionnaire_saved','gulyai_questionnaire_completed',
@@ -29,6 +32,9 @@ export interface AnalyticsProperties {
   filters_count?: number;
   answered_count?: number;
   completed?: boolean;
+  notice_kind?: AnalyticsNotice;
+  notice_placement?: 'bottom' | 'help';
+  entry_point?: 'bottom_notice';
 }
 export interface ClientAnalyticsEvent { id: string; event: ClientEventName; session_id: string; at: number; properties: AnalyticsProperties; }
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

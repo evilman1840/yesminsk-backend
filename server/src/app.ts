@@ -1681,7 +1681,8 @@ app.post('/api/events/:id/join', telegramAuthMiddleware as any, async (req: Auth
     // Сколько человек ведёт с собой и идёт ли с детьми; проверки и сообщение организатору — в eventJoin.ts
     const result = await joinEvent(event, user, tgUser, {
       guests: Math.max(0, Math.floor(Number(req.body?.guests) || 0)),
-      withKids: Boolean(req.body?.withKids)
+      withKids: Boolean(req.body?.withKids),
+      analyticsEntryPoint: req.body?.entryPoint === 'bottom_notice' ? 'bottom_notice' : undefined
     });
     if (!result.ok) return res.status(result.status).json({ error: result.error });
 

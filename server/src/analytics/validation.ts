@@ -1,4 +1,4 @@
-import { ANALYTICS_PRIVACY_VERSION, AnalyticsProperties, ClientAnalyticsEvent, CLIENT_EVENTS, ELEMENTS, SCREENS, UUID } from './contract';
+import { ANALYTICS_PRIVACY_VERSION, AnalyticsProperties, ClientAnalyticsEvent, CLIENT_EVENTS, ELEMENTS, SCREENS, UUID, NOTICE_KINDS } from './contract';
 export function analyticsAllowed(configured: boolean, user: { hasAgreedToRules?: boolean; legalVersion?: string; isBanned?: boolean } | null, excluded: boolean): boolean {
   return Boolean(configured && !excluded && user?.hasAgreedToRules && !user.isBanned && user.legalVersion === ANALYTICS_PRIVACY_VERSION);
 }
@@ -11,6 +11,9 @@ export function cleanProperties(value: unknown): AnalyticsProperties {
     const n = raw[key]; if (typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= max) output[key] = Math.floor(n);
   }
   if (typeof raw.completed === 'boolean') output.completed = raw.completed;
+  if (NOTICE_KINDS.includes(raw.notice_kind as any)) output.notice_kind = raw.notice_kind as any;
+  if (raw.notice_placement === 'bottom' || raw.notice_placement === 'help') output.notice_placement = raw.notice_placement;
+  if (raw.entry_point === 'bottom_notice') output.entry_point = raw.entry_point;
   return output;
 }
 export function cleanClientBatch(input: unknown, now = Date.now()): ClientAnalyticsEvent[] {
@@ -20,6 +23,8 @@ export function cleanClientBatch(input: unknown, now = Date.now()): ClientAnalyt
     if (!raw || typeof raw !== 'object' || !UUID.test(raw.id) || !UUID.test(raw.session_id) || !CLIENT_EVENTS.includes(raw.event) || typeof raw.at !== 'number' || !Number.isFinite(raw.at) || raw.at > now + 60000 || raw.at < now - 3600000) throw new Error('Invalid event');
     const properties = cleanProperties(raw.properties);
     if (!properties.screen) throw new Error('Missing screen');
+    if (['gulyai_notice_seen','gulyai_notice_clicked','gulyai_notice_dismissed'].includes(raw.event) &&
+      (!properties.notice_kind || !properties.notice_placement)) throw new Error('Missing notice category');
     if (raw.event === 'gulyai_screen_active' && (!properties.active_ms || properties.active_ms > 120000)) throw new Error('Invalid duration');
     if (['gulyai_element_seen','gulyai_element_clicked'].includes(raw.event) && !properties.element) throw new Error('Missing element');
     if (seen.has(raw.id)) return null; seen.add(raw.id);

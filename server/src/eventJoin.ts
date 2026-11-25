@@ -41,7 +41,7 @@ export async function joinEvent(
   event: IEvent,
   user: Person,
   tg: TgFallback,
-  opts: { guests: number; withKids: boolean; buddyOf?: number; viaRecruit?: boolean }
+  opts: { guests: number; withKids: boolean; buddyOf?: number; viaRecruit?: boolean; analyticsEntryPoint?: 'bottom_notice' }
 ): Promise<JoinResult> {
   const blocked = joinBlockReason(event, user, tg.id);
   if (blocked) return { ok: false, status: 403, error: blocked };
@@ -87,8 +87,9 @@ export async function joinEvent(
 
   await event.save();
   if (!mine && !isEventCreator(event,tg.id)) {
-    captureAnalytics(tg.id,'gulyai_meetup_signup_saved');
-    captureAnalytics(tg.id,event.byRequest?'gulyai_meetup_join_requested':'gulyai_meetup_joined');
+    const origin = opts.analyticsEntryPoint === 'bottom_notice' ? { entry_point: 'bottom_notice' as const } : {};
+    captureAnalytics(tg.id,'gulyai_meetup_signup_saved', origin);
+    captureAnalytics(tg.id,event.byRequest?'gulyai_meetup_join_requested':'gulyai_meetup_joined', origin);
   }
 
   // Организатору — кто идёт и с кем
