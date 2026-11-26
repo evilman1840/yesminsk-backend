@@ -1,4 +1,4 @@
-import { ANALYTICS_PRIVACY_VERSION, AnalyticsProperties, ClientAnalyticsEvent, CLIENT_EVENTS, ELEMENTS, SCREENS, UUID, NOTICE_KINDS } from './contract';
+import { ANALYTICS_PRIVACY_VERSION, AnalyticsProperties, ClientAnalyticsEvent, CLIENT_EVENTS, DONATION_METHODS, ELEMENTS, SCREENS, UUID, NOTICE_KINDS } from './contract';
 export function analyticsAllowed(configured: boolean, user: { hasAgreedToRules?: boolean; legalVersion?: string; isBanned?: boolean } | null, excluded: boolean): boolean {
   return Boolean(configured && !excluded && user?.hasAgreedToRules && !user.isBanned && user.legalVersion === ANALYTICS_PRIVACY_VERSION);
 }
@@ -14,6 +14,8 @@ export function cleanProperties(value: unknown): AnalyticsProperties {
   if (NOTICE_KINDS.includes(raw.notice_kind as any)) output.notice_kind = raw.notice_kind as any;
   if (raw.notice_placement === 'bottom' || raw.notice_placement === 'help') output.notice_placement = raw.notice_placement;
   if (raw.entry_point === 'bottom_notice') output.entry_point = raw.entry_point;
+  const method = DONATION_METHODS.find(method => method === raw.donation_method);
+  if (method) output.donation_method = method;
   return output;
 }
 export function cleanClientBatch(input: unknown, now = Date.now()): ClientAnalyticsEvent[] {

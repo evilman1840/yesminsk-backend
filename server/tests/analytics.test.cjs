@@ -16,6 +16,29 @@ test('requires current consent, configuration, and non-excluded active account',
 test('strips private text, IDs, URLs and injected identity',()=>{const [clean]=cleanClientBatch([{...event,distinct_id:'telegram-id',properties:{...event.properties,telegramId:123,bio:'secret',url:'secret',answers:['secret'],$ip:'1.2.3.4',active_ms:2000}}],100000);assert.deepEqual(clean.properties,{screen:'map',active_ms:2000});assert.equal('distinct_id' in clean,false);});
 test('rejects server-success spoofing, invalid duration, oversized batches and timestamps',()=>{for(const batch of [[{...event,event:'gulyai_meetup_created'}],[{...event,event:'gulyai_screen_active',properties:{screen:'map',active_ms:Infinity}}],Array(41).fill(event),[{...event,at:-4000000}],[{...event,id:'telegram-id'}]])assert.throws(()=>cleanClientBatch(batch,100000));assert.equal(cleanClientBatch([event,event],100000).length,1);assert.deepEqual(cleanProperties({screen:'private text',element:'unknown',answered_count:9}),{});});
 const ph={uuid:event.id,event:event.event,distinct_id:event.session_id,timestamp:new Date().toISOString(),properties:{}};
+
+test('accepts map and donation telemetry and discards status text and payment details', () => {
+  const accepted = [
+    ['gulyai_map_live_status_clicked', {}],
+    ['gulyai_element_clicked', { element: 'map_donate' }],
+    ['gulyai_donation_methods_opened', {}],
+    ['gulyai_donation_checkout', {}],
+    ['gulyai_donation_checkout', { donation_method: 'card' }],
+    ['gulyai_donation_checkout', { donation_method: 'stars' }],
+    ['gulyai_donation_details_clicked', { donation_method: 'erip' }],
+    ['gulyai_donation_details_clicked', { donation_method: 'phone' }],
+    ['gulyai_donation_self_reported', {}]
+  ];
+  for (const [name, properties] of accepted) {
+    const [clean] = cleanClientBatch([{
+      ...event,
+      event: name,
+      properties: { screen: 'map', ...properties, want: 'private', payment_details: 'private' }
+    }], 100000);
+    assert.deepEqual(clean.properties, { screen: 'map', ...properties });
+  }
+  assert.deepEqual(cleanProperties({ donation_method: 'private text' }), {});
+});
 test('transport retries transient errors with the same UUID and private endpoint',async()=>{const calls=[];let n=0;const t=new AnalyticsTransport('test-token','https://eu.i.posthog.com',async(url,opts)=>{calls.push([url,JSON.parse(opts.body)]);return {ok:++n>1,status:n>1?200:503}});t.enqueue(ph);await t.flush();await t.flush();assert.equal(calls.length,2);assert.equal(calls[0][0],'https://eu.i.posthog.com/batch/');assert.equal(calls[0][1].batch[0].uuid,calls[1][1].batch[0].uuid);});
 test('transport drops permanent errors and forgets deleted identities',async()=>{let n=0;const t=new AnalyticsTransport('test','https://eu.i.posthog.com',async()=>{n++;return {ok:false,status:400}});t.enqueue(ph);await t.flush();await t.flush();assert.equal(n,1);t.enqueue(ph);t.forget(ph.distinct_id);await t.flush();assert.equal(n,1);});
 
