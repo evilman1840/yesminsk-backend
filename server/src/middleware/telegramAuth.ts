@@ -61,11 +61,12 @@ export function verifyTelegramWebAppData(initData: string, botToken: string): Te
     // Подпись верна, но строка могла утечь: принимаем только свежие сессии
     const authDate = Number(urlParams.get('auth_date'));
     const maxAgeSec = Number(process.env.TELEGRAM_INIT_DATA_MAX_AGE_SEC) || 24 * 60 * 60;
-    if (!authDate || Date.now() / 1000 - authDate > maxAgeSec) return null;
+    const ageSec = Date.now() / 1000 - authDate;
+    if (!Number.isSafeInteger(authDate) || authDate <= 0 || ageSec < -60 || ageSec > maxAgeSec) return null;
 
     const userParam = urlParams.get('user');
     const user = userParam ? JSON.parse(userParam) : null;
-    return user && Number.isSafeInteger(user.id) && user.id > 0 ? user : null;
+    return user && user.is_bot !== true && Number.isSafeInteger(user.id) && user.id > 0 ? user : null;
   } catch (err) {
     console.error('Ошибка верификации Telegram initData:', err);
     return null;

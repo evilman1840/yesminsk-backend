@@ -28,6 +28,7 @@ export interface IEventParticipant {
   withKids?: boolean;  // идёт с детьми
   confirmedAt?: Date;  // нажал «Точно приду» (из напоминания или в приложении)
   approvedAt?: Date;   // «По записи»: организатор подтвердил запись (после этого отменить можно только через него)
+  approvalRequired?: boolean; // отдельная заявка на открытую сходку ждёт решения организатора
   noShowAt?: Date;     // организатор отметил «Не пришёл(ла)» (внутренний рейтинг, человеку не сообщаем)
   buddyOf?: number;    // «👯 Пойдём вместе»: пришёл по приглашению этого человека (buddyInvites.ts)
   viaRecruit?: boolean; // записался по сообщению «Компания собирается» (recruitHelp.ts)
@@ -158,6 +159,7 @@ const EventSchema = new Schema<IEvent>(
         withKids: { type: Boolean, default: false },
         confirmedAt: { type: Date },
         approvedAt: { type: Date },
+        approvalRequired: { type: Boolean },
         noShowAt: { type: Date },
         buddyOf: { type: Number },
         viaRecruit: { type: Boolean }
@@ -202,7 +204,11 @@ const EventSchema = new Schema<IEvent>(
 
 // Индекс для быстрого поиска событий на карте Минска
 EventSchema.index({ location: '2dsphere' });
+EventSchema.index({ 'cancellations.telegramId': 1, 'cancellations.cancelledAt': 1 });
 EventSchema.index({ photos: 1 });
 EventSchema.index({ isActive: 1, dateTime: 1 });
 
 export const Event = model<IEvent>('Event', EventSchema);
+
+export const participantPending = (event: IEvent, p: IEventParticipant) =>
+  p.telegramId !== event.creator.telegramId && Boolean((event.byRequest || p.approvalRequired) && !p.approvedAt);

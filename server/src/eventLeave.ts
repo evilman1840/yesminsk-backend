@@ -1,7 +1,7 @@
 import { Express, Response } from 'express';
 import mongoose, { Schema, model, Types } from 'mongoose';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
-import { Event, IEvent } from './models/Event';
+import { Event, IEvent, participantPending } from './models/Event';
 import { WishGroup } from './models/Wish';
 import { formatWhen, eventAppPath } from './eventNotify';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
@@ -58,7 +58,7 @@ const othersOf = (ev: IEvent) => ev.participants.filter((p) => p.telegramId !== 
 
 // Кому передать: первый в списке (порядок записи, приложение показывает того же); у «По записи» — только подтверждённые
 export function nextHost(ev: IEvent) {
-  return othersOf(ev).find((p) => !ev.byRequest || p.approvedAt);
+  return othersOf(ev).find((p) => !participantPending(ev, p));
 }
 
 // Записать уход организатора (удаление или передачу). Ошибки не мешают самому действию

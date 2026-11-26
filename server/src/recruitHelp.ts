@@ -1,5 +1,5 @@
 import mongoose, { Schema, model, Types } from 'mongoose';
-import { Event, IEvent } from './models/Event';
+import { Event, IEvent, participantPending } from './models/Event';
 import { User } from './models/User';
 import { Wish } from './models/Wish';
 import { CUSTOM_TEMPLATE_KEY } from './models/EventTemplate';
@@ -249,7 +249,7 @@ export async function handleRecruitCallback(query: any): Promise<boolean> {
   await RecruitPing.updateOne({ _id: ping._id }, { $set: { status: 'joined' } });
   await answer();
   if (messageId) await tg('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: openRow } });
-  sendTelegramMessage(fromId, ev.byRequest ? T.requested : T.joined, T.openBtn, eventAppPath(ev));
+  sendTelegramMessage(fromId, ev.participants.some((p) => p.telegramId === fromId && participantPending(ev, p)) ? T.requested : T.joined, T.openBtn, eventAppPath(ev));
   return true;
 }
 

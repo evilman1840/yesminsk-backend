@@ -4,11 +4,12 @@ import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/teleg
 import mongoose from 'mongoose';
 import { Wish, WishGroup, IWishGroup } from './models/Wish';
 import { EventTemplate } from './models/EventTemplate';
-import { Event } from './models/Event';
+import { Event, participantPending } from './models/Event';
 import { Place } from './models/Place';
 import { User } from './models/User';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { formatWhen } from './eventNotify';
+import { joinAccountError, joinEvent } from './eventJoin';
 import { buildExtras } from './eventTemplates';
 import { sendWithButtons, Btn, phraseFor, proposalSlots, proposalLead, endsToday, groupSize, buildPath, setAfterMatch, CUSTOM_WISH, proposeAt } from './wishes';
 import { isAdmin, adminIds } from './news';
@@ -117,11 +118,27 @@ async function offerMessage(group: IWishGroup) {
 }
 
 // Набралось «Пойду» — создаём официальную сходку от ГУЛЯЙ!
-async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
+async function createEventFromProposal(group: IWishGroup, optionIndex: number, minimum: number) {
   const p = group.proposal!;
   const option = p.options[optionIndex];
+  const yesUsers = await User.find({
+    telegramId: { $in: option.yes },
+    hasAgreedToRules: true,
+    isBanned: { $ne: true }
+  }).lean();
+  const yesIds = yesUsers.map((u) => u.telegramId);
+  const ineligibleIds = option.yes.filter((id) => !yesIds.includes(id));
+  if (ineligibleIds.length || yesIds.length < minimum) {
+    await WishGroup.updateOne(
+      { _id: group._id },
+      {
+        ...(ineligibleIds.length ? { $pull: { 'proposal.options.$[].yes': { $in: ineligibleIds } } } : {}),
+        ...(yesIds.length < minimum ? { $set: { status: 'open' } } : {})
+      }
+    );
+    if (yesIds.length < minimum) return false;
+  }
   const tpl = await EventTemplate.findOne({ key: group.kind }).lean();
-  const admin = (await User.findOne({ telegramId: { $in: adminIds() } }).lean()) as any;
   const subField = (tpl?.fields || []).find((f: any) => f.type === 'select' && f.required);
   const extrasRaw = subField && group.sport ? { [subField.key]: group.sport } : {};
   const built = tpl ? buildExtras(tpl.fields || [], extrasRaw) : { extras: {}, badges: [] as string[] };
@@ -139,7 +156,6 @@ async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
   const title = isCustom ? customText : (hasAllTokens ? fill(tpl?.title || '') : tpl?.fallbackTitle) || (await phraseFor(group.kind, group.sport));
   const description = [fill(tpl?.description || ''), p.note].filter(Boolean).join('\n\n') || 'Сходка из «Хочу сходить»';
 
-  const yesUsers = await User.find({ telegramId: { $in: option.yes } }).lean();
   // Хозяин встречи — первый, кто нажал «Пойду» (а не автор проекта): он в списке и может написать остальным
   const host = yesUsers.find((u) => u.telegramId === option.yes[0]) || yesUsers[0];
   const event = await Event.create({
@@ -157,9 +173,7 @@ async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
     locationName: p.placeName,
     location: { type: 'Point', coordinates: [p.coords[1], p.coords[0]] },
     dateTime: option.at,
-    creator: host
-      ? { telegramId: host.telegramId, name: host.firstName, username: host.username, avatarUrl: host.avatarUrl || '' }
-      : { telegramId: admin?.telegramId || adminIds()[0] || 0, name: admin?.firstName || 'ГУЛЯЙ!', username: admin?.username, avatarUrl: admin?.avatarUrl || '' },
+    creator: { telegramId: host.telegramId, name: host.firstName, username: host.username, avatarUrl: host.avatarUrl || '' },
     participants: yesUsers.map((u) => ({ telegramId: u.telegramId, name: u.firstName, username: u.username, avatarUrl: u.avatarUrl || '', joinedAt: new Date() })),
     maxParticipants: Math.max(tpl?.seats || 0, (await groupSize(group._id)) + 2),
     isActive: true
@@ -167,16 +181,17 @@ async function createEventFromProposal(group: IWishGroup, optionIndex: number) {
 
   const eventId = String(event._id);
   await WishGroup.updateOne({ _id: group._id }, { $set: { status: 'fulfilled', meetupId: eventId } });
-  await Wish.updateMany({ groupId: group._id, telegramId: { $in: option.yes } }, { $set: { status: 'fulfilled', meetupId: eventId, pending: null } });
+  await Wish.updateMany({ groupId: group._id, telegramId: { $in: yesIds } }, { $set: { status: 'fulfilled', meetupId: eventId, pending: null } });
   // Остальным (не ответили или выбрали другое время) — «Сходку собрали», кроме «Не смогу ни в один»
-  await Wish.updateMany({ groupId: group._id, telegramId: { $nin: [...option.yes, ...p.no] }, status: 'matched' }, { $set: { meetupId: eventId, pending: 'built' } });
+  await Wish.updateMany({ groupId: group._id, telegramId: { $nin: [...yesIds, ...ineligibleIds, ...p.no] }, status: 'matched' }, { $set: { meetupId: eventId, pending: 'built' } });
 
   const when = formatWhen(event.dateTime);
-  for (const id of option.yes) {
+  for (const id of yesIds) {
     const text = id === host?.telegramId ? T.createdForHost(escapeHtml(event.title), when, escapeHtml(event.locationName)) : T.createdForYes(escapeHtml(event.title), when, escapeHtml(event.locationName));
     await sendWithButtons(id, text, [[{ text: T.openEvent, path: `?event=${eventId}` }]]);
   }
-  for (const id of adminIds()) sendTelegramMessage(id, T.adminCreated(escapeHtml(event.title), when, option.yes.length), T.openEvent, `?event=${eventId}`);
+  for (const id of adminIds()) sendTelegramMessage(id, T.adminCreated(escapeHtml(event.title), when, yesIds.length), T.openEvent, `?event=${eventId}`);
+  return true;
 }
 
 /* ---------- Догоняем предложения: собрать встречу или напомнить ---------- */
@@ -219,7 +234,7 @@ export async function followUpProposals() {
     // Порог набран (например, после снижения CONFIRM_MIN) или время вышло и есть хотя бы двое — собираем
     if (best >= 0 && (yes >= CONFIRM_MIN() || (age > WINNER_AFTER && yes >= 2))) {
       const claimed = await WishGroup.findOneAndUpdate({ _id: g._id, status: 'open' }, { $set: { status: 'fulfilled' } }, { new: true });
-      if (claimed) await createEventFromProposal(claimed, best);
+      if (claimed) await createEventFromProposal(claimed, best, age > WINNER_AFTER ? 2 : CONFIRM_MIN());
       continue;
     }
     // «Пойду» только у одного: спрашиваем его, опубликовать ли сходку — остальные увидят и присоединятся
@@ -363,6 +378,11 @@ export async function handleProposalCallback(query: any): Promise<boolean> {
   const idx = Number(idxRaw);
   const option = action === 'yes' ? g.proposal.options[idx] : null;
   if (action === 'yes' && !option) return answer(T.gone), true;
+  const fromUser = action === 'yes' || action === 'solo' ? await User.findOne({ telegramId: fromId }).lean() : null;
+  if (action === 'yes' || action === 'solo') {
+    const accountError = joinAccountError(fromUser);
+    if (accountError) return answer(accountError), true;
+  }
 
   // Сходку уже собрали: «Пойду» на то же время — записываем, на другое — подсказываем
   if (g.status === 'fulfilled' && g.meetupId && option) {
@@ -370,12 +390,11 @@ export async function handleProposalCallback(query: any): Promise<boolean> {
     if (!ev || !ev.isActive) return answer(T.gone), true;
     if (ev.dateTime.getTime() !== new Date(option.at).getTime()) return answer(T.otherTime(formatWhen(ev.dateTime))), true;
     if (!ev.participants.some((p) => p.telegramId === fromId)) {
-      const u = await User.findOne({ telegramId: fromId }).lean();
-      ev.participants.push({ telegramId: fromId, name: u?.firstName || query.from?.first_name || '', username: u?.username, avatarUrl: u?.avatarUrl || '', joinedAt: new Date() } as any);
-      await ev.save();
+      const joined = await joinEvent(ev, fromUser, { id: fromId, first_name: query.from?.first_name }, { guests: 0, withKids: false });
+      if (!joined.ok) return answer(joined.error), true;
       await Wish.updateMany({ groupId: g._id, telegramId: fromId }, { $set: { status: 'fulfilled', meetupId: g.meetupId, pending: null } });
     }
-    answer(T.lateJoin);
+    answer(ev.participants.some((p) => p.telegramId === fromId && participantPending(ev, p)) ? 'Заявка ждёт подтверждения организатора' : T.lateJoin);
     return true;
   }
   if (g.status !== 'open') return answer(T.gone), true;
@@ -398,8 +417,7 @@ export async function handleProposalCallback(query: any): Promise<boolean> {
     if (!picked?.yes.includes(fromId) || new Date(picked.at).getTime() < Date.now() + HOUR) return answer(T.gone), true;
     const claimed = await WishGroup.findOneAndUpdate({ _id: g._id, status: 'open' }, { $set: { status: 'fulfilled' } }, { new: true });
     if (!claimed) return answer(T.gone), true;
-    answer(T.soloDone);
-    await createEventFromProposal(claimed, idx);
+    answer(await createEventFromProposal(claimed, idx, 1) ? T.soloDone : T.gone);
     return true;
   }
 
@@ -426,7 +444,7 @@ export async function handleProposalCallback(query: any): Promise<boolean> {
   if (yes >= CONFIRM_MIN()) {
     // Защита от двойного создания: забираем группу атомарно
     const claimed = await WishGroup.findOneAndUpdate({ _id: g._id, status: 'open' }, { $set: { status: 'fulfilled' } }, { new: true });
-    if (claimed) await createEventFromProposal(claimed, idx);
+    if (claimed) await createEventFromProposal(claimed, idx, CONFIRM_MIN());
   }
   return true;
 }
@@ -567,7 +585,7 @@ export async function fixAutoMeetupHosts() {
       if (!g.meetupId || !mongoose.Types.ObjectId.isValid(g.meetupId)) continue;
       const ev = await Event.findById(g.meetupId);
       if (!ev || !admins.includes(Number(ev.creator.telegramId))) continue;
-      const first = ev.participants.find((p) => !admins.includes(p.telegramId));
+      const first = ev.participants.find((p) => !participantPending(ev, p) && !admins.includes(p.telegramId));
       if (!first) continue;
       ev.creator = { telegramId: first.telegramId, name: first.name, username: first.username, avatarUrl: first.avatarUrl || '' } as any;
       await Event.updateOne({ _id: ev._id }, { $set: { creator: ev.creator } });

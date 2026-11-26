@@ -1,16 +1,23 @@
+import { reserveRecentAction } from './middleware/participantLimits';
 import { captureAnalytics } from './analytics';
 import { USERNAME_TEXTS as U, BUDDY_TEXTS as B } from './texts';
 import { IUser } from './models/User';
 import { Reaction } from './models/Reaction';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { preferencesAllow } from './preferences';
-import { waveQuota, markWaveLimitHit, WaveLimitError } from './waveLimit';
+import { minskDayStart, waveQuota, markWaveLimitHit, WaveLimitError } from './waveLimit';
 import { noteIncomingWave } from './waveNotify';
 import { matchBridgeLine } from './buddyInvites';
 import { sendWithButtons } from './wishes';
 import { tossCoin, coinLine, helloPath } from './hello';
 import { canStart } from './games';
 import { HELLO_TEXTS as H, DUEL_TEXTS as D } from './texts';
+
+export class WaveBurstError extends Error {
+  constructor() {
+    super('Слишком много приветов подряд. Подожди минуту и попробуй снова');
+  }
+}
 
 /**
  * 👋 «Пообщаться» от одного человека другому. Если в ответ уже было 👋 — оба «На связи», бот пишет обоим.
@@ -26,7 +33,8 @@ export async function sendLike(
   context = '',
   opts: { free?: boolean; bulk?: boolean } = {}
 ): Promise<{ isMatch: boolean; isNewLike: boolean; firstMove?: number | null } | null> {
-  if (me.telegramId === target.telegramId) return null;
+  if (me.telegramId === target.telegramId || !me.hasAgreedToRules || !target.hasAgreedToRules ||
+    me.isBanned || target.isBanned || me.hiddenByReports || target.hiddenByReports) return null;
   if ((me.blockedUsers || []).includes(target.telegramId) || (target.blockedUsers || []).includes(me.telegramId)) return null;
   const [previous, reverse] = await Promise.all([
     Reaction.findOne({ fromTelegramId: me.telegramId, toTelegramId: target.telegramId }),
@@ -35,13 +43,15 @@ export async function sendLike(
   // Его настройки «с кем хочу общаться» меня не допускают — привет не передаём (если он сам передал мне 👋 — можно ответить)
   if (!preferencesAllow(target, me) && !reverse) return null;
   // Массовый привет не возвращает в «На связи» тех, кого я оттуда убрал
-  if (opts.bulk && previous?.type === 'unmatch') return null;
+  if (previous?.type === 'dislike') return null;
+  if (previous?.type === 'unmatch' && (opts.bulk || Date.now() - previous.updatedAt.getTime() < 24 * 60 * 60 * 1000)) return null;
 
-  const isMatch = Boolean(reverse);
+  let isMatch = Boolean(reverse);
   const isNewLike = previous?.type !== 'like'; // не спамим уведомлениями при повторном нажатии
   const free = Boolean(opts.free) || isMatch;
 
   // Дневной лимит: только для новых 👋 первым
+  let dailyMax = 0;
   let lastOne = false;
   if (isNewLike && !free) {
     const quota = await waveQuota(me);
@@ -49,15 +59,31 @@ export async function sendLike(
       markWaveLimitHit(me.telegramId);
       throw new WaveLimitError(quota);
     }
+    dailyMax = quota.limit;
     lastOne = quota.left === 1;
   }
 
   if (isNewLike) {
-    await Reaction.findOneAndUpdate(
-      { fromTelegramId: me.telegramId, toTelegramId: target.telegramId },
-      { $set: { type: 'like', likedAt: new Date(), likeFree: free } },
-      { upsert: true }
-    );
+    const limits: Parameters<typeof reserveRecentAction>[1] = opts.bulk
+      ? [{ field: 'dailyBulkWaveAttempts', max: 10, since: minskDayStart() }]
+      : [{ field: 'recentWaveAttempts', max: 5, since: new Date(Date.now() - 60 * 1000) }];
+    if (dailyMax) limits.push({ field: 'dailyWaveAttempts', max: dailyMax, since: minskDayStart() });
+    if (!(await reserveRecentAction(me.telegramId, limits))) {
+      if (opts.bulk) return null;
+      throw new WaveBurstError();
+    }
+    try {
+      const saved = await Reaction.findOneAndUpdate(
+        previous ? { _id: previous._id, type: previous.type, updatedAt: previous.updatedAt } : { fromTelegramId: me.telegramId, toTelegramId: target.telegramId, type: { $exists: false } },
+        { $set: { type: 'like', likedAt: new Date(), likeFree: free } },
+        { upsert: !previous, new: true }
+      );
+      if (!saved) return null;
+    } catch (err: any) {
+      if (err?.code === 11000) return null;
+      throw err;
+    }
+    if (isMatch) isMatch = Boolean(await Reaction.exists({ fromTelegramId: target.telegramId, toTelegramId: me.telegramId, type: 'like' }));
     captureAnalytics(me.telegramId,'gulyai_wave_sent');
     if (isMatch) captureAnalytics(me.telegramId,'gulyai_connection_created');
     if (lastOne) markWaveLimitHit(me.telegramId);

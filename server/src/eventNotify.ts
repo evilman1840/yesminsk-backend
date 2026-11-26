@@ -1,4 +1,4 @@
-import { Event, IEvent } from './models/Event';
+import { Event, IEvent, participantPending } from './models/Event';
 import { priceLabel, BUDDY_TEXTS } from './texts';
 import { sendTelegramMessage, escapeHtml, markCannotMessage } from './utils/telegramNotify';
 
@@ -38,7 +38,7 @@ export const formatWhen = (date: Date) =>
   });
 
 // Сколько мест занято: каждый участник плюс его гости
-export const seatsTaken = (event: IEvent) => event.participants.reduce((sum, p) => sum + 1 + (p.guests || 0), 0);
+export const seatsTaken = (event: IEvent) => event.participants.reduce((sum, p) => sum + (p.approvalRequired && participantPending(event, p) ? 0 : 1 + (p.guests || 0)), 0);
 
 // «+1, с детьми» — как человек идёт (для сообщений организатору)
 export const companyNote = (guests = 0, withKids = false) =>
@@ -79,6 +79,7 @@ export async function sendEventButtons(chatId: number, html: string, rows: Event
 // Пришёл по «👯 Пойдём вместе» — дописываем, что позвавший тоже идёт
 const remindParticipants = (event: IEvent, html: string) => {
   for (const p of event.participants) {
+    if (participantPending(event, p)) continue;
     const isHost = p.telegramId === event.creator.telegramId;
     const rows: EventBtn[][] = [...(isHost ? [] : [rsvpButtons(event)]), [{ text: 'Открыть сходку', path: eventAppPath(event) }]];
     const buddy = p.buddyOf ? event.participants.find((x) => x.telegramId === p.buddyOf) : undefined;

@@ -67,6 +67,7 @@ export function setupTelegramBot(app: Express) {
     // Нажатие кнопки под жалобой (бан / всё в порядке)
     if (req.body?.callback_query) {
       const q = req.body.callback_query;
+      if (q.from?.is_bot === true) return;
       (async () => (await handleBuddyCallback(q)) || (await handleRecruitCallback(q)) || (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handleNudgeCallback(q)) || (await handleProposalCallback(q)) || (await handleSuggestionCallback(q)) || (await handleAfishaCallback(q)) || (await handlePhotoModerationCallback(q, banUser)) || (await handlePlaceCallback(q)) || (await handleHiddenCallback(q)) || (await handleModerationCallback(q)) || (await handleGameCallback(q)))().catch((err) =>
         console.warn('⚠️ Ошибка обработки кнопки:', err?.message || err)
       );
@@ -90,7 +91,7 @@ export function setupTelegramBot(app: Express) {
     const message = req.body?.message;
     const chatId = message?.chat?.id;
     // Отвечаем только в личной переписке с ботом
-    if (!chatId || message.chat.type !== 'private') return;
+    if (!chatId || message.chat.type !== 'private' || message.from?.is_bot === true) return;
 
     handleMessage(message, chatId).catch((err) => console.warn('⚠️ Ошибка обработки сообщения боту:', err?.message || err));
   });

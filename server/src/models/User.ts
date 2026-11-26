@@ -82,6 +82,10 @@ export interface IUser extends Document {
   nudgeOptedOut?: boolean;   // нажал «Не сейчас» — больше не пишем
   profileNudgeSentAt?: Date; // разовое напоминание «заполни анкету подробнее»
   usernameNudgeSentAt?: Date; // разовое напоминание «заведи @username»
+  recentJoinAttempts?: Date[];
+  recentWaveAttempts?: Date[];
+  dailyWaveAttempts?: Date[];
+  dailyBulkWaveAttempts?: Date[];
   usernameCheckedAt?: Date;   // «Готово, проверь»: username спросили у Bot API (initData в открытом приложении старый)
   // Шторки перед первым 👋: когда впервые показали и когда человек ответил (для /stats)
   waveGate?: { genderShownAt?: Date; genderDoneAt?: Date; usernameShownAt?: Date; usernameDoneAt?: Date; leftAt?: Date };
@@ -178,6 +182,10 @@ const UserSchema = new Schema<IUser>(
     nudgeOptedOut: { type: Boolean },
     profileNudgeSentAt: { type: Date },
     usernameNudgeSentAt: { type: Date },
+    recentJoinAttempts: { type: [Date], default: undefined, select: false },
+    recentWaveAttempts: { type: [Date], default: undefined, select: false },
+    dailyWaveAttempts: { type: [Date], default: undefined, select: false },
+    dailyBulkWaveAttempts: { type: [Date], default: undefined, select: false },
     usernameCheckedAt: { type: Date },
     waveGate: {
       genderShownAt: { type: Date },

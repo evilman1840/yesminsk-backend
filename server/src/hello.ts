@@ -125,7 +125,8 @@ export function startHelloLoop() {
 async function pairOrError(myId: number, friendId: number): Promise<{ me: IUser; friend: IUser } | { status: number; error: string }> {
   if (!Number.isSafeInteger(friendId) || friendId === myId) return { status: 400, error: T.notMatch };
   const [me, friend] = await Promise.all([User.findOne({ telegramId: myId }), User.findOne({ telegramId: friendId })]);
-  if (!me || !friend || friend.isBanned || blockedEither(me, friend) || !(await isMatch(myId, friendId))) return { status: 403, error: T.notMatch };
+  if (!me?.hasAgreedToRules || !friend?.hasAgreedToRules || me.isBanned || friend.isBanned ||
+    me.hiddenByReports || friend.hiddenByReports || blockedEither(me, friend) || !(await isMatch(myId, friendId))) return { status: 403, error: T.notMatch };
   return { me, friend };
 }
 

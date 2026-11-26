@@ -17,13 +17,14 @@ import { startDigestLoop } from './digest';
 import { startWaveDigestLoop } from './waveNotify';
 import { startQuietSortLoop, isQuiet, quietLast } from './quietSort';
 import { startFeedbackLoop } from './feedback';
-import { Event, EventCategory, IEvent, EVENT_TAGS, EVENT_CATEGORIES, SPLIT_CATEGORIES, normalizeCategory } from './models/Event';
+import { Event, EventCategory, IEvent, EVENT_TAGS, EVENT_CATEGORIES, SPLIT_CATEGORIES, normalizeCategory, participantPending } from './models/Event';
 import { Place } from './models/Place';
 import { EventTemplate } from './models/EventTemplate';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
 import { metersBetween, realPoint, shownPoint } from './utils/userLocation';
 import { Reaction, ReactionType } from './models/Reaction';
-import { sendLike } from './social';
+import { sendLike, WaveBurstError } from './social';
+import { matchedUsername, meetupHostUsername } from './contactPrivacy';
 import { waveQuota, WaveLimitError, rememberWaveLimitLaunch } from './waveLimit';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
 import { setupTelegramBot, registerTelegramWebhook } from './bot';
@@ -36,7 +37,7 @@ import { banGuard, setupModerationRoutes, reportStopWords, BANNED_ERROR, notifyA
 import { pastAccount } from './deletedAccounts';
 import { checkStopWords, extrasText } from './stopWords';
 import { markInviteJoined } from './invites';
-import { joinEvent, isEventCreator, BY_REQUEST_LOCKED } from './eventJoin';
+import { joinEvent, isEventCreator, BY_REQUEST_LOCKED, joinAccountError } from './eventJoin';
 import { setupBuddyRoutes, startBuddyLoop, buddyPairIds, inviteBuddyToNewEvent } from './buddyInvites';
 import { setupEventLeaveRoutes, logEventExit } from './eventLeave';
 import { setupPlacesRoutes } from './places';
@@ -811,7 +812,7 @@ const PEOPLE_PAGE = 300;
 // Только то, что нужно ленте (formatPublicUser и ранжированию). Без skipped/hidden*/blockedUsers:
 // у активных там сотни записей, и 3000 полных анкет на запрос переполняли память сервера (OOM 01.11)
 const FEED_USER_FIELDS = {
-  telegramId: 1, firstName: 1, username: 1, avatarUrl: 1, photos: 1, photosHidden: 1, age: 1, gender: 1, goal: 1, goals: 1,
+  telegramId: 1, firstName: 1, username: 1, hasAgreedToRules: 1, avatarUrl: 1, photos: 1, photosHidden: 1, age: 1, gender: 1, goal: 1, goals: 1,
   customGoal: 1, goesWith: 1, isEmpath: 1, isSupporter: 1, ventUntil: 1, bio: 1, isProfileActive: 1, areaName: 1, isTourist: 1, isGuide: 1, guideAbout: 1,
   questionnaire: 1, availableUntil: 1, liveStatus: 1, lastActiveAt: 1, createdAt: 1, locationExact: 1, locationFuzzy: 1
 };
@@ -845,7 +846,9 @@ app.get('/api/users/nearby-count', telegramAuthMiddleware as any, async (req: Au
   }
 });
 
-app.get('/api/users/nearby', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+const peopleReadLimit = rateLimit({ name: 'анкеты людей', windowMs: 60 * 1000, max: 45 });
+
+app.get('/api/users/nearby', telegramAuthMiddleware as any, peopleReadLimit, async (req: AuthenticatedRequest, res: Response) => {
   try {
     await ensureHostStats();
     const tgUser = req.telegramUser!;
@@ -911,7 +914,7 @@ const visibleUserQuery = (me: any, targetId: number) => ({
 });
 
 // Одна анкета — для ссылки «Посмотреть анкету» из сообщения бота
-app.get('/api/users/:telegramId/public', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/users/:telegramId/public', telegramAuthMiddleware as any, peopleReadLimit, async (req: AuthenticatedRequest, res: Response) => {
   try {
     await ensureHostStats();
     const targetId = Number(req.params.telegramId);
@@ -1039,7 +1042,7 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     id: u.telegramId,
     telegramId: u.telegramId,
     firstName: u.firstName,
-    username: isMatch ? u.username : undefined,
+    username: matchedUsername(currentUser, u, isMatch),
     // Жалоба «неприличное фото» — фото не показываем до решения модератора
     avatarUrl: u.photosHidden ? '' : avatarFor(u.telegramId, u.avatarUrl),
     age: u.age,
@@ -1089,7 +1092,7 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
     const targetId = Number(req.body.targetTelegramId);
     const type = req.body.type as ReactionType;
 
-    if (!targetId || targetId === tgUser.id) {
+    if (!Number.isSafeInteger(targetId) || targetId <= 0 || targetId === tgUser.id) {
       return res.status(400).json({ error: 'Не указан пользователь' });
     }
     if (type !== 'like' && type !== 'dislike') {
@@ -1130,6 +1133,7 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
     });
   } catch (err: any) {
     // Дневной лимит 👋 исчерпан: 👋 не создаём, приложение покажет карточку про сходки
+    if (err instanceof WaveBurstError) return res.status(429).json({ error: err.message });
     if (err instanceof WaveLimitError) {
       return res.status(429).json({ error: 'На сегодня «👋» закончились', code: 'DAILY_WAVE_LIMIT', limit: err.quota.limit, waves: err.quota });
     }
@@ -1271,6 +1275,8 @@ const seatsLimit = (v: any) => {
 
 const formatEvent = (ev: IEvent, viewerId: number) => {
   const mine = ev.participants.find((p) => p.telegramId === viewerId);
+  const viewerIsHost = isEventCreator(ev, viewerId);
+  const reserved = ev.participants.filter((p) => !p.approvalRequired || !participantPending(ev, p));
   // «👯 идут вместе»: пришедший по приглашению и тот, кто позвал (если оба ещё в списке)
   const buddies = buddyPairIds(ev);
   return {
@@ -1287,12 +1293,12 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     creator: {
       telegramId: ev.creator.telegramId,
       name: ev.creator.name,
-      username: ev.creator.username,
+      username: meetupHostUsername(ev, viewerId, mine),
       avatarUrl: avatarFor(ev.creator.telegramId, ev.creator.avatarUrl)
     },
     participantsCount: seatsTaken(ev),
-    groupsCount: ev.participants.length,
-    withKidsCount: ev.participants.filter((p) => p.withKids).length,
+    groupsCount: reserved.length,
+    withKidsCount: reserved.filter((p) => p.withKids).length,
     maxParticipants: ev.maxParticipants || 0,
     isJoined: Boolean(mine),
     myGuests: mine?.guests || 0,
@@ -1300,23 +1306,24 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     myConfirmed: Boolean(mine?.confirmedAt),
     byRequest: Boolean(ev.byRequest),
     myApproved: Boolean(ev.byRequest && mine?.approvedAt),
+    myPending: Boolean(mine && participantPending(ev, mine)),
     // Организатору: сколько пар пришло по «👯 Пойдём вместе»
     ...(isEventCreator(ev, viewerId) && buddies.pairs ? { buddyPairs: buddies.pairs } : {}),
     audienceGender: ev.audienceGender || 'all',
     ageMin: ev.ageMin || null,
     ageMax: ev.ageMax || null,
-    // Кто идёт: все видят всех; Telegram участников — только организатору (чтобы написать детали)
-    participants: ev.participants.map((p) => ({
+    // Ожидающую заявку на открытую сходку видят только её автор и организатор.
+    participants: ev.participants.filter((p) => viewerIsHost || p.telegramId === viewerId || !p.approvalRequired || !participantPending(ev, p)).map((p) => ({
       telegramId: p.telegramId,
       name: p.name,
       avatarUrl: avatarFor(p.telegramId, p.avatarUrl),
       guests: p.guests || 0,
       withKids: Boolean(p.withKids),
       confirmed: Boolean(p.confirmedAt), // «✅ Точно приду» — значок у аватарки
-      approved: Boolean(ev.byRequest && p.approvedAt), // «По записи»: организатор подтвердил
+      approved: Boolean(p.approvedAt),
+      pending: Boolean(viewerIsHost && participantPending(ev, p)),
       ...(buddies.ids.has(p.telegramId) ? { buddy: true } : {}),
-      ...(isEventCreator(ev, viewerId) && p.noShowAt ? { noShow: true } : {}), // «Не пришёл(ла)» — видит только организатор
-      ...(isEventCreator(ev, viewerId) && p.username ? { username: p.username } : {})
+      ...(viewerIsHost && p.noShowAt ? { noShow: true } : {})
     })),
     placeId: ev.placeId ? String(ev.placeId) : undefined, // сходка в месте из «Мест» — покажем её в карточке места
     templateId: ev.templateId || undefined,
@@ -1505,6 +1512,8 @@ app.post('/api/events', telegramAuthMiddleware as any, async (req: Authenticated
   try {
     const tgUser = req.telegramUser!;
     const user = await User.findOne({ telegramId: tgUser.id });
+    const accountError = joinAccountError(user);
+    if (accountError) return res.status(403).json({ error: accountError });
 
     const {
       title,
@@ -1669,7 +1678,7 @@ app.post('/api/events/:id/message', telegramAuthMiddleware as any, async (req: A
       await reportStopWords(stop, 'message', myId, [`Сходка «${event.title}»`, text], id);
       if (stop.level === 'ban') return res.status(403).json({ error: BANNED_ERROR });
     }
-    const recipients = event.participants.filter((p) => p.telegramId !== myId);
+    const recipients = event.participants.filter((p) => p.telegramId !== myId && !participantPending(event, p));
     if (!recipients.length) return res.status(400).json({ error: EVENT_MESSAGE_TEXTS.noOne });
     const recent = (eventMessages.get(id) || []).filter((t) => Date.now() - t < 24 * 60 * 60 * 1000);
     if (recent.length >= 5) return res.status(429).json({ error: EVENT_MESSAGE_TEXTS.tooMany });
@@ -1784,7 +1793,10 @@ app.post('/api/events/:id/remove', telegramAuthMiddleware as any, async (req: Au
     const targetId = Number(req.body?.telegramId);
     if (targetId === tgUser.id) return res.status(400).json({ error: 'Себе отказать нельзя' });
     const target = event.participants.find((p) => p.telegramId === targetId);
-    if (!target) return res.status(404).json({ error: 'Этого человека уже нет в списке' });
+    if (!target) {
+      if (event.cancellations?.some((c) => c.telegramId === targetId && c.via === 'host')) return res.json(formatEvent(event, tgUser.id));
+      return res.status(404).json({ error: 'Этого человека уже нет в списке' });
+    }
     const reason = cleanText(req.body?.reason, 800) || '';
 
     event.participants = event.participants.filter((p) => p.telegramId !== targetId);
@@ -1827,12 +1839,16 @@ app.post('/api/events/:id/participant', telegramAuthMiddleware as any, async (re
       }
     }
     if (req.body?.approve && !target.approvedAt) {
+      if (target.approvalRequired && event.maxParticipants && seatsTaken(event) + 1 + (target.guests || 0) > event.maxParticipants) {
+        return res.status(409).json({ error: 'Свободных мест для этой заявки уже не хватает' });
+      }
+      event.increment();
       target.approvedAt = new Date();
       notes.unshift('✅ <b>Организатор подтвердил твою запись!</b>');
     }
     await event.save();
 
-    if (analyticsNewApproval) captureAnalytics(target.telegramId,'gulyai_meetup_joined');
+    if (analyticsNewApproval && (event.byRequest || target.approvalRequired)) captureAnalytics(target.telegramId,'gulyai_meetup_joined');
 
     if (notes.length && target.telegramId !== tgUser.id) {
       sendTelegramMessage(target.telegramId, `${notes.join('\n')}\n\n${eventSummaryHtml(event)}`, 'Открыть сходку', eventAppPath(event));
@@ -1906,6 +1922,7 @@ app.post('/api/events/:id/confirm', telegramAuthMiddleware as any, async (req: A
     if (!event || !event.isActive) return res.status(404).json({ error: 'Сходка не найдена' });
     const me = event.participants.find((p) => p.telegramId === tgUser.id);
     if (!me) return res.status(400).json({ error: 'Ты уже не записан(а) на эту сходку' });
+    if (participantPending(event, me)) return res.status(409).json({ error: 'Подожди, пока организатор подтвердит заявку' });
     if (!me.confirmedAt) {
       me.confirmedAt = new Date();
       await event.save();
@@ -1970,7 +1987,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
     // Включили «По записи» в уже созданной сходке: кто уже записался — подтверждён
     if (req.body?.byRequest !== undefined) {
       const on = Boolean(req.body.byRequest);
-      if (on && !event.byRequest) for (const p of event.participants) if (!p.approvedAt) p.approvedAt = new Date();
+      if (on && !event.byRequest) for (const p of event.participants) if (!p.approvedAt && !p.approvalRequired) p.approvedAt = new Date();
       event.byRequest = on;
     }
     if (cleanPhotoIds(photos)) event.photos = cleanPhotoIds(photos);
@@ -2289,7 +2306,7 @@ app.get('/api/users/seed', async (_req: Request, res: Response) => {
 
 // Проверка, что сервер жив (для «будильника», который не даёт серверу уснуть)
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ ok: true, questionnaireVersion: QUESTIONNAIRE_VERSION, analyticsSchema: 2, analyticsReady: analyticsConfigured(), meetupExperienceSchema: 1, time: new Date().toISOString() });
+  res.json({ ok: true, questionnaireVersion: QUESTIONNAIRE_VERSION, analyticsSchema: 2, analyticsReady: analyticsConfigured(), meetupExperienceSchema: 1, participantProtectionSchema: 1, time: new Date().toISOString() });
 });
 
 // Product analytics: authenticated, allowlisted, and opt-in through the current privacy notice.

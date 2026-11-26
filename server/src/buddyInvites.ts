@@ -1,7 +1,7 @@
 import { Express, Response } from 'express';
 import mongoose, { Schema, model, Types } from 'mongoose';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
-import { Event, IEvent } from './models/Event';
+import { Event, IEvent, participantPending } from './models/Event';
 import { User, IUser } from './models/User';
 import { Reaction } from './models/Reaction';
 import { Wish } from './models/Wish';
@@ -265,7 +265,7 @@ export async function handleBuddyCallback(query: any): Promise<boolean> {
   await answer(query.id);
   await clearButtons(fromId, messageId, ev);
   if (!done.modifiedCount) return true;
-  sendTelegramMessage(fromId, ev.byRequest ? T.requested : T.joined, 'Открыть сходку', eventAppPath(ev));
+  sendTelegramMessage(fromId, ev.participants.some((p) => p.telegramId === fromId && participantPending(ev, p)) ? T.requested : T.joined, 'Открыть сходку', eventAppPath(ev));
   sendTelegramMessage(invite.fromId, T.accepted(escapeHtml(me?.firstName || query.from?.first_name || 'Знакомый'), escapeHtml(ev.title)), 'Открыть сходку', eventAppPath(ev));
   return true;
 }

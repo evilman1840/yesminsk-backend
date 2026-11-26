@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { Event, IEvent } from './models/Event';
+import { Event, IEvent, participantPending } from './models/Event';
 import { User } from './models/User';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
 import { sendLike } from './social';
@@ -171,7 +171,7 @@ export async function handleFeedbackCallback(query: any): Promise<boolean> {
 
   if (!mongoose.Types.ObjectId.isValid(eventId)) return answer(), true;
   const event = await Event.findById(eventId);
-  if (!event || !event.participants.some((p) => p.telegramId === fromId)) {
+  if (!event || !event.participants.some((p) => p.telegramId === fromId && !p.noShowAt && !participantPending(event, p))) {
     answer('Сходка не найдена');
     return true;
   }
@@ -215,20 +215,22 @@ export async function handleFeedbackCallback(query: any): Promise<boolean> {
   // fbc — общаться дальше
   callBot('editMessageReplyMarkup', { chat_id: chatId, message_id: query.message.message_id, reply_markup: { inline_keyboard: [] } });
   const entry = (event.feedback || []).find((f) => f.telegramId === fromId);
-  if (entry) {
-    entry.wantsContact = value === 'yes';
-    await event.save();
-  }
+  if (!entry || event.dateTime.getTime() > Date.now()) return answer('Сначала оцени встречу'), true;
   if (value !== 'yes') {
     answer('Хорошо');
     return true;
   }
+  const claim = await Event.updateOne(
+    { _id: event._id, feedback: { $elemMatch: { telegramId: fromId, wantsContact: { $ne: true } } } },
+    { $set: { 'feedback.$.wantsContact': true } }
+  );
+  if (claim.modifiedCount !== 1) return answer('Приветы уже отправлены'), true;
   const me = await User.findOne({ telegramId: fromId });
   if (!me) return answer(), true;
-  const targets = await User.find({ telegramId: { $in: event.participants.map((p) => p.telegramId).filter((id) => id !== fromId) } });
+  const targets = await User.find({ telegramId: { $in: event.participants.filter((p) => p.telegramId !== fromId && !p.noShowAt && !participantPending(event, p)).map((p) => p.telegramId) } });
   let sent = 0;
   let matches = 0;
-  for (const target of targets) {
+  for (const target of targets.slice(0, 10)) {
     const res = await sendLike(me, target, `после сходки «${event.title}»`, { free: true, bulk: true });
     if (res) {
       sent++;

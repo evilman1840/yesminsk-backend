@@ -2,6 +2,7 @@ import { Express, Request, Response, NextFunction } from 'express';
 import { Schema, model, Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
+import { rateLimit } from './middleware/security';
 import { User } from './models/User';
 import { Event } from './models/Event';
 import { escapeHtml, sendTelegramMessage } from './utils/telegramNotify';
@@ -326,18 +327,20 @@ export function banGuard(req: Request, res: Response, next: NextFunction) {
 }
 
 export function setupModerationRoutes(app: Express) {
-  app.post('/api/reports', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/reports', telegramAuthMiddleware as any, rateLimit({ name: 'жалобы', windowMs: 10 * 60 * 1000, max: 8 }), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const fromId = req.telegramUser!.id;
-      const { targetType, targetId, reason } = req.body;
+      const { targetType, targetId: rawTargetId, reason } = req.body;
+      const targetId = targetType === 'user' ? String(Number(rawTargetId)) : String(rawTargetId ?? '').toLowerCase();
       const comment = String(req.body.comment || '').slice(0, 500);
 
-      const badTarget = targetType === 'user' ? !Number.isSafeInteger(Number(targetId)) || Number(targetId) === fromId : !mongoose.Types.ObjectId.isValid(String(targetId));
+      const badTarget = targetType === 'user' ? !Number.isSafeInteger(Number(targetId)) || Number(targetId) <= 0 || Number(targetId) === fromId : !mongoose.Types.ObjectId.isValid(String(targetId));
       if (!['user', 'event'].includes(targetType) || !targetId || badTarget || !Object.prototype.hasOwnProperty.call(REASONS, reason)) {
         return res.status(400).json({ error: 'Неполная жалоба' });
       }
 
       const reporter = await User.findOne({ telegramId: fromId });
+      if (!reporter?.hasAgreedToRules || reporter.isBanned) return res.status(403).json({ error: 'Жалобу можно отправить из активного аккаунта ГУЛЯЙ!' });
       const reporterLine = `От: ${escapeHtml(reporter?.firstName || 'пользователь')}${reporter?.username ? ` (@${escapeHtml(reporter.username)})` : ''} · ID ${fromId}`;
 
       try {

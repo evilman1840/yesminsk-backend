@@ -366,7 +366,6 @@ function view(m: any, telegramId: number) {
         name: p.incognito ? p.nick : p.firstName,
         avatar: p.incognito ? '' : p.avatar,
         emoji: p.incognito ? p.nickEmoji : '',
-        username: m.source === 'match' && !p.incognito ? p.username || undefined : undefined,
         rematch: Boolean(p.rematch),
         online: !p.awayAt && Date.now() - new Date(p.seenAt).getTime() < ONLINE_MS,
         away: Boolean(p.awayAt)
