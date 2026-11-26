@@ -791,6 +791,7 @@ function peopleFilters(q: any, me: any): { and: any[]; maxKm: number } {
   if (q.who === 'locals') and.push({ isTourist: { $ne: true } });
   if (q.who === 'tourists') and.push({ isTourist: true });
   if (q.available === '1') and.push({ availableUntil: { $gt: new Date() } });
+  if (q.liveStatus === '1') and.push({ 'liveStatus.expiresAt': { $gt: new Date() } });
   if (q.recent === '1') and.push({ lastActiveAt: { $gte: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) } });
   const goesWith = str(q.goesWith).split(',').filter((g) => (GOES_WITH as string[]).includes(g));
   if (goesWith.length) and.push({ goesWith: { $in: goesWith } });
