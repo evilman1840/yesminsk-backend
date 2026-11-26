@@ -12,7 +12,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import { securityHeaders, stripMongoOperators, rateLimit } from './middleware/security';
-import { User, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, DIGEST_FREQUENCIES, Gender, PreferredGender } from './models/User';
+import { User, IUser, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, DIGEST_FREQUENCIES, Gender, PreferredGender } from './models/User';
 import { startDigestLoop } from './digest';
 import { startWaveDigestLoop } from './waveNotify';
 import { startQuietSortLoop, isQuiet, quietLast } from './quietSort';
@@ -363,6 +363,7 @@ app.get('/api/users/me', telegramAuthMiddleware as any, async (req: Authenticate
     userObj.isAdmin = isAdmin(user.telegramId); // модератор: может удалять любые сходки
     userObj.gamesOpen = process.env.GAMES_OPEN === '1' || userObj.isAdmin; // вкладка «Игры» и человечки на карте
     if (!isDraft) userObj.waves = await waveQuota(user).catch(() => undefined); // дневной лимит 👋: сколько осталось
+    userObj.liveStatus = activeLiveStatus(user);
     userObj.nearby = nearbySettingsOf(user); // блок «Сходки рядом» в анкете
 
     res.json(userObj);
@@ -672,6 +673,35 @@ app.post('/api/users/vent', telegramAuthMiddleware as any, async (req: Authentic
   }
 });
 
+app.post('/api/users/live-status', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const telegramId = req.telegramUser!.id;
+    const { want, offer, hours } = req.body || {};
+    const query = { telegramId, hasAgreedToRules: true, isBanned: { $ne: true } };
+    if (hours === 0) {
+      await User.updateOne(query, { $unset: { liveStatus: 1 } });
+      return res.json({ liveStatus: null });
+    }
+    if (typeof want !== 'string' || typeof offer !== 'string' || !Number.isInteger(hours) || hours < 1 || hours > 48) {
+      return res.status(400).json({ error: 'Выбери срок от 1 до 48 часов' });
+    }
+    const clean = (text: string) => text.trim().replace(/\s+/g, ' ');
+    const phrases = [clean(want), clean(offer)];
+    if ((!phrases[0] && !phrases[1]) || phrases.some(text => text.length > 45)) {
+      return res.status(400).json({ error: 'Добавь хотя бы одну короткую фразу, до 45 символов' });
+    }
+    if (checkStopWords(...phrases)) {
+      return res.status(400).json({ error: 'Измени текст статуса и попробуй снова' });
+    }
+    const liveStatus = { want: phrases[0], offer: phrases[1], expiresAt: new Date(Date.now() + hours * 60 * 60 * 1000) };
+    const saved = await User.updateOne(query, { $set: { liveStatus } });
+    if (!saved.matchedCount) return res.status(403).json({ error: 'Сейчас нельзя опубликовать статус' });
+    res.json({ liveStatus });
+  } catch {
+    res.status(500).json({ error: 'Не удалось сохранить статус' });
+  }
+});
+
 app.post('/api/users/available', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tgUser = req.telegramUser!;
@@ -781,8 +811,8 @@ const PEOPLE_PAGE = 300;
 // у активных там сотни записей, и 3000 полных анкет на запрос переполняли память сервера (OOM 01.11)
 const FEED_USER_FIELDS = {
   telegramId: 1, firstName: 1, username: 1, avatarUrl: 1, photos: 1, photosHidden: 1, age: 1, gender: 1, goal: 1, goals: 1,
-  customGoal: 1, goesWith: 1, isEmpath: 1, isSupporter: 1, ventUntil: 1, bio: 1, areaName: 1, isTourist: 1, isGuide: 1, guideAbout: 1,
-  questionnaire: 1, availableUntil: 1, lastActiveAt: 1, createdAt: 1, locationExact: 1, locationFuzzy: 1
+  customGoal: 1, goesWith: 1, isEmpath: 1, isSupporter: 1, ventUntil: 1, bio: 1, isProfileActive: 1, areaName: 1, isTourist: 1, isGuide: 1, guideAbout: 1,
+  questionnaire: 1, availableUntil: 1, liveStatus: 1, lastActiveAt: 1, createdAt: 1, locationExact: 1, locationFuzzy: 1
 };
 
 // Сколько всего людей в приложении (прошли приветствие, не забанены). Считаем раз в 5 минут
@@ -991,6 +1021,12 @@ async function getReactionFlags(myId: number, otherIds: number[]): Promise<Map<n
 }
 
 // Публичная анкета. @username отдаём только при взаимной симпатии (мэтче)
+function activeLiveStatus(user: Pick<IUser, 'liveStatus'>) {
+  const status = user.liveStatus;
+  if (!status || !status.expiresAt || status.expiresAt.getTime() <= Date.now()) return undefined;
+  return { want: status.want, offer: status.offer, expiresAt: status.expiresAt };
+}
+
 function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
   // Не ставил точку сам — метка в его районе из анкеты, а не в центре Минска по умолчанию
   const fuzzyCoords = shownPoint(u) || [27.5615, 53.9045];
@@ -1028,6 +1064,7 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     iLiked: Boolean(flags?.iLiked),
     likedMe: Boolean(flags?.likedMe),
     isMatch,
+    liveStatus: u.isProfileActive !== false ? activeLiveStatus(u) : undefined,
     availableUntil: isAvailableNow(u) ? u.availableUntil : undefined,
     isGuide: Boolean(u.isGuide) && !u.isTourist,
     // Для фильтра «Были недавно» — без точного времени, только «заходил за последние 3 дня»

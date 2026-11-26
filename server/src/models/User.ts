@@ -71,6 +71,7 @@ export interface IUser extends Document {
   legalAcceptedAt?: Date;   // когда принял(а) — доказательство согласия на обработку данных
   isProfileActive: boolean;
   blockedUsers: number[]; // Список telegramId заблокированных пользователей
+  liveStatus?: { want: string; offer: string; expiresAt: Date };
   availableUntil?: Date;  // «⚡ Есть время» — до этого времени
   isGuide: boolean;       // «🧭 Покажу город» — местный, готов показать город туристам
   isBanned?: boolean;        // забанен модератором
@@ -167,6 +168,7 @@ const UserSchema = new Schema<IUser>(
     isProfileActive: { type: Boolean, default: true },
     blockedUsers: { type: [Number], default: [] },
     availableUntil: { type: Date },
+    liveStatus: { type: new Schema({ want: String, offer: String, expiresAt: Date }, { _id: false }), default: undefined },
     isGuide: { type: Boolean, default: false },
     isBanned: { type: Boolean, default: false },
     invitedBy: { type: Number },
