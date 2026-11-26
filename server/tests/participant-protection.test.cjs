@@ -95,3 +95,20 @@ test('mass and fast waves stop before creating a new reaction', async (t) => {
   assert.ok(single.arguments[1][0].$set.recentWaveAttempts);
   assert.ok(bulk.arguments[1][0].$set.dailyBulkWaveAttempts);
 });
+
+test('new accounts can send 25 first waves and the standard limit is 20', async (t) => {
+  const { waveQuota } = require('../dist/waveLimit');
+  const { Reaction } = require('../dist/models/Reaction');
+  const { DeletedAccount } = require('../dist/deletedAccounts');
+  t.mock.method(Reaction, 'countDocuments', async () => 10);
+  t.mock.method(Reaction, 'find', () => ({ lean: async () => [] }));
+  const previousAccount = t.mock.method(DeletedAccount, 'exists', async () => null);
+  const newAccount = { ...person, createdAt: new Date() };
+
+  const { limit, left } = await waveQuota(newAccount);
+  assert.equal(limit, 25);
+  assert.equal(left, 15);
+  assert.equal((await waveQuota({ ...person, createdAt: new Date('2025-01-01') })).limit, 20);
+  previousAccount.mock.mockImplementation(async () => ({ telegramId: person.telegramId }));
+  assert.equal((await waveQuota(newAccount)).limit, 20);
+});

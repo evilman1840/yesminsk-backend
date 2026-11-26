@@ -8,15 +8,14 @@ import { DeletedAccount } from './deletedAccounts';
  * Дневной лимит 👋 «Пообщаться».
  * Считаем 👋, отправленные за календарный день по Минску (сброс в 00:00 по Минску).
  * Не в счёт: ответ на чужой 👋 (сразу «На связи») и привет участникам после сходки — это и есть то, к чему ведём.
- * 15 в день; 5 — первые сутки после регистрации; 25 — если на ≥25% из ≥10 отправленных 👋 ответили взаимно.
+ * Обычно 20 в день. В первые сутки после регистрации или при ≥25% взаимных ответов из ≥10 отправленных 👋 — 25.
  * Кто удалял аккаунт и вернулся, новичком не считается (deletedAccounts.ts).
  * 5 — тем, кого часто скрывают (quietSort.ts): правило важнее остальных, в том числе для новой анкеты.
  */
 
-export const WAVE_LIMIT_BASE = 15;
+export const WAVE_LIMIT_BASE = 20;
 export const WAVE_LIMIT_BOOSTED = 25;
 export const WAVE_LIMIT_LOW = 5;
-const WAVE_LIMIT_NEW = 5;
 const BOOST_MIN_SENT = 10;
 const BOOST_MIN_SHARE = 0.25;
 
@@ -57,7 +56,7 @@ async function usedToday(telegramId: number): Promise<number> {
 async function dailyLimit(me: IUser): Promise<number> {
   if (isOftenHidden(me.telegramId)) return WAVE_LIMIT_LOW;
   const created = (me as any).createdAt ? new Date((me as any).createdAt).getTime() : 0;
-  if (created && Date.now() - created < DAY && !(await DeletedAccount.exists({ telegramId: me.telegramId }))) return WAVE_LIMIT_NEW;
+  if (created && Date.now() - created < DAY && !(await DeletedAccount.exists({ telegramId: me.telegramId }))) return WAVE_LIMIT_BOOSTED;
   const sent = await Reaction.find({ fromTelegramId: me.telegramId, type: { $in: ['like', 'unmatch'] } }, { toTelegramId: 1 }).lean();
   if (sent.length < BOOST_MIN_SENT) return WAVE_LIMIT_BASE;
   const mutual = await Reaction.countDocuments({ fromTelegramId: { $in: sent.map((r) => r.toTelegramId) }, toTelegramId: me.telegramId, type: 'like' });
