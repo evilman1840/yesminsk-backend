@@ -40,6 +40,8 @@ import { markInviteJoined } from './invites';
 import { joinEvent, isEventCreator, BY_REQUEST_LOCKED, joinAccountError } from './eventJoin';
 import { setupBuddyRoutes, startBuddyLoop, buddyPairIds, inviteBuddyToNewEvent } from './buddyInvites';
 import { setupEventLeaveRoutes, logEventExit } from './eventLeave';
+import { meetupChatExpiresAt, setupMeetupChatRoutes } from './meetupChat';
+import { MeetupMessage } from './models/MeetupMessage';
 import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
 import { setupMeetupMetricsRoutes } from './meetupMetrics';
@@ -1290,6 +1292,7 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     locationName: ev.locationName,
     coordinates: [ev.location.coordinates[1], ev.location.coordinates[0]], // [lat, lng]
     dateTime: ev.dateTime,
+    chatExpiresAt: meetupChatExpiresAt(ev),
     creator: {
       telegramId: ev.creator.telegramId,
       name: ev.creator.name,
@@ -1441,7 +1444,7 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
       // «Только девушки / мужчины», «25–35 лет» — кому не подходит, тот не видит
       ...(admin ? {} : { $and: audienceFeedQuery(me) })
     };
-    // Свои и куда записан — всегда, даже дальше месяца (для «⭐ Мои»); начавшиеся — ещё 4 часа.
+    // Свои и куда записан — даже дальше месяца; после сходки оставляем доступ к чату.
     // Свои прошедшие организатор видит ещё NO_SHOW_DAYS — чтобы отметить, кто не пришёл
     const [feed, mine] = await Promise.all([
       Event.find(feedQuery).sort({ dateTime: 1 }).limit(200),
@@ -1449,7 +1452,7 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
         isActive: true,
         ...categoryQuery,
         $or: [
-          { 'participants.telegramId': tgUser.id, dateTime: { $gte: new Date(now - 4 * HOUR) } },
+          { 'participants.telegramId': tgUser.id, dateTime: { $gte: new Date(now - 72 * HOUR) } },
           { 'creator.telegramId': tgUser.id, dateTime: { $gte: new Date(now - NO_SHOW_DAYS * DAY) } }
         ]
       })
@@ -1471,7 +1474,7 @@ app.get('/api/events', telegramAuthMiddleware as any, async (req: AuthenticatedR
     };
 
     // Порядок — по баллам (см. eventRanking.ts); приложение ещё поднимает непросмотренные
-    const ranked = [...mine, ...feed].map((ev) => {
+    const ranked = [...mine.filter((ev) => isEventCreator(ev, tgUser.id) || meetupChatExpiresAt(ev).getTime() > now), ...feed].map((ev) => {
       const input = {
         dateTime: ev.dateTime,
         category: ev.category,
@@ -1754,7 +1757,7 @@ app.post('/api/events/:id/leave', telegramAuthMiddleware as any, async (req: Aut
     const leaving = event.participants.find((p) => p.telegramId === tgUser.id);
     // «По записи»: подтверждённую запись снимает только организатор
     if (leaving && event.byRequest && leaving.approvedAt && !isEventCreator(event, tgUser.id) && event.dateTime.getTime() > Date.now()) {
-      return res.status(403).json({ error: BY_REQUEST_LOCKED(event) });
+      return res.status(403).json({ error: BY_REQUEST_LOCKED() });
     }
     if (leaving) {
       event.participants = event.participants.filter((p) => p.telegramId !== tgUser.id);
@@ -1998,6 +2001,7 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
       event.extras = tpl.extras;
       event.badges = tpl.badges;
     }
+    const oldChatExpiry = meetupChatExpiresAt(event);
     if (durationMinutes !== undefined) event.durationMinutes = cleanDuration(durationMinutes);
     // Для кого: пол и возраст (прислали — проверяем и меняем)
     const host = await User.findOne({ telegramId: tgUser.id }, { gender: 1, age: 1 }).lean();
@@ -2051,6 +2055,11 @@ const handleUpdateEventLogic = async (req: AuthenticatedRequest, res: Response) 
     if (stop?.level === 'ban') event.isActive = false;
 
     await event.save();
+    const chatExpiry = meetupChatExpiresAt(event);
+    if (chatExpiry.getTime() !== oldChatExpiry.getTime()) {
+      await MeetupMessage.updateMany({ eventId: event._id, expiresAt: oldChatExpiry }, { $set: { expiresAt: chatExpiry } })
+        .catch(() => console.warn('Не получилось обновить срок хранения переписки по сходке'));
+    }
 
     if (stop) {
       await reportStopWords(stop, 'eventEdit', tgUser.id, newTexts, String(event._id));
@@ -2099,6 +2108,8 @@ const handleDeleteEventLogic = async (req: AuthenticatedRequest, res: Response) 
 
     await logEventExit(event, 'deleted', tgUser.id);
     await Event.findByIdAndDelete(event._id);
+    await MeetupMessage.deleteMany({ eventId: event._id })
+      .catch(() => console.warn('Переписка удалённой сходки будет очищена по сроку хранения'));
 
     // Удалил модератор — организатору его текст, почему (а не «сходка отменена»)
     if (byModerator) {
@@ -2306,7 +2317,7 @@ app.get('/api/users/seed', async (_req: Request, res: Response) => {
 
 // Проверка, что сервер жив (для «будильника», который не даёт серверу уснуть)
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ ok: true, questionnaireVersion: QUESTIONNAIRE_VERSION, analyticsSchema: 2, analyticsReady: analyticsConfigured(), meetupExperienceSchema: 1, participantProtectionSchema: 1, time: new Date().toISOString() });
+  res.json({ ok: true, questionnaireVersion: QUESTIONNAIRE_VERSION, analyticsSchema: 2, analyticsReady: analyticsConfigured(), meetupExperienceSchema: 1, participantProtectionSchema: 1, meetupChatSchema: 1, time: new Date().toISOString() });
 });
 
 // Product analytics: authenticated, allowlisted, and opt-in through the current privacy notice.
@@ -2338,6 +2349,7 @@ setupWishRoutes(app);
 // «👯 Пойдём на сходку вместе»: позвать знакомого из «На связи»
 setupBuddyRoutes(app, formatEvent);
 setupEventLeaveRoutes(app, formatEvent);
+setupMeetupChatRoutes(app);
 
 // Удаление аккаунта
 setupAccountRoutes(app);

@@ -161,6 +161,36 @@ async function undoStopWordsBan(telegramId: number) {
   sendTelegramMessage(telegramId, '✅ Модератор проверил: всё в порядке, блокировка снята, сходки снова видны. Извини за неудобство!', 'Открыть «ГУЛЯЙ!»');
 }
 
+/**
+ * Стоп-слово в чате сходки: сам чат временно отключаем и отправляем сообщение администратору на проверку.
+ */
+export async function reportChatStopWords(
+  hit: StopHit,
+  telegramId: number,
+  event: { _id: unknown; title: string },
+  kind: 'group' | 'question',
+  text: string
+) {
+  const u = await User.findOne({ telegramId }, { firstName: 1, username: 1, age: 1 }).lean();
+  const who = `👤 <b>${escapeHtml(u?.firstName || '-')}</b>${u?.age ? `, ${u.age}` : ''}${u?.username ? ` · @${escapeHtml(u.username)}` : ''} · ID ${telegramId}`;
+  const kindLabel = kind === 'group' ? 'общий чат сходки' : 'вопрос организатору';
+  const eventId = String(event._id);
+  const quote = escapeHtml(text.slice(0, 1000));
+  notifyAdmins(
+    `🚨 <b>Стоп-слова в чате сходки</b>\n` +
+      `Сходка: «${escapeHtml(event.title)}» (${kindLabel})\n` +
+      `Нашли: <b>${escapeHtml(hit.matches.join(', '))}</b>\n\n` +
+      `${who}\n\n` +
+      `📝 ${quote}\n\n` +
+      `⏸ Чат этой сходки временно отключён до твоей проверки.`,
+    [
+      { text: '✅ Включить чат', data: `chatok:${eventId}` },
+      { text: '🚫 Бан автора', data: `ban:${telegramId}` },
+      { text: '🗑 Скрыть сходку', data: `delev:${eventId}` }
+    ]
+  );
+}
+
 /* ---------- Действия модератора ---------- */
 
 export async function banUser(telegramId: number) {
@@ -193,7 +223,7 @@ async function clearEvent(eventId: string) {
 export async function handleModerationCallback(query: any): Promise<boolean> {
   const data: string = query.data || '';
   const [action, id] = data.split(':');
-  if (!['ban', 'okuser', 'delev', 'okev', 'delphu', 'delphe', 'okphu', 'okphe', 'swok', 'swban'].includes(action)) return false;
+  if (!['ban', 'okuser', 'delev', 'okev', 'delphu', 'delphe', 'okphu', 'okphe', 'swok', 'swban', 'chatok'].includes(action)) return false;
 
   if (!isAdmin(query.from?.id)) {
     callBot('answerCallbackQuery', { callback_query_id: query.id, text: 'Только для администратора' });
@@ -233,6 +263,11 @@ export async function handleModerationCallback(query: any): Promise<boolean> {
   } else if (action === 'okphe') {
     if (mongoose.Types.ObjectId.isValid(id)) await Event.updateOne({ _id: id }, { $set: { photosHidden: false } });
     result = '✅ Фото в порядке, снова видны';
+  } else if (action === 'chatok') {
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      await Event.updateOne({ _id: id }, { $unset: { chatPaused: 1, chatPausedAt: 1 } });
+    }
+    result = '✅ Чат сходки снова включён';
   }
 
   callBot('answerCallbackQuery', { callback_query_id: query.id, text: result });

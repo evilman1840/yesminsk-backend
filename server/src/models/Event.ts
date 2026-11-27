@@ -82,6 +82,8 @@ export interface IEvent extends Document {
   maxParticipants?: number;
   photosHidden?: boolean;
   stopWordsHold?: boolean; // скрыта автобаном по стоп-словам — вернётся, если модератор нажмёт «Ошибка»
+  chatPaused?: boolean; // чат сходки временно отключён на проверку после стоп-слова
+  chatPausedAt?: Date;
   audienceGender?: 'all' | 'female' | 'male'; // для кого: все / только девушки / только мужчины
   ageMin?: number | null;  // возраст «от» (пусто — любой)
   ageMax?: number | null;  // возраст «до»
@@ -127,6 +129,8 @@ const EventSchema = new Schema<IEvent>(
     photos: { type: [String], default: [] },
     photosHidden: { type: Boolean, default: false }, // жалоба «неприличное фото» — не показываем до решения
     stopWordsHold: { type: Boolean },
+    chatPaused: { type: Boolean },
+    chatPausedAt: { type: Date },
     audienceGender: { type: String, enum: ['all', 'female', 'male'], default: 'all' },
     ageMin: { type: Number, min: 18, max: 99 },
     ageMax: { type: Number, min: 18, max: 99 },

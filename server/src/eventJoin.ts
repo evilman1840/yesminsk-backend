@@ -15,8 +15,8 @@ import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
 export const isEventCreator = (ev: IEvent, viewerId: number) => Number(ev.creator.telegramId) === Number(viewerId);
 
 // «По записи»: подтверждённую запись меняет и отменяет только организатор
-export const BY_REQUEST_LOCKED = (ev: IEvent) =>
-  `Запись подтверждена организатором. Чтобы отменить или изменить её, напиши ${ev.creator.username ? `@${ev.creator.username}` : 'организатору'}`;
+export const BY_REQUEST_LOCKED = () =>
+  'Запись подтверждена. Чтобы отменить или изменить её, напиши организатору в ГУЛЯЙ!';
 
 type Person = { telegramId?: number; firstName?: string; username?: string; avatarUrl?: string; gender?: string; age?: number; isEmpath?: boolean } | null;
 type TgFallback = { id: number; first_name?: string; username?: string; photo_url?: string };
@@ -105,7 +105,7 @@ export async function joinEvent(
 
   // «По записи»: подтверждённую запись меняет только организатор
   if (event.byRequest && mine?.approvedAt && changed && !isEventCreator(event, tg.id)) {
-    return { ok: false, status: 403, error: BY_REQUEST_LOCKED(event) };
+    return { ok: false, status: 403, error: BY_REQUEST_LOCKED() };
   }
   if (changed && !isHost && !(await reserveRecentAction(tg.id, [{ field: 'recentJoinAttempts', max: 8, since: new Date(Date.now() - 10 * 60 * 1000) }]))) {
     return { ok: false, status: 429, error: 'Слишком много записей или правок подряд. Попробуй снова через несколько минут' };

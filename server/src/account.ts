@@ -3,6 +3,7 @@ import { Express, Response } from 'express';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import { User } from './models/User';
 import { Event } from './models/Event';
+import { MeetupMessage } from './models/MeetupMessage';
 import { Reaction } from './models/Reaction';
 import { Wish } from './models/Wish';
 import { PlaceTip } from './models/Place';
@@ -54,6 +55,10 @@ export function setupAccountRoutes(app: Express) {
       }
 
       await Promise.all([
+        MeetupMessage.deleteMany({ $or: [
+          { eventId: { $in: mine.map((event) => event._id) } },
+          { askerId: myId }, { hostId: myId }, { senderId: myId }
+        ] }),
         Reaction.deleteMany({ $or: [{ fromTelegramId: myId }, { toTelegramId: myId }] }),
         Wish.deleteMany({ telegramId: myId }),
         PlaceTip.deleteMany({ telegramId: myId }),

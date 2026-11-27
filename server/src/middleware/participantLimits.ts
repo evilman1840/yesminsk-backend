@@ -1,6 +1,6 @@
 import { User } from '../models/User';
 
-type ActionField = 'recentJoinAttempts' | 'recentWaveAttempts' | 'dailyWaveAttempts' | 'dailyBulkWaveAttempts';
+type ActionField = 'recentJoinAttempts' | 'recentWaveAttempts' | 'dailyWaveAttempts' | 'dailyBulkWaveAttempts' | 'recentMeetupQuestions';
 type Limit = { field: ActionField; max: number; since: Date };
 
 // Все лимиты для действия проверяются и обновляются одной операцией MongoDB.
