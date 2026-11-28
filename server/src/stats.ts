@@ -23,6 +23,7 @@ import { comfortStatsLines } from './eventComfort';
 import { serialStatsLines } from './serial';
 import { helloStatsLines } from './hello';
 import { directChatStatsLines } from './directChat';
+import { pollPushStatsLines } from './polls';
 import { fiveDuelCounts } from './games';
 import { seaDuelCounts } from './sea';
 import { DUEL_TEXTS, WAVE_GATE_TEXTS } from './texts';
@@ -184,6 +185,7 @@ export async function buildStats(): Promise<string> {
   const serialLines = await serialStatsLines().catch(() => [] as string[]);
   const helloLines = await helloStatsLines().catch(() => [] as string[]);
   const directChatLines = await directChatStatsLines().catch(() => [] as string[]);
+  const pollPushLines = await pollPushStatsLines().catch(() => [] as string[]);
   const duelLines = await duelStatsLines().catch(() => [] as string[]);
   const gateLines = await waveGateStatsLines().catch(() => [] as string[]);
 
@@ -211,6 +213,7 @@ export async function buildStats(): Promise<string> {
     ...(gateLines.length ? [``, ...gateLines] : []),
     ...(helloLines.length ? [``, ...helloLines] : []),
     ...(directChatLines.length ? [``, ...directChatLines] : []),
+    ...(pollPushLines.length ? [``, ...pollPushLines] : []),
     ...(duelLines.length ? [``, ...duelLines] : []),
     ``,
     `🗓 <b>Сходки</b>`,

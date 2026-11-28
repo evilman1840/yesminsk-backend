@@ -2,6 +2,9 @@ import { Express, Response } from 'express';
 import { Schema, model, Types } from 'mongoose';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import { isAdmin } from './news';
+import { User } from './models/User';
+import { Reaction } from './models/Reaction';
+import { DirectMessage } from './models/DirectMessage';
 import { escapeHtml } from './utils/telegramNotify';
 import { sendWithButtons } from './wishes';
 import { csvCell } from './utils/csv';
@@ -56,6 +59,21 @@ const PollVote = model(
       options: { type: [String], default: [] }, // ключи вариантов и/или 'custom'
       option: { type: String, default: '' },    // старые голоса: один вариант
       custom: { type: String, default: '', maxlength: 200 }
+    },
+    { timestamps: true }
+  ).index({ pollId: 1, telegramId: 1 }, { unique: true })
+);
+
+// Лог точечной рассылки по выбранным вариантам опроса + база для отслеживания дальнейших действий (/polltrack и /stats)
+const PollPushLog = model(
+  'PollPushLog',
+  new Schema(
+    {
+      pollId: { type: Schema.Types.ObjectId, required: true, index: true },
+      telegramId: { type: Number, required: true },
+      optionKeys: { type: [String], default: [] },
+      sentAt: { type: Date, required: true },
+      delivered: { type: Boolean, default: false }
     },
     { timestamps: true }
   ).index({ pollId: 1, telegramId: 1 }, { unique: true })
@@ -168,12 +186,180 @@ async function sendCsv(chatId: number, poll: any) {
   await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`, { method: 'POST', body: form }).catch(() => {});
 }
 
+export async function pollPushStatsLines(): Promise<string[]> {
+  const latestLog: any = await PollPushLog.findOne({ delivered: true }).sort({ sentAt: -1 }).lean();
+  if (!latestLog) return [];
+  const pollId = latestLog.pollId;
+  const logs: any[] = await PollPushLog.find({ pollId, delivered: true }, { telegramId: 1, sentAt: 1, optionKeys: 1 }).lean();
+  if (!logs.length) return [];
+
+  const sentAtByUser = new Map<number, number>(logs.map((l) => [l.telegramId, new Date(l.sentAt).getTime()]));
+  const ids = [...sentAtByUser.keys()];
+  const minSentAt = new Date(Math.min(...sentAtByUser.values()));
+
+  const [poll, users, reactions, messages] = await Promise.all([
+    Poll.findById(pollId, { question: 1 }).lean() as Promise<any>,
+    User.find(
+      { telegramId: { $in: ids } },
+      { telegramId: 1, lastActiveAt: 1, openToSerious: 1, openToCasual: 1, casualPace: 1 }
+    ).lean(),
+    Reaction.find(
+      {
+        fromTelegramId: { $in: ids },
+        type: 'like',
+        $or: [{ likedAt: { $gte: minSentAt } }, { directChatOpenedAt: { $gte: minSentAt } }]
+      },
+      { fromTelegramId: 1, likedAt: 1, directChatOpenedAt: 1 }
+    ).lean(),
+    DirectMessage.find(
+      { senderId: { $in: ids }, createdAt: { $gte: minSentAt } },
+      { senderId: 1, createdAt: 1 }
+    ).lean()
+  ]);
+
+  let returned = 0;
+  let serious = 0;
+  let casual = 0;
+  const paces = { chat_first: 0, coffee_first: 0, direct: 0 };
+  for (const u of users) {
+    const since = sentAtByUser.get(u.telegramId) || 0;
+    if (u.lastActiveAt && new Date(u.lastActiveAt).getTime() >= since) returned++;
+    if (u.openToSerious) serious++;
+    if (u.openToCasual) {
+      casual++;
+      const p = (u.casualPace || 'chat_first') as keyof typeof paces;
+      if (p in paces) paces[p]++;
+    }
+  }
+
+  const wavedSet = new Set<number>();
+  const openedChatSet = new Set<number>();
+  for (const r of reactions) {
+    const since = sentAtByUser.get(r.fromTelegramId) || 0;
+    if (r.likedAt && new Date(r.likedAt).getTime() >= since) wavedSet.add(r.fromTelegramId);
+    if (r.directChatOpenedAt && new Date(r.directChatOpenedAt).getTime() >= since) openedChatSet.add(r.fromTelegramId);
+  }
+
+  const wroteChatSet = new Set<number>();
+  for (const m of messages) {
+    const since = sentAtByUser.get(m.senderId) || 0;
+    if (m.createdAt && new Date(m.createdAt).getTime() >= since) wroteChatSet.add(m.senderId);
+  }
+
+  const total = ids.length;
+  const pct = (n: number) => (total ? `${Math.round((n * 100) / total)}%` : '0%');
+  const title = poll?.question ? ` (${escapeHtml(String(poll.question).slice(0, 40))})` : '';
+  const paceLine = casual ? ` (💬 ${paces.chat_first} · ☕ ${paces.coffee_first} · ⚡ ${paces.direct})` : '';
+
+  return [
+    `📣 <b>Когорта пуша по опросу</b>${title}`,
+    `Получили пуш: ${total} · зашли после пуша: ${returned} (${pct(returned)})`,
+    `Включили ❤️ Отношения: ${serious} · 🔥 Близость: ${casual}${paceLine}`,
+    `После пуша: 👋 поставили ${wavedSet.size} · открыли чат ${openedChatSet.size} · написали в чат ${wroteChatSet.size}`
+  ];
+}
+
 export async function handlePollCommand(message: any): Promise<boolean> {
   const text: string = (message.text || '').trim();
-  const cmd = text.match(/^\/(poll|pollend|pollcsv)(@\w+)?(?=\s|$)/i)?.[1]?.toLowerCase();
+  const cmd = text.match(/^\/(poll|pollend|pollcsv|pollpush|polltrack)(@\w+)?(?=\s|$)/i)?.[1]?.toLowerCase();
   if (!cmd) return false;
   const chatId = message.chat.id;
   if (!isAdmin(message.from?.id)) return true;
+
+  if (cmd === 'polltrack') {
+    const lines = await pollPushStatsLines();
+    await sendWithButtons(chatId, lines.length ? lines.join('\n') : 'По опросам ещё не отправляли пуш (/pollpush).', []);
+    return true;
+  }
+
+  if (cmd === 'pollpush') {
+    const latestPoll: any = await Poll.findOne().sort({ createdAt: -1 }).lean();
+    if (!latestPoll) {
+      await sendWithButtons(chatId, 'Опросов в базе пока нет.', []);
+      return true;
+    }
+    const rawArgs = text.replace(/^\/pollpush(@\w+)?/i, '').trim();
+    const pipeIdx = rawArgs.indexOf('|');
+    const keysRaw = (pipeIdx === -1 ? rawArgs : rawArgs.slice(0, pipeIdx)).trim();
+    const pushBody = pipeIdx === -1 ? '' : rawArgs.slice(pipeIdx + 1).trim();
+
+    const validKeys = new Set<string>(latestPoll.options.map((o: PollOption) => o.key));
+    const chosenKeys = keysRaw
+      ? keysRaw.split(/[\s,]+/).map((s) => s.trim().toLowerCase()).filter((k) => validKeys.has(k))
+      : [];
+
+    if (!chosenKeys.length) {
+      const { map } = await counts(latestPoll._id);
+      const list = latestPoll.options
+        .map((o: PollOption) => `<code>${o.key}</code> — ${escapeHtml(`${o.emoji} ${o.label}`.trim())} (<b>${map.get(o.key) || 0}</b>)`)
+        .join('\n');
+      await sendWithButtons(
+        chatId,
+        `📣 <b>Пуш по последнему опросу</b>\n«${escapeHtml(latestPoll.question)}»\n\nВарианты:\n${list}\n\n` +
+          `Сначала проверь число получателей:\n<code>/pollpush o1,o2</code>\n\n` +
+          `Чтобы реально отправить:\n<code>/pollpush o1,o2 | Текст сообщения</code>`,
+        []
+      );
+      return true;
+    }
+
+    const votes = await PollVote.find(
+      {
+        pollId: latestPoll._id,
+        $or: [{ options: { $in: chosenKeys } }, { option: { $in: chosenKeys } }]
+      },
+      { telegramId: 1 }
+    ).lean();
+    const voterIds = [...new Set(votes.map((v: any) => v.telegramId))];
+    const alreadySent = new Set<number>(
+      (await PollPushLog.find({ pollId: latestPoll._id, telegramId: { $in: voterIds } }, { telegramId: 1 }).lean()).map((l: any) => l.telegramId)
+    );
+    const pendingIds = voterIds.filter((id) => !alreadySent.has(id));
+    const reachable = await User.find(
+      { telegramId: { $in: pendingIds }, isBanned: { $ne: true }, canMessage: { $ne: false } },
+      { telegramId: 1 }
+    ).lean();
+
+    if (!pushBody) {
+      await sendWithButtons(
+        chatId,
+        `📣 <b>Предпросмотр /pollpush</b>\nОпрос: «${escapeHtml(latestPoll.question)}»\nВарианты: <code>${chosenKeys.join(', ')}</code>\n\n` +
+          `Проголосовало: <b>${voterIds.length}</b>\nУже получали пуш: ${alreadySent.size}\nДоступно для бота сейчас: <b>${reachable.length}</b>\n\n` +
+          `Для отправки пришли:\n<code>/pollpush ${chosenKeys.join(',')} | Текст пуша</code>`,
+        []
+      );
+      return true;
+    }
+
+    await sendWithButtons(chatId, `⏳ Запускаю рассылку для ${reachable.length} чел. по вариантам ${chosenKeys.join(', ')}…`, []);
+    let deliveredCount = 0;
+    let failedCount = 0;
+    const html = escapeHtml(pushBody);
+    for (const u of reachable) {
+      const sent = await sendWithButtons(u.telegramId, html, [
+        [{ text: '⚙️ Открыть «Комфортно»', path: '?tab=profile' }],
+        [{ text: '💬 Открыть «На связи»', path: '?tab=feed' }]
+      ]).catch(() => false);
+      const ok = Boolean(sent);
+      if (ok) deliveredCount++;
+      else failedCount++;
+      await PollPushLog.updateOne(
+        { pollId: latestPoll._id, telegramId: u.telegramId },
+        { $setOnInsert: { pollId: latestPoll._id, telegramId: u.telegramId, optionKeys: chosenKeys, sentAt: new Date(), delivered: ok } },
+        { upsert: true }
+      ).catch(() => {});
+      await new Promise((r) => setTimeout(r, 60));
+    }
+
+    await sendWithButtons(
+      chatId,
+      `✅ <b>Рассылка по опросу завершена</b>\nДоставлено: <b>${deliveredCount}</b> · не дошло: ${failedCount}\n\n` +
+        `Дальнейшие действия этих людей теперь отслеживаются по команде /polltrack и в /stats.`,
+      []
+    );
+    return true;
+  }
+
   const current: any = await Poll.findOne({ active: true }).sort({ createdAt: -1 }).lean();
 
   if (cmd === 'pollend' || cmd === 'pollcsv') {
