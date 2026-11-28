@@ -73,7 +73,7 @@ export async function joinEvent(
 
   const isHost = isEventCreator(event, tg.id);
   const hostId = event.creator.telegramId;
-  if (!isHost && (user?.blockedUsers?.includes(hostId) ||
+  if (!isHost && hostId > 0 && (user?.blockedUsers?.includes(hostId) ||
     await User.exists({ telegramId: hostId, $or: [{ blockedUsers: tg.id }, { isBanned: true }] }))) {
     return { ok: false, status: 403, error: 'Запись на эту сходку недоступна' };
   }
@@ -145,8 +145,8 @@ export async function joinEvent(
     captureAnalytics(tg.id,(event.byRequest || approvalRequired)?'gulyai_meetup_join_requested':'gulyai_meetup_joined', origin);
   }
 
-  // Организатору — кто идёт и с кем
-  if (changed && !isEventCreator(event, tg.id)) {
+  // Организатору — кто идёт и с кем (у внешних незабранных находок creator.telegramId = 0)
+  if (changed && !isEventCreator(event, tg.id) && event.creator.telegramId > 0) {
     const name = escapeHtml(user?.firstName || tg.first_name || '');
     const note = companyNote(guests, withKids);
     sendTelegramMessage(

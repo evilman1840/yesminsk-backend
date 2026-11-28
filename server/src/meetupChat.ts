@@ -69,8 +69,12 @@ async function chatContext(req: AuthenticatedRequest, kind: ChatKind) {
   const expiresAt = meetupChatExpiresAt(event);
   if (expiresAt.getTime() <= Date.now()) throw new ChatError(410, 'Срок переписки истёк');
   const isHost = event.creator.telegramId === myId;
-  const host = isHost ? me : await User.findOne({ telegramId: event.creator.telegramId }, userFields).lean();
-  if (!enabled(host) || blocked(me, host)) throw new ChatError(403, 'Переписка по этой сходке недоступна');
+  const unclaimedExternal = event.creator.telegramId === 0 && Boolean(event.external && !event.external.claimedBy);
+  if (unclaimedExternal && kind === 'question') {
+    throw new ChatError(403, 'Автор этой встречи пока в Threads - открой оригинал поста');
+  }
+  const host = unclaimedExternal ? null : isHost ? me : await User.findOne({ telegramId: event.creator.telegramId }, userFields).lean();
+  if (!unclaimedExternal && (!enabled(host) || blocked(me, host!))) throw new ChatError(403, 'Переписка по этой сходке недоступна');
   if (kind === 'group' && !canUseGroupChat(event, myId)) {
     throw new ChatError(403, 'Чат откроется, когда твоя запись на сходку будет подтверждена');
   }
@@ -80,6 +84,7 @@ async function chatContext(req: AuthenticatedRequest, kind: ChatKind) {
 type ChatContext = Awaited<ReturnType<typeof chatContext>>;
 
 async function questionPeer(ctx: ChatContext, askerId: number) {
+  if (!ctx.host) throw new ChatError(403, 'Автор этой встречи пока в Threads - открой оригинал поста');
   if (!Number.isSafeInteger(askerId) || askerId <= 0 || askerId === ctx.host.telegramId ||
       (!ctx.isHost && askerId !== ctx.me.telegramId)) {
     throw new ChatError(404, 'Переписка не найдена');
@@ -136,6 +141,7 @@ function replyError(res: Response, error: unknown) {
 }
 
 async function hostInbox(ctx: ChatContext) {
+  if (!ctx.host) return [];
   const rows = await MeetupMessage.aggregate<{ _id: number; at: Date }>([
     { $match: { eventId: ctx.event._id, hostId: ctx.host.telegramId, expiresAt: { $gt: new Date() } } },
     { $group: { _id: '$askerId', at: { $max: '$createdAt' } } },
@@ -173,7 +179,7 @@ export function setupMeetupChatRoutes(app: Express) {
         return res.json({ title, expiresAt: ctx.expiresAt, chatPaused, threads: await hostInbox(ctx) });
       }
       const peer = kind === 'question' ? await questionPeer(ctx, askerId) : null;
-      const hostId = peer ? ctx.host.telegramId : 0;
+      const hostId = peer && ctx.host ? ctx.host.telegramId : 0;
       const before = req.query.before;
       if (before !== undefined && (typeof before !== 'string' || !/^[\da-f]{24}$/i.test(before))) {
         throw new ChatError(400, 'Не получилось загрузить предыдущие сообщения');
@@ -234,7 +240,7 @@ export function setupMeetupChatRoutes(app: Express) {
       }
       const askerId = kind === 'group' ? 0 : Number(req.body?.askerId ?? ctx.me.telegramId);
       const peer = kind === 'question' ? await questionPeer(ctx, askerId) : null;
-      const hostId = peer ? ctx.host.telegramId : 0;
+      const hostId = peer && ctx.host ? ctx.host.telegramId : 0;
       const thread = { eventId: ctx.event._id as Types.ObjectId, hostId, askerId };
       const now = new Date();
       const existing = peer ? await MeetupMessage.exists({ ...thread, expiresAt: { $gt: now } }) : null;
@@ -313,7 +319,7 @@ export function setupMeetupChatRoutes(app: Express) {
       }
       const askerId = kind === 'group' ? 0 : Number(req.body?.askerId ?? ctx.me.telegramId);
       const peer = kind === 'question' ? await questionPeer(ctx, askerId) : null;
-      const hostId = peer ? ctx.host.telegramId : 0;
+      const hostId = peer && ctx.host ? ctx.host.telegramId : 0;
       const msg = await MeetupMessage.findOne({
         _id: new Types.ObjectId(messageId),
         eventId: ctx.event._id,

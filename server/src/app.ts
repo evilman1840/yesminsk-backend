@@ -64,6 +64,7 @@ import { setupAccountRoutes } from './account';
 import { setupPlaceSuggestionRoutes, backfillPlaceAuthors } from './placeSuggestions';
 import { runPlaceImports } from './placesImport';
 import { setupAfishaRoutes, startAfishaLoop } from './afisha';
+import { setupThreadsCuratorRoutes } from './threadsCurator';
 import { setupGameRoutes, startGameStatsLoop } from './games';
 import { setupGameScoreRoutes } from './gameScores';
 import { setupSeaRoutes, startSeaStatsLoop } from './sea';
@@ -1294,6 +1295,19 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
   return {
     id: ev._id.toString(),
     _id: ev._id.toString(),
+    ...(ev.external
+      ? {
+          external: {
+            platform: ev.external.platform,
+            url: ev.external.url,
+            authorName: ev.external.authorName,
+            ...(ev.external.authorHandle ? { authorHandle: ev.external.authorHandle } : {}),
+            ...(ev.external.priceNote ? { priceNote: ev.external.priceNote } : {}),
+            claimed: Boolean(ev.external.claimedBy),
+            myClaimPending: Boolean(ev.external.claimRequests?.some((r) => r.telegramId === viewerId))
+          }
+        }
+      : {}),
     likesCount: ev.likedBy?.length || 0,
     isLiked: Boolean(ev.likedBy?.includes(viewerId)),
     title: ev.title,
@@ -1354,9 +1368,9 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
     // Организатору после сходки: ответил ли «Все, кто записался, пришли?»
     ...(isEventCreator(ev, viewerId) && ev.attendanceAnswer ? { attendanceAnswer: ev.attendanceAnswer } : {}),
     // «⭐ От ГУЛЯЙ!» — сходки автора проекта
-    isOfficial: isAdmin(ev.creator.telegramId),
+    isOfficial: Boolean(ev.creator.telegramId && isAdmin(ev.creator.telegramId)),
     // Организатор: сколько сходок провёл, «🔥 Активный организатор», «🍩 Кормит Печку» (hostStats.ts)
-    ...(hostInfo(ev.creator.telegramId) ? { host: hostInfo(ev.creator.telegramId) } : {})
+    ...(ev.creator.telegramId && hostInfo(ev.creator.telegramId) ? { host: hostInfo(ev.creator.telegramId) } : {})
   };
 };
 
@@ -1717,6 +1731,7 @@ app.post('/api/events/:id/message', telegramAuthMiddleware as any, async (req: A
 });
 
 setupEventLikeRoutes(app, formatEvent, isAdmin);
+setupThreadsCuratorRoutes(app, formatEvent);
 
 app.post('/api/events/:id/hide', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {

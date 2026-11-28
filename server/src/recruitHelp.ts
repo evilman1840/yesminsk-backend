@@ -39,6 +39,7 @@ const isDaytime = (now = Date.now()) => {
 
 // Сходке нужна помощь: впереди, начнётся меньше чем через 48 часов, идут меньше трёх и есть места
 export function needsRecruitHelp(ev: IEvent, now = Date.now()) {
+  if (!ev.creator?.telegramId) return false;
   const t = new Date(ev.dateTime).getTime();
   return Boolean(ev.isActive) && t > now && t - now <= RECRUIT_HOURS * HOUR && seatsTaken(ev) < RECRUIT_MIN && freeSeats(ev) > 0;
 }

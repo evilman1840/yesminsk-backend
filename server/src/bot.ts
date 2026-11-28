@@ -24,6 +24,7 @@ import { handleCoffeeCommand } from './coffee';
 import { handleIdeasCommand } from './ideas';
 import { handleDigestCommand } from './digest';
 import { handleAfishaCommand, handleAfishaCallback, handleAfishaEditMessage } from './afisha';
+import { handleThreadsCommand, handleThreadsCallback, handleThreadsEditMessage, handleThreadsLinkMessage } from './threadsCurator';
 import { handleInviteStart } from './invites';
 import { markCanMessage } from './utils/telegramNotify';
 import { handlePlaceMessage, handlePlaceCallback } from './places';
@@ -68,7 +69,7 @@ export function setupTelegramBot(app: Express) {
     if (req.body?.callback_query) {
       const q = req.body.callback_query;
       if (q.from?.is_bot === true) return;
-      (async () => (await handleBuddyCallback(q)) || (await handleRecruitCallback(q)) || (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handleNudgeCallback(q)) || (await handleProposalCallback(q)) || (await handleSuggestionCallback(q)) || (await handleAfishaCallback(q)) || (await handlePhotoModerationCallback(q, banUser)) || (await handlePlaceCallback(q)) || (await handleHiddenCallback(q)) || (await handleModerationCallback(q)) || (await handleGameCallback(q)))().catch((err) =>
+      (async () => (await handleBuddyCallback(q)) || (await handleRecruitCallback(q)) || (await handleFeedbackCallback(q)) || (await handleCsvCallback(q)) || (await handleTemplatesCallback(q)) || (await handleWishCallback(q)) || (await handleNudgeCallback(q)) || (await handleProposalCallback(q)) || (await handleSuggestionCallback(q)) || (await handleThreadsCallback(q)) || (await handleAfishaCallback(q)) || (await handlePhotoModerationCallback(q, banUser)) || (await handlePlaceCallback(q)) || (await handleHiddenCallback(q)) || (await handleModerationCallback(q)) || (await handleGameCallback(q)))().catch((err) =>
         console.warn('⚠️ Ошибка обработки кнопки:', err?.message || err)
       );
       return;
@@ -108,6 +109,7 @@ async function handleMessage(message: any, chatId: number) {
   if (await handleCsvMessage(message)) return;
   // Добавление мест (/place …) — раньше новостей, чтобы фото места не попали в новости
   if (await handleSuggestionEditMessage(message)) return;
+  if (await handleThreadsEditMessage(message)) return;
   if (await handleAfishaEditMessage(message)) return;
   if (await handlePlaceMessage(message)) return;
   // Новости проекта (/news, /delnews, /tip, /deltip, /myid) — в том числе фото и альбомы
@@ -122,6 +124,7 @@ async function handleMessage(message: any, chatId: number) {
   if (await handleCoffeeCommand(message)) return;
   if (await handleIdeasCommand(message)) return;
   if (await handleDigestCommand(message)) return;
+  if (await handleThreadsCommand(message)) return;
   if (await handleAfishaCommand(message)) return;
   if (await handleFeedbackCommand(message)) return;
   if (await handleTemplatesCommand(message)) return;
@@ -129,6 +132,8 @@ async function handleMessage(message: any, chatId: number) {
   if (await handleWishesCommand(message)) return;
   // Ссылка на место от участника группы «Хочу сходить», которую бот спросил про место
   if (await handleGroupPlaceReply(message)) return;
+  // Ссылки из Threads от администратора — разбор через Claude Haiku в карточку сходки
+  if (await handleThreadsLinkMessage(message)) return;
 
   if (typeof message.text !== 'string') return;
   const text = message.text.trim();
@@ -221,6 +226,8 @@ async function registerBotCommands(botToken: string) {
 
   const adminCommands = [
     { command: 'stats', description: 'Статистика приложения' },
+    { command: 'threads', description: 'Находки и авторы из Threads' },
+    { command: 'afisha', description: 'Афиша из Telegram-каналов' },
     { command: 'ideas', description: 'Что вписывают в «Своя идея»' },
     { command: 'digest', description: 'Моя подборка сейчас: /digest daily|weekend|weekly' },
     { command: 'feedback', description: 'Проверить «Как прошло?» на своей сходке' },

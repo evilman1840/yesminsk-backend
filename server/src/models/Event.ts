@@ -48,7 +48,27 @@ export interface IEventCancellation {
 export type EventTag = 'kids' | 'couples' | 'dogs' | 'empaths';
 export const EVENT_TAGS: EventTag[] = ['kids', 'couples', 'dogs', 'empaths'];
 
+export interface IEventClaimRequest {
+  telegramId: number;
+  name: string;
+  username?: string;
+  handle?: string;
+  requestedAt: Date;
+}
+
+export interface IEventExternal {
+  platform: 'threads' | 'telegram' | 'web';
+  url: string;
+  authorName: string;
+  authorHandle?: string;
+  priceNote?: string;
+  claimedBy?: number;
+  claimedAt?: Date;
+  claimRequests?: IEventClaimRequest[];
+}
+
 export interface IEvent extends Document {
+  external?: IEventExternal;
   likedBy?: number[];
   title: string;
   description: string;
@@ -112,6 +132,34 @@ export interface IEvent extends Document {
 
 const EventSchema = new Schema<IEvent>(
   {
+    external: {
+      type: new Schema<IEventExternal>(
+        {
+          platform: { type: String, enum: ['threads', 'telegram', 'web'], required: true },
+          url: { type: String, required: true },
+          authorName: { type: String, required: true, maxlength: 120 },
+          authorHandle: { type: String, maxlength: 80 },
+          priceNote: { type: String, maxlength: 100 },
+          claimedBy: { type: Number },
+          claimedAt: { type: Date },
+          claimRequests: {
+            type: [
+              {
+                telegramId: { type: Number, required: true },
+                name: { type: String, default: '' },
+                username: { type: String },
+                handle: { type: String, maxlength: 80 },
+                requestedAt: { type: Date, default: Date.now },
+                _id: false
+              }
+            ],
+            default: undefined
+          }
+        },
+        { _id: false }
+      ),
+      default: undefined
+    },
     likedBy: { type: [Number], default: [], index: true },
     title: { type: String, required: true, trim: true, maxlength: 100 },
     description: { type: String, required: true, trim: true, maxlength: 600 },
