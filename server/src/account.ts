@@ -46,6 +46,7 @@ export function setupAccountRoutes(app: Express) {
       // Из чужих сходок — выписываем (и убираем мои отзывы «Как прошло?»)
       await Event.updateMany({ 'participants.telegramId': myId }, { $pull: { participants: { telegramId: myId } } });
       await Event.updateMany({ 'feedback.telegramId': myId }, { $pull: { feedback: { telegramId: myId } } });
+      await Event.updateMany({ likedBy: myId }, { $pull: { likedBy: myId } });
 
       // Короткая запись о прежней анкете: чтобы удаление не обнуляло жалобы и счётчик 👋. Сбой здесь удалению не мешает
       try {

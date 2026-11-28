@@ -49,6 +49,7 @@ export type EventTag = 'kids' | 'couples' | 'dogs' | 'empaths';
 export const EVENT_TAGS: EventTag[] = ['kids', 'couples', 'dogs', 'empaths'];
 
 export interface IEvent extends Document {
+  likedBy?: number[];
   title: string;
   description: string;
   category: EventCategory;
@@ -111,6 +112,7 @@ export interface IEvent extends Document {
 
 const EventSchema = new Schema<IEvent>(
   {
+    likedBy: { type: [Number], default: [], index: true },
     title: { type: String, required: true, trim: true, maxlength: 100 },
     description: { type: String, required: true, trim: true, maxlength: 600 },
     category: {

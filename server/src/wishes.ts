@@ -596,6 +596,8 @@ export function setupWishRoutes(app: Express) {
       );
       res.json({
         mine: await Promise.all(mine.map(formatWish)),
+        // Общая цифра хотелок, а не уникальных людей. Истёкшие и выполненные не считаем.
+        totalActive: await Wish.countDocuments({ status: { $in: ['active', 'matched'] }, windowEnd: { $gt: new Date() } }),
         // Без списка людей: только сколько и есть ли среди них я
         summary: summary
           .map(({ userIds, ...s }) => ({ ...s, count: userIds.filter((id) => id === me || seen.has(id)).length, includesMe: userIds.includes(me) }))

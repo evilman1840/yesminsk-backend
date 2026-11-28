@@ -1,3 +1,4 @@
+import { setupEventLikeRoutes } from './eventLikes';
 import { setupAnalyticsRoutes, analyticsConfigured, analyticsAvailableFor, invalidateAnalyticsUser, captureAnalytics } from './analytics';
 import { questionnaireCount } from './profile/questionnaire';
 import { cleanQuestionnaire, publicQuestionnaire } from './profile/validation';
@@ -1293,6 +1294,8 @@ const formatEvent = (ev: IEvent, viewerId: number) => {
   return {
     id: ev._id.toString(),
     _id: ev._id.toString(),
+    likesCount: ev.likedBy?.length || 0,
+    isLiked: Boolean(ev.likedBy?.includes(viewerId)),
     title: ev.title,
     description: ev.description,
     category: ev.category,
@@ -1712,6 +1715,8 @@ app.post('/api/events/:id/message', telegramAuthMiddleware as any, async (req: A
     res.status(500).json({ error: EVENT_MESSAGE_TEXTS.failed });
   }
 });
+
+setupEventLikeRoutes(app, formatEvent, isAdmin);
 
 app.post('/api/events/:id/hide', telegramAuthMiddleware as any, async (req: AuthenticatedRequest, res: Response) => {
   try {
