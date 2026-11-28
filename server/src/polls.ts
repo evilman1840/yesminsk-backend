@@ -79,6 +79,27 @@ const PollPushLog = model(
   ).index({ pollId: 1, telegramId: 1 }, { unique: true })
 );
 
+// Лог массового анонса (например, /chatpush): один раз на человека по ключу кампании
+const CampaignPushLog = model(
+  'CampaignPushLog',
+  new Schema(
+    {
+      campaign: { type: String, required: true, index: true },
+      telegramId: { type: Number, required: true },
+      sentAt: { type: Date, required: true },
+      delivered: { type: Boolean, default: false }
+    },
+    { timestamps: true }
+  ).index({ campaign: 1, telegramId: 1 }, { unique: true })
+);
+
+const CHAT_COMFORT_CAMPAIGN = 'chat_comfort_2026_11';
+const CHAT_COMFORT_PUSH_HTML =
+  `Привет! У нас в «ГУЛЯЙ!» появился <b>личный чат прямо внутри приложения</b> 💬\n\n` +
+  `Теперь после взаимного 👋 можно спокойно переписываться здесь, не светя свой Telegram. Если человек не подходит, его можно скрыть одним нажатием.\n\n` +
+  `А ещё в анкете (вкладка «Я» → «Комфортно») появились тайные галочки для тех, кто ищет серьёзные отношения или близость. Их видят <b>только те, кто выбрал то же самое</b> - для всех остальных всё остаётся чисто по-дружески.\n\n` +
+  `Загляни проверить свою анкету!`;
+
 const CUSTOM = 'custom';
 // «кнопка: … -> игры»: куда ведёт кнопка после голоса
 const ACTION_TABS: Record<string, string> = { игры: 'games', люди: 'feed', сходки: 'events', места: 'places', карта: 'main' };
@@ -261,10 +282,77 @@ export async function pollPushStatsLines(): Promise<string[]> {
 
 export async function handlePollCommand(message: any): Promise<boolean> {
   const text: string = (message.text || '').trim();
-  const cmd = text.match(/^\/(poll|pollend|pollcsv|pollpush|polltrack)(@\w+)?(?=\s|$)/i)?.[1]?.toLowerCase();
+  const cmd = text.match(/^\/(poll|pollend|pollcsv|pollpush|polltrack|chatpush)(@\w+)?(?=\s|$)/i)?.[1]?.toLowerCase();
   if (!cmd) return false;
   const chatId = message.chat.id;
   if (!isAdmin(message.from?.id)) return true;
+
+  if (cmd === 'chatpush') {
+    const arg = text.replace(/^\/chatpush(@\w+)?/i, '').trim().toLowerCase();
+    const [pollPushedIds, alreadyCampaignIds, alreadySetCount] = await Promise.all([
+      PollPushLog.distinct('telegramId', {}),
+      CampaignPushLog.distinct('telegramId', { campaign: CHAT_COMFORT_CAMPAIGN }),
+      User.countDocuments({
+        hasAgreedToRules: true,
+        isBanned: { $ne: true },
+        $or: [{ openToSerious: true }, { openToCasual: true }]
+      })
+    ]);
+    const excludeIds = [...new Set([...(pollPushedIds as number[]), ...(alreadyCampaignIds as number[])])];
+    const recipients = await User.find(
+      {
+        hasAgreedToRules: true,
+        isBanned: { $ne: true },
+        canMessage: { $ne: false },
+        openToSerious: { $ne: true },
+        openToCasual: { $ne: true },
+        ...(excludeIds.length ? { telegramId: { $nin: excludeIds } } : {})
+      },
+      { telegramId: 1 }
+    ).lean();
+
+    if (arg !== 'send') {
+      await sendWithButtons(
+        chatId,
+        `📣 <b>Предпросмотр /chatpush (анонс чата и «Комфортно»)</b>\n\n` +
+          `Получат пуш: <b>${recipients.length}</b> чел.\n` +
+          `Исключено:\n` +
+          `• уже получили пуш по опросу: ${pollPushedIds.length}\n` +
+          `• уже включили галочки в «Комфортно»: ${alreadySetCount}\n` +
+          `• уже получили этот пуш ранее: ${alreadyCampaignIds.length}\n\n` +
+          `<b>Текст сообщения:</b>\n${CHAT_COMFORT_PUSH_HTML}\n\n` +
+          `Чтобы реально запустить рассылку, отправь:\n<code>/chatpush send</code>`,
+        []
+      );
+      return true;
+    }
+
+    await sendWithButtons(chatId, `⏳ Запускаю рассылку /chatpush для ${recipients.length} чел.…`, []);
+    let deliveredCount = 0;
+    let failedCount = 0;
+    for (const u of recipients) {
+      const sent = await sendWithButtons(u.telegramId, CHAT_COMFORT_PUSH_HTML, [
+        [{ text: '⚙️ Проверить анкету', path: '?tab=profile&fromPush=1' }],
+        [{ text: '💬 Открыть «На связи»', path: '?tab=feed&fromPush=1' }]
+      ]).catch(() => false);
+      const ok = Boolean(sent);
+      if (ok) deliveredCount++;
+      else failedCount++;
+      await CampaignPushLog.updateOne(
+        { campaign: CHAT_COMFORT_CAMPAIGN, telegramId: u.telegramId },
+        { $setOnInsert: { campaign: CHAT_COMFORT_CAMPAIGN, telegramId: u.telegramId, sentAt: new Date(), delivered: ok } },
+        { upsert: true }
+      ).catch(() => {});
+      await new Promise((r) => setTimeout(r, 60));
+    }
+
+    await sendWithButtons(
+      chatId,
+      `✅ <b>Рассылка /chatpush завершена</b>\nДоставлено: <b>${deliveredCount}</b> · не дошло: ${failedCount}`,
+      []
+    );
+    return true;
+  }
 
   if (cmd === 'polltrack') {
     const lines = await pollPushStatsLines();
@@ -337,8 +425,8 @@ export async function handlePollCommand(message: any): Promise<boolean> {
     const html = escapeHtml(pushBody);
     for (const u of reachable) {
       const sent = await sendWithButtons(u.telegramId, html, [
-        [{ text: '⚙️ Открыть «Комфортно»', path: '?tab=profile' }],
-        [{ text: '💬 Открыть «На связи»', path: '?tab=feed' }]
+        [{ text: '⚙️ Открыть «Комфортно»', path: '?tab=profile&fromPush=1' }],
+        [{ text: '💬 Открыть «На связи»', path: '?tab=feed&fromPush=1' }]
       ]).catch(() => false);
       const ok = Boolean(sent);
       if (ok) deliveredCount++;
