@@ -20,7 +20,8 @@ export const DIRECT_CHAT_TTL_DAYS = 7;
 const RETENTION_MS = DIRECT_CHAT_TTL_DAYS * DAY;
 const PAGE_SIZE = 40;
 const NOTIFY_COOLDOWN_MS = 30 * MINUTE;
-const NOTIFY_MIN_GAP_MS = 2 * MINUTE;
+const NOTIFY_MIN_GAP_MS = 30_000;
+const PEER_ACTIVE_IN_CHAT_MS = 20_000;
 
 export const DIRECT_CHAT_REACTIONS = ['👍', '❤️', '😂', '🔥', '🙏'] as const;
 const allowedReactions = new Set<string>(DIRECT_CHAT_REACTIONS);
@@ -157,13 +158,13 @@ export function setupDirectChatRoutes(app: Express) {
           hiddenByReports: { $ne: true },
           blockedUsers: { $ne: myId }
         },
-        { telegramId: 1 }
+        { telegramId: 1, firstName: 1, avatarUrl: 1, photosHidden: 1 }
       ).lean();
-      const visiblePeers = new Set(peers.map((p) => p.telegramId));
+      const peerById = new Map(peers.map((p) => [p.telegramId, p]));
       const readAtByPeer = new Map<number, number>();
       const pairKeys: string[] = [];
       for (const r of matchedReactions) {
-        if (!visiblePeers.has(r.toTelegramId)) continue;
+        if (!peerById.has(r.toTelegramId)) continue;
         readAtByPeer.set(r.toTelegramId, r.directChatReadAt ? r.directChatReadAt.getTime() : 0);
         pairKeys.push(directPairKey(myId, r.toTelegramId));
       }
@@ -192,18 +193,31 @@ export function setupDirectChatRoutes(app: Express) {
         }
       }
 
-      const threads: Record<string, { unreadCount: number; lastMessageAt: string; lastMessagePreview: string; lastMessageMine: boolean }> = {};
+      const threads: Record<
+        string,
+        {
+          unreadCount: number;
+          lastMessageAt: string;
+          lastMessagePreview: string;
+          lastMessageMine: boolean;
+          peerName: string;
+          peerAvatarUrl: string;
+        }
+      > = {};
       let totalUnread = 0;
       for (const row of latestRows) {
         const [a, b] = row._id.split(':').map(Number);
         const peerId = a === myId ? b : a;
+        const peerDoc = peerById.get(peerId);
         const unreadCount = unreadByPeer.get(peerId) || 0;
         totalUnread += unreadCount;
         threads[String(peerId)] = {
           unreadCount,
           lastMessageAt: row.lastMessageAt.toISOString(),
           lastMessagePreview: row.text.slice(0, 80),
-          lastMessageMine: row.senderId === myId
+          lastMessageMine: row.senderId === myId,
+          peerName: peerDoc?.firstName || 'Собеседник',
+          peerAvatarUrl: peerDoc ? userAvatar(peerDoc) : ''
         };
       }
 
@@ -409,36 +423,40 @@ export function setupDirectChatRoutes(app: Express) {
           }
         }
 
-        // Умное уведомление в Telegram-боте без текста сообщения и с анти-спам троттлингом
+        // Умное уведомление в Telegram-боте без текста сообщения и с анти-спам троттлингом.
+        // Если собеседник прямо сейчас в открытом чате с нами (читал < 20 сек назад), бот не спамит.
         if (peer.canMessage !== false) {
           const peerReadAt = peerReaction?.directChatReadAt?.getTime() || 0;
           const lastNotifiedAt = myReaction?.directChatNotifiedAt?.getTime() || 0;
-          const hadUnreadBefore = await DirectMessage.exists({
-            pairKey,
-            senderId: me.telegramId,
-            _id: { $ne: insertedId },
-            createdAt: { $gt: new Date(peerReadAt) },
-            expiresAt: { $gt: now }
-          }).catch(() => true);
+          const peerInThisChatNow = peerReadAt > 0 && now.getTime() - peerReadAt < PEER_ACTIVE_IN_CHAT_MS;
+          if (!peerInThisChatNow) {
+            const hadUnreadBefore = await DirectMessage.exists({
+              pairKey,
+              senderId: me.telegramId,
+              _id: { $ne: insertedId },
+              createdAt: { $gt: new Date(peerReadAt) },
+              expiresAt: { $gt: now }
+            }).catch(() => true);
 
-          const peerVisitedSinceLastPush = Boolean(
-            peer.lastActiveAt && lastNotifiedAt && peer.lastActiveAt.getTime() > lastNotifiedAt
-          );
-          const shouldNotify =
-            (!hadUnreadBefore && now.getTime() - lastNotifiedAt > NOTIFY_MIN_GAP_MS) ||
-            (now.getTime() - lastNotifiedAt > NOTIFY_COOLDOWN_MS && peerVisitedSinceLastPush);
+            const peerVisitedSinceLastPush = Boolean(
+              peer.lastActiveAt && lastNotifiedAt && peer.lastActiveAt.getTime() > lastNotifiedAt
+            );
+            const shouldNotify =
+              (!hadUnreadBefore && now.getTime() - lastNotifiedAt > NOTIFY_MIN_GAP_MS) ||
+              (now.getTime() - lastNotifiedAt > NOTIFY_COOLDOWN_MS && peerVisitedSinceLastPush);
 
-          if (shouldNotify) {
-            await Reaction.updateOne(
-              { fromTelegramId: me.telegramId, toTelegramId: peer.telegramId, type: 'like' },
-              { $set: { directChatNotifiedAt: now } }
-            );
-            void sendTelegramMessage(
-              peer.telegramId,
-              `💬 <b>${escapeHtml(me.firstName)}</b> пишет тебе в ГУЛЯЙ!`,
-              'Открыть чат',
-              `?user=${me.telegramId}&chat=1`
-            );
+            if (shouldNotify) {
+              await Reaction.updateOne(
+                { fromTelegramId: me.telegramId, toTelegramId: peer.telegramId, type: 'like' },
+                { $set: { directChatNotifiedAt: now } }
+              );
+              void sendTelegramMessage(
+                peer.telegramId,
+                `💬 <b>${escapeHtml(me.firstName)}</b> пишет тебе в ГУЛЯЙ!`,
+                'Открыть чат',
+                `?user=${me.telegramId}&chat=1`
+              );
+            }
           }
         }
       }
