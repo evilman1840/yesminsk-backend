@@ -1,9 +1,9 @@
 import { reserveRecentAction } from './middleware/participantLimits';
 import { captureAnalytics } from './analytics';
-import { USERNAME_TEXTS as U, BUDDY_TEXTS as B } from './texts';
+import { BUDDY_TEXTS as B } from './texts';
 import { IUser } from './models/User';
 import { Reaction } from './models/Reaction';
-import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
+import { sendTelegramMessage, escapeHtml } from './utils/telegramNotify';
 import { preferencesAllow } from './preferences';
 import { minskDayStart, waveQuota, markWaveLimitHit, WaveLimitError } from './waveLimit';
 import { noteIncomingWave } from './waveNotify';
@@ -11,11 +11,18 @@ import { matchBridgeLine } from './buddyInvites';
 import { sendWithButtons } from './wishes';
 import { tossCoin, coinLine, helloPath } from './hello';
 import { canStart } from './games';
-import { HELLO_TEXTS as H, DUEL_TEXTS as D } from './texts';
+import { DUEL_TEXTS as D } from './texts';
+import { isWavePausedByReports } from './moderation';
 
 export class WaveBurstError extends Error {
   constructor() {
     super('Слишком много приветов подряд. Подожди минуту и попробуй снова');
+  }
+}
+
+export class WaveReportPauseError extends Error {
+  constructor() {
+    super('Отправка новых приветов временно приостановлена до проверки модератором');
   }
 }
 
@@ -49,6 +56,12 @@ export async function sendLike(
   let isMatch = Boolean(reverse);
   const isNewLike = previous?.type !== 'like'; // не спамим уведомлениями при повторном нажатии
   const free = Boolean(opts.free) || isMatch;
+
+  // Автопауза новых 👋 незнакомым людям при 2 открытых жалобах или 1 жалобе danger (до решения модератора)
+  if (isNewLike && !isMatch && (await isWavePausedByReports(me.telegramId))) {
+    if (opts.bulk) return null;
+    throw new WaveReportPauseError();
+  }
 
   // Дневной лимит: только для новых 👋 первым
   let dailyMax = 0;
@@ -100,8 +113,9 @@ export async function sendLike(
       const notify = async (to: IUser, other: IUser) => {
         const bridge = await matchBridgeLine(to, other).catch(() => null);
         const coin = coinLine(to.telegramId, first, `<b>${escapeHtml(other.firstName)}</b>`);
-        await sendWithButtons(to.telegramId, `${B.matched(userMentionHtml(other))}${coin ? `\n\n${coin}` : ''}\n\n${bridge || B.bridgeAny}`, [
-          ...(first === to.telegramId ? [[{ text: H.helloBtn, path: helloPath(other.telegramId) }]] : []),
+        const otherLabel = `<b>${escapeHtml(other.firstName)}</b>`;
+        await sendWithButtons(to.telegramId, `${B.matched(otherLabel)}${coin ? `\n\n${coin}` : ''}\n\n${bridge || B.bridgeAny}`, [
+          [{ text: '💬 Открыть чат', path: helloPath(other.telegramId) }],
           [{ text: B.togetherBtn, path: `?user=${other.telegramId}&together=1` }],
           [{ text: B.profileBtn, path: `?user=${other.telegramId}` }],
           // Партия как повод начать разговор (пока игры открыты не всем — только тем, у кого есть раздел)
@@ -110,9 +124,6 @@ export async function sendLike(
       };
       notify(target, me).catch(() => {});
       notify(me, target).catch(() => {});
-      // Без @username второй человек не сможет написать первым — подсказываем завести
-      if (!target.username) sendTelegramMessage(target.telegramId, U.noUsernameMatch(escapeHtml(me.firstName), Boolean(me.username)), 'Открыть анкету', `?user=${me.telegramId}`);
-      if (!me.username) sendTelegramMessage(me.telegramId, U.noUsernameMatch(escapeHtml(target.firstName), Boolean(target.username)), 'Открыть анкету', `?user=${target.telegramId}`);
     } else if (await noteIncomingWave(target.telegramId)) {
       // Первые 3 за день — сразу; дальше копим до вечерней сводки (waveNotify.ts)
       sendTelegramMessage(

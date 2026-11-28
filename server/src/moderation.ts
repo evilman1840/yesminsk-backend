@@ -18,9 +18,10 @@ import { pastAccount } from './deletedAccounts';
  * Жалобы приходят администраторам (ADMIN_TELEGRAM_IDS) в чат с ботом.
  */
 
-export type ReportReason = 'flirt' | 'rude' | 'spam' | 'fake' | 'photo' | 'danger' | 'minor' | 'other';
+export type ReportReason = 'boundary' | 'flirt' | 'rude' | 'spam' | 'fake' | 'photo' | 'danger' | 'minor' | 'other';
 
 const REASONS: Record<ReportReason, string> = {
+  boundary: '🛑 Нарушает границы, давит в общении',
   flirt: '💋 Флирт, намёки на свидания',
   rude: '😠 Грубость, оскорбления',
   spam: '📢 Спам или реклама',
@@ -32,6 +33,7 @@ const REASONS: Record<ReportReason, string> = {
 };
 
 const AUTO_HIDE_AFTER = 3; // столько разных людей пожаловались — скрываем до проверки
+const WAVE_PAUSE_AFTER = 2; // 2 открытые жалобы от разных людей (или 1 danger) — пауза на новые 👋 до проверки
 
 // Жалоба «неприличное фото» прячет фото сразу только у новых аккаунтов: у давних так можно было бы скрыть фото кому угодно
 const NEW_ACCOUNT_DAYS = 7;
@@ -103,13 +105,14 @@ export function notifyAdmins(html: string, buttons: { text: string; data: string
 
 export const BANNED_ERROR = 'Аккаунт заблокирован за нарушение правил';
 
-export type StopSource = 'event' | 'eventEdit' | 'message' | 'profile' | 'wish';
+export type StopSource = 'event' | 'eventEdit' | 'message' | 'profile' | 'wish' | 'directChat';
 const STOP_SOURCES: Record<StopSource, string> = {
   event: 'новая сходка',
   eventEdit: 'изменение сходки',
   message: 'сообщение участникам сходки',
   profile: 'анкета',
-  wish: 'своё желание в «Хочу сходить»'
+  wish: 'своё желание в «Хочу сходить»',
+  directChat: 'личный чат 1 на 1'
 };
 
 /**
@@ -361,16 +364,135 @@ export function banGuard(req: Request, res: Response, next: NextFunction) {
   });
 }
 
+/**
+ * Автопауза на отправку новых 👋 незнакомым людям:
+ * 2 открытые жалобы от разных людей ИЛИ 1 открытая жалоба с причиной danger.
+ * Снимается сразу после нажатия модератором «✅ Всё в порядке» (статус жалоб -> dismissed).
+ */
+export async function isWavePausedByReports(telegramId: number): Promise<boolean> {
+  const targetId = String(telegramId);
+  const [openCount, hasDanger] = await Promise.all([
+    Report.countDocuments({ targetType: 'user', targetId, status: 'open' }),
+    Report.exists({ targetType: 'user', targetId, status: 'open', reason: 'danger' })
+  ]);
+  return openCount >= WAVE_PAUSE_AFTER || Boolean(hasDanger);
+}
+
+export interface ChatReportExcerpt {
+  senderName: string;
+  text: string;
+  createdAt: Date;
+}
+
+export async function submitUserReport(opts: {
+  fromId: number;
+  targetId: number;
+  reason: string;
+  comment?: string;
+  chatMessages?: ChatReportExcerpt[];
+}): Promise<{ status: number; body: Record<string, unknown> }> {
+  const { fromId, targetId: targetIdNum, reason } = opts;
+  const comment = String(opts.comment || '').slice(0, 500);
+  if (!Number.isSafeInteger(targetIdNum) || targetIdNum <= 0 || targetIdNum === fromId || !Object.prototype.hasOwnProperty.call(REASONS, reason)) {
+    return { status: 400, body: { error: 'Неполная жалоба' } };
+  }
+
+  const reporter = await User.findOne({ telegramId: fromId });
+  if (!reporter?.hasAgreedToRules || reporter.isBanned) {
+    return { status: 403, body: { error: 'Жалобу можно отправить из активного аккаунта ГУЛЯЙ!' } };
+  }
+
+  const targetId = String(targetIdNum);
+  // Тот, кто пожаловался, больше не видит этого человека (даже при повторной жалобе из чата)
+  await User.updateOne({ telegramId: fromId }, { $addToSet: { blockedUsers: targetIdNum } });
+
+  try {
+    await Report.create({ fromTelegramId: fromId, targetType: 'user', targetId, reason, comment });
+  } catch (err: any) {
+    if (err?.code === 11000) return { status: 200, body: { success: true, duplicate: true } };
+    throw err;
+  }
+
+  const [openCount, hasDanger, target, past] = await Promise.all([
+    Report.countDocuments({ targetType: 'user', targetId, status: 'open' }),
+    Report.exists({ targetType: 'user', targetId, status: 'open', reason: 'danger' }),
+    User.findOne({ telegramId: targetIdNum }),
+    pastAccount(targetIdNum)
+  ]);
+
+  const reporterLine = `От: ${escapeHtml(reporter?.firstName || 'пользователь')}${reporter?.username ? ` (@${escapeHtml(reporter.username)})` : ''} · ID ${fromId}`;
+  const commentLine = comment ? `\n💬 «${escapeHtml(comment)}»` : '';
+  const isPhoto = reason === 'photo';
+  const photoHidden = isPhoto && isNewAccount(target);
+  if (photoHidden) await User.updateOne({ telegramId: targetIdNum }, { $set: { photosHidden: true } });
+
+  const pastLine = pastAccountLine(past);
+  const autoHidden = openCount + (past?.reports || 0) >= AUTO_HIDE_AFTER && !target?.hiddenByReports;
+  if (autoHidden) await User.updateOne({ telegramId: targetIdNum }, { $set: { hiddenByReports: true } });
+  const wavePaused = !autoHidden && (openCount >= WAVE_PAUSE_AFTER || Boolean(hasDanger));
+
+  let chatBlock = '';
+  if (opts.chatMessages?.length) {
+    const lines = opts.chatMessages.map((m) => {
+      const time = m.createdAt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Minsk' });
+      return `${time} <b>${escapeHtml(m.senderName)}</b>: ${escapeHtml(m.text.slice(0, 220))}`;
+    });
+    chatBlock = `\n\n💬 <b>Последние сообщения пары (${opts.chatMessages.length}):</b>\n${lines.join('\n')}`.slice(0, 1800);
+  }
+
+  const header = opts.chatMessages
+    ? `⚠️ <b>Жалоба из личного чата</b> (${openCount} открыт${openCount === 1 ? 'ая' : 'ых'})`
+    : `⚠️ <b>Жалоба на анкету</b> (${openCount} открыт${openCount === 1 ? 'ая' : 'ых'})`;
+
+  notifyAdmins(
+    `${header}\n\n` +
+      `👤 <b>${escapeHtml(target?.firstName || '-')}</b>${target?.age ? `, ${target.age}` : ''}` +
+      `${target?.username ? ` · @${escapeHtml(target.username)}` : ''} · ID ${targetIdNum}\n` +
+      `📝 ${escapeHtml(target?.bio || 'без описания')}\n\n` +
+      `Причина: ${REASONS[reason as ReportReason]}${commentLine}\n${reporterLine}` +
+      (pastLine ? `\n${pastLine}` : '') +
+      chatBlock +
+      (autoHidden ? `\n\n🙈 Анкета скрыта автоматически (${AUTO_HIDE_AFTER}+ жалоб) до твоего решения.` : '') +
+      (wavePaused ? `\n\n⏸ Отправка новых 👋 временно приостановлена до твоего решения.` : '') +
+      (isPhoto
+        ? photoHidden
+          ? `\n\n🙈 Фото человека скрыты до твоего решения (аккаунт новый). Посмотреть: /photos ${targetIdNum}`
+          : `\n\n👀 Аккаунт давний — фото пока видны, реши сам. Посмотреть: /photos ${targetIdNum}`
+        : ''),
+    isPhoto
+      ? [
+          { text: '🗑 Удалить фото', data: `delphu:${targetIdNum}` },
+          { text: '🚫 Забанить', data: `ban:${targetIdNum}` },
+          { text: '✅ Фото в порядке', data: `okphu:${targetIdNum}` }
+        ]
+      : [
+          { text: '🚫 Забанить', data: `ban:${targetIdNum}` },
+          { text: '✅ Всё в порядке', data: `okuser:${targetIdNum}` }
+        ]
+  );
+
+  return { status: 200, body: { success: true } };
+}
+
 export function setupModerationRoutes(app: Express) {
   app.post('/api/reports', telegramAuthMiddleware as any, rateLimit({ name: 'жалобы', windowMs: 10 * 60 * 1000, max: 8 }), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const fromId = req.telegramUser!.id;
       const { targetType, targetId: rawTargetId, reason } = req.body;
-      const targetId = targetType === 'user' ? String(Number(rawTargetId)) : String(rawTargetId ?? '').toLowerCase();
       const comment = String(req.body.comment || '').slice(0, 500);
 
-      const badTarget = targetType === 'user' ? !Number.isSafeInteger(Number(targetId)) || Number(targetId) <= 0 || Number(targetId) === fromId : !mongoose.Types.ObjectId.isValid(String(targetId));
-      if (!['user', 'event'].includes(targetType) || !targetId || badTarget || !Object.prototype.hasOwnProperty.call(REASONS, reason)) {
+      if (targetType === 'user') {
+        const result = await submitUserReport({
+          fromId,
+          targetId: Number(rawTargetId),
+          reason: String(reason || ''),
+          comment
+        });
+        return res.status(result.status).json(result.body);
+      }
+
+      const targetId = String(rawTargetId ?? '').toLowerCase();
+      if (targetType !== 'event' || !targetId || !mongoose.Types.ObjectId.isValid(targetId) || !Object.prototype.hasOwnProperty.call(REASONS, reason)) {
         return res.status(400).json({ error: 'Неполная жалоба' });
       }
 
@@ -379,88 +501,46 @@ export function setupModerationRoutes(app: Express) {
       const reporterLine = `От: ${escapeHtml(reporter?.firstName || 'пользователь')}${reporter?.username ? ` (@${escapeHtml(reporter.username)})` : ''} · ID ${fromId}`;
 
       try {
-        await Report.create({ fromTelegramId: fromId, targetType, targetId: String(targetId), reason, comment });
+        await Report.create({ fromTelegramId: fromId, targetType, targetId, reason, comment });
       } catch (err: any) {
-        if (err?.code === 11000) return res.json({ success: true, duplicate: true }); // уже жаловался
+        if (err?.code === 11000) return res.json({ success: true, duplicate: true });
         throw err;
       }
 
-      const openCount = await Report.countDocuments({ targetType, targetId: String(targetId), status: 'open' });
+      const openCount = await Report.countDocuments({ targetType, targetId, status: 'open' });
       const commentLine = comment ? `\n💬 «${escapeHtml(comment)}»` : '';
 
-      if (targetType === 'user') {
-        const targetIdNum = Number(targetId);
-        // Тот, кто пожаловался, больше не видит этого человека
-        await User.updateOne({ telegramId: fromId }, { $addToSet: { blockedUsers: targetIdNum } });
+      const event = await Event.findById(targetId);
+      if (!event) return res.status(404).json({ error: 'Сходка не найдена' });
+      const autoHidden = openCount >= AUTO_HIDE_AFTER && event.isActive;
+      if (autoHidden) await Event.updateOne({ _id: event._id }, { $set: { isActive: false } });
+      const isPhoto = reason === 'photo';
+      const photoHidden = isPhoto && isNewAccount(await User.findOne({ telegramId: event.creator.telegramId }, { createdAt: 1 }).lean());
+      if (photoHidden) await Event.updateOne({ _id: event._id }, { $set: { photosHidden: true } });
 
-        const target = await User.findOne({ telegramId: targetIdNum });
-        // Неприличное фото: у нового аккаунта прячем сразу, с первой жалобы; у давнего — ждём решения модератора
-        const isPhoto = reason === 'photo';
-        const photoHidden = isPhoto && isNewAccount(target);
-        if (photoHidden) await User.updateOne({ telegramId: targetIdNum }, { $set: { photosHidden: true } });
-        // Жалобы на прежние анкеты того же человека тоже в счёт: удаление аккаунта их не обнуляет
-        const past = await pastAccount(targetIdNum);
-        const pastLine = pastAccountLine(past);
-        const autoHidden = openCount + (past?.reports || 0) >= AUTO_HIDE_AFTER && !target?.hiddenByReports;
-        if (autoHidden) await User.updateOne({ telegramId: targetIdNum }, { $set: { hiddenByReports: true } });
-
-        notifyAdmins(
-          `⚠️ <b>Жалоба на анкету</b> (${openCount} открыт${openCount === 1 ? 'ая' : 'ых'})\n\n` +
-            `👤 <b>${escapeHtml(target?.firstName || '-')}</b>${target?.age ? `, ${target.age}` : ''}` +
-            `${target?.username ? ` · @${escapeHtml(target.username)}` : ''} · ID ${targetIdNum}\n` +
-            `📝 ${escapeHtml(target?.bio || 'без описания')}\n\n` +
-            `Причина: ${REASONS[reason as ReportReason]}${commentLine}\n${reporterLine}` +
-            (pastLine ? `\n${pastLine}` : '') +
-            (autoHidden ? `\n\n🙈 Анкета скрыта автоматически (${AUTO_HIDE_AFTER}+ жалоб) до твоего решения.` : '') +
-            (isPhoto
-              ? photoHidden
-                ? `\n\n🙈 Фото человека скрыты до твоего решения (аккаунт новый). Посмотреть: /photos ${targetIdNum}`
-                : `\n\n👀 Аккаунт давний — фото пока видны, реши сам. Посмотреть: /photos ${targetIdNum}`
-              : ''),
-          isPhoto
-            ? [
-                { text: '🗑 Удалить фото', data: `delphu:${targetIdNum}` },
-                { text: '🚫 Забанить', data: `ban:${targetIdNum}` },
-                { text: '✅ Фото в порядке', data: `okphu:${targetIdNum}` }
-              ]
-            : [
-                { text: '🚫 Забанить', data: `ban:${targetIdNum}` },
-                { text: '✅ Всё в порядке', data: `okuser:${targetIdNum}` }
-              ]
-        );
-      } else {
-        const event = mongoose.Types.ObjectId.isValid(targetId) ? await Event.findById(targetId) : null;
-        if (!event) return res.status(404).json({ error: 'Сходка не найдена' });
-        const autoHidden = openCount >= AUTO_HIDE_AFTER && event.isActive;
-        if (autoHidden) await Event.updateOne({ _id: event._id }, { $set: { isActive: false } });
-        const isPhoto = reason === 'photo';
-        const photoHidden = isPhoto && isNewAccount(await User.findOne({ telegramId: event.creator.telegramId }, { createdAt: 1 }).lean());
-        if (photoHidden) await Event.updateOne({ _id: event._id }, { $set: { photosHidden: true } });
-
-        notifyAdmins(
-          `⚠️ <b>Жалоба на сходку</b> (${openCount} открыт${openCount === 1 ? 'ая' : 'ых'})\n\n` +
-            `📍 <b>${escapeHtml(event.title)}</b>\n🕒 ${formatWhen(event.dateTime)} · ${escapeHtml(event.locationName)}\n` +
-            `📝 ${escapeHtml(event.description)}\n👤 Организатор: ${escapeHtml(event.creator.name)} · ID ${event.creator.telegramId}\n\n` +
-            `Причина: ${REASONS[reason as ReportReason]}${commentLine}\n${reporterLine}` +
-            (autoHidden ? `\n\n🙈 Сходка скрыта автоматически (${AUTO_HIDE_AFTER}+ жалоб) до твоего решения.` : '') +
-            (isPhoto
-              ? photoHidden
-                ? `\n\n🙈 Фото сходки скрыты до твоего решения (организатор — новый аккаунт). Посмотреть: /photos ev:${event._id}`
-                : `\n\n👀 Организатор давний — фото пока видны, реши сам. Посмотреть: /photos ev:${event._id}`
-              : ''),
-          isPhoto
-            ? [
-                { text: '🗑 Удалить фото', data: `delphe:${event._id}` },
-                { text: '🚫 Забанить автора', data: `ban:${event.creator.telegramId}` },
-                { text: '✅ Фото в порядке', data: `okphe:${event._id}` }
-              ]
-            : [
-                { text: '🗑 Скрыть сходку', data: `delev:${event._id}` },
-                { text: '🚫 Забанить автора', data: `ban:${event.creator.telegramId}` },
-                { text: '✅ Всё в порядке', data: `okev:${event._id}` }
-              ]
-        );
-      }
+      notifyAdmins(
+        `⚠️ <b>Жалоба на сходку</b> (${openCount} открыт${openCount === 1 ? 'ая' : 'ых'})\n\n` +
+          `📍 <b>${escapeHtml(event.title)}</b>\n🕒 ${formatWhen(event.dateTime)} · ${escapeHtml(event.locationName)}\n` +
+          `📝 ${escapeHtml(event.description)}\n👤 Организатор: ${escapeHtml(event.creator.name)} · ID ${event.creator.telegramId}\n\n` +
+          `Причина: ${REASONS[reason as ReportReason]}${commentLine}\n${reporterLine}` +
+          (autoHidden ? `\n\n🙈 Сходка скрыта автоматически (${AUTO_HIDE_AFTER}+ жалоб) до твоего решения.` : '') +
+          (isPhoto
+            ? photoHidden
+              ? `\n\n🙈 Фото сходки скрыты до твоего решения (организатор — новый аккаунт). Посмотреть: /photos ev:${event._id}`
+              : `\n\n👀 Организатор давний — фото пока видны, реши сам. Посмотреть: /photos ev:${event._id}`
+            : ''),
+        isPhoto
+          ? [
+              { text: '🗑 Удалить фото', data: `delphe:${event._id}` },
+              { text: '🚫 Забанить автора', data: `ban:${event.creator.telegramId}` },
+              { text: '✅ Фото в порядке', data: `okphe:${event._id}` }
+            ]
+          : [
+              { text: '🗑 Скрыть сходку', data: `delev:${event._id}` },
+              { text: '🚫 Забанить автора', data: `ban:${event.creator.telegramId}` },
+              { text: '✅ Всё в порядке', data: `okev:${event._id}` }
+            ]
+      );
 
       res.json({ success: true });
     } catch (err: any) {

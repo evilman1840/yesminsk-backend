@@ -4,6 +4,7 @@ import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/teleg
 import { User } from './models/User';
 import { Event } from './models/Event';
 import { MeetupMessage } from './models/MeetupMessage';
+import { DirectMessage } from './models/DirectMessage';
 import { Reaction } from './models/Reaction';
 import { Wish } from './models/Wish';
 import { PlaceTip } from './models/Place';
@@ -59,6 +60,7 @@ export function setupAccountRoutes(app: Express) {
           { eventId: { $in: mine.map((event) => event._id) } },
           { askerId: myId }, { hostId: myId }, { senderId: myId }
         ] }),
+        DirectMessage.deleteMany({ $or: [{ senderId: myId }, { recipientId: myId }] }),
         Reaction.deleteMany({ $or: [{ fromTelegramId: myId }, { toTelegramId: myId }] }),
         Wish.deleteMany({ telegramId: myId }),
         PlaceTip.deleteMany({ telegramId: myId }),

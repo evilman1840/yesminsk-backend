@@ -16,7 +16,12 @@ export interface IReaction extends Document {
   helloNudgeSent?: boolean; // сообщение дошло
   // «✍️ Что написать» — у записи того, кто открыл шторку (fromTelegramId)
   helloOpenedAt?: Date;  // открыл шторку с фразами
-  helloPickedAt?: Date;  // выбрал фразу и ушёл в чат
+  helloPickedAt?: Date;  // выбрал фразу или написал первым
+  // Личный чат 1 на 1 внутри ГУЛЯЙ! (хранится на записи fromTelegramId -> toTelegramId)
+  directChatOpenedAt?: Date;    // когда впервые открыл личный чат с этим человеком
+  directChatReadAt?: Date;      // когда последний раз прочитал входящие сообщения от toTelegramId
+  directChatNotifiedAt?: Date;  // когда последний раз уходил пуш в бот о сообщении от fromTelegramId к toTelegramId
+  directChatDialogDone?: boolean; // оба участника написали по 2+ сообщения (для однократной метрики)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,7 +38,11 @@ const ReactionSchema = new Schema<IReaction>(
     helloNudgeAt: { type: Date },
     helloNudgeSent: { type: Boolean },
     helloOpenedAt: { type: Date },
-    helloPickedAt: { type: Date }
+    helloPickedAt: { type: Date },
+    directChatOpenedAt: { type: Date },
+    directChatReadAt: { type: Date },
+    directChatNotifiedAt: { type: Date },
+    directChatDialogDone: { type: Boolean }
   },
   { timestamps: true }
 );

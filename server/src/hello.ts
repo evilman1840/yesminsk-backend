@@ -33,14 +33,11 @@ const pairFilter = (a: number, b: number) => ({
 });
 
 /**
- * Бросить монетку для новой пары. Возвращает telegramId того, кто пишет первым, или null —
- * если @username нет у обоих (написать некому, остаются сообщения «заведи имя пользователя»)
+ * Бросить монетку для новой пары. Работает для любой пары, даже если @username нет у обоих:
+ * общение идёт прямо внутри личного чата «ГУЛЯЙ!».
  */
-export async function tossCoin(a: IUser, b: IUser): Promise<number | null> {
-  const candidates: number[] = [];
-  if (b.username) candidates.push(a.telegramId); // a сможет написать b
-  if (a.username) candidates.push(b.telegramId);
-  if (!candidates.length) return null;
+export async function tossCoin(a: IUser, b: IUser): Promise<number> {
+  const candidates = [a.telegramId, b.telegramId];
   const first = candidates[Math.floor(Math.random() * candidates.length)];
   await Reaction.updateMany(
     { ...pairFilter(a.telegramId, b.telegramId), type: 'like' },
@@ -53,7 +50,7 @@ export async function tossCoin(a: IUser, b: IUser): Promise<number | null> {
 export const coinLine = (toId: number, first: number | null, otherName: string) =>
   first === null ? '' : first === toId ? T.coinMe : T.coinThem(otherName);
 
-export const helloPath = (friendId: number) => `?user=${friendId}&hello=1`;
+export const helloPath = (friendId: number) => `?user=${friendId}&chat=1`;
 
 const shuffle = <V>(list: V[]) => {
   const a = [...list];
@@ -107,8 +104,8 @@ async function nudgeSilentPairs() {
     const back = await Reaction.findOne({ fromTelegramId: otherId, toTelegramId: shyId, type: 'like' }).lean();
     if (!back || back.helloPickedAt) continue;
     const [shy, other] = await Promise.all([User.findOne({ telegramId: shyId }), User.findOne({ telegramId: otherId })]);
-    if (!shy || !other || !shy.username || other.isBanned || shy.isBanned || other.canMessage === false || blockedEither(shy, other)) continue;
-    const sent = await sendWithButtons(otherId, T.nudge(`<b>${escapeHtml(shy.firstName)}</b>`), [[{ text: T.helloBtn, path: helloPath(shyId) }]]).catch(() => false);
+    if (!shy || !other || other.isBanned || shy.isBanned || other.hiddenByReports || shy.hiddenByReports || other.canMessage === false || blockedEither(shy, other)) continue;
+    const sent = await sendWithButtons(otherId, T.nudge(`<b>${escapeHtml(shy.firstName)}</b>`), [[{ text: '💬 Открыть чат', path: helloPath(shyId) }]]).catch(() => false);
     if (sent) await Reaction.updateOne({ fromTelegramId: otherId, toTelegramId: shyId }, { $set: { helloNudgeSent: true } });
     await new Promise((res) => setTimeout(res, 60));
   }

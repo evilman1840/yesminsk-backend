@@ -11,6 +11,9 @@ export const ACTIVITY_GOALS: ActivityGoal[] = ['walk', 'cafe_bar', 'expo_cinema'
 export type Gender = 'male' | 'female' | 'not_specified';
 export type PreferredGender = 'all' | 'male' | 'female';
 
+export type CasualPace = 'chat_first' | 'coffee_first' | 'direct';
+export const CASUAL_PACES: CasualPace[] = ['chat_first', 'coffee_first', 'direct'];
+
 export interface IUser extends Document {
   telegramId: number;
   username?: string;
@@ -36,6 +39,9 @@ export interface IUser extends Document {
     min: number;
     max: number;
   };
+  openToSerious?: boolean;   // приватная отметка «❤️ Серьёзные отношения» (видят только те, у кого тоже true)
+  openToCasual?: boolean;    // приватная отметка «🔥 Близость без обязательств» (только в чате при совпадении у обоих)
+  casualPace?: CasualPace;   // выбранный темп для близости без обязательств
   photoOnly?: boolean;       // «Только с теми, у кого есть фото»: видим друг друга только с людьми, у кого на фото лицо
   hasFacePhoto?: boolean;    // на главном фото виден человек (проверка faceCheck.ts)
   faceCheckedFor?: string;   // какое фото (значение avatarUrl) проверено
@@ -136,6 +142,9 @@ const UserSchema = new Schema<IUser>(
       min: { type: Number, default: 18, min: 16 },
       max: { type: Number, default: 99, max: 99 }
     },
+    openToSerious: { type: Boolean, default: false },
+    openToCasual: { type: Boolean, default: false },
+    casualPace: { type: String, enum: CASUAL_PACES, default: 'chat_first' },
     goal: {
       type: String,
       enum: ACTIVITY_GOALS,

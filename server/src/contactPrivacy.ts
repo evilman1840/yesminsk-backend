@@ -3,11 +3,10 @@ import type { IEvent, IEventParticipant } from './models/Event';
 
 type ContactAccount = Pick<IUser, 'telegramId' | 'hasAgreedToRules' | 'isBanned' | 'hiddenByReports' | 'blockedUsers' | 'username'>;
 
-export function matchedUsername(viewer: ContactAccount | null, person: ContactAccount, isMatch: boolean): string | undefined {
-  if (!isMatch || !viewer?.hasAgreedToRules || !person.hasAgreedToRules ||
-      viewer.isBanned || person.isBanned || viewer.hiddenByReports || person.hiddenByReports) return undefined;
-  if (viewer.blockedUsers?.includes(person.telegramId) || person.blockedUsers?.includes(viewer.telegramId)) return undefined;
-  return person.username;
+export function matchedUsername(_viewer: ContactAccount | null, _person: ContactAccount, _isMatch: boolean): string | undefined {
+  // Личный Telegram больше не раскрывается автоматически при взаимном 👋:
+  // люди общаются внутри чата ГУЛЯЙ!, а своим ником каждый делится сам, если захочет.
+  return undefined;
 }
 
 export function meetupHostUsername(event: Pick<IEvent, 'creator'>, viewerId: number, viewerEntry?: IEventParticipant): string | undefined {

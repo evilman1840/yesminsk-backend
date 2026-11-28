@@ -25,7 +25,8 @@ export const CLIENT_EVENTS = [
 export const SERVER_EVENTS = [
   'gulyai_profile_saved','gulyai_questionnaire_saved','gulyai_questionnaire_completed',
   'gulyai_meetup_created','gulyai_meetup_signup_saved','gulyai_meetup_joined','gulyai_meetup_join_requested','gulyai_wave_sent','gulyai_connection_created',
-  'gulyai_place_saved','gulyai_meetup_form_opened','gulyai_meetup_form_template','gulyai_meetup_form_published','gulyai_meetup_form_closed','gulyai_meetup_form_error'
+  'gulyai_place_saved','gulyai_meetup_form_opened','gulyai_meetup_form_template','gulyai_meetup_form_published','gulyai_meetup_form_closed','gulyai_meetup_form_error',
+  'gulyai_direct_chat_opened','gulyai_direct_chat_first_message','gulyai_direct_chat_dialog_started'
 ] as const;
 export type ClientEventName = typeof CLIENT_EVENTS[number];
 export type ServerEventName = typeof SERVER_EVENTS[number];

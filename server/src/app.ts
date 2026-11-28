@@ -12,7 +12,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { telegramAuthMiddleware, AuthenticatedRequest } from './middleware/telegramAuth';
 import { securityHeaders, stripMongoOperators, rateLimit } from './middleware/security';
-import { User, IUser, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, DIGEST_FREQUENCIES, Gender, PreferredGender } from './models/User';
+import { User, IUser, ActivityGoal, ACTIVITY_GOALS, GOES_WITH, DIGEST_FREQUENCIES, Gender, PreferredGender, CasualPace, CASUAL_PACES } from './models/User';
 import { startDigestLoop } from './digest';
 import { startWaveDigestLoop } from './waveNotify';
 import { startQuietSortLoop, isQuiet, quietLast } from './quietSort';
@@ -23,7 +23,7 @@ import { EventTemplate } from './models/EventTemplate';
 import { obfuscateCoordinates, calculateDistanceMeters } from './utils/geoUtils';
 import { metersBetween, realPoint, shownPoint } from './utils/userLocation';
 import { Reaction, ReactionType } from './models/Reaction';
-import { sendLike, WaveBurstError } from './social';
+import { sendLike, WaveBurstError, WaveReportPauseError } from './social';
 import { matchedUsername, meetupHostUsername } from './contactPrivacy';
 import { waveQuota, WaveLimitError, rememberWaveLimitLaunch } from './waveLimit';
 import { sendTelegramMessage, userMentionHtml, escapeHtml } from './utils/telegramNotify';
@@ -41,6 +41,7 @@ import { joinEvent, isEventCreator, BY_REQUEST_LOCKED, joinAccountError } from '
 import { setupBuddyRoutes, startBuddyLoop, buddyPairIds, inviteBuddyToNewEvent } from './buddyInvites';
 import { setupEventLeaveRoutes, logEventExit } from './eventLeave';
 import { meetupChatExpiresAt, setupMeetupChatRoutes } from './meetupChat';
+import { setupDirectChatRoutes } from './directChat';
 import { MeetupMessage } from './models/MeetupMessage';
 import { setupPlacesRoutes } from './places';
 import { seedEventTemplates, setupEventTemplateRoutes, findTemplate, buildExtras } from './eventTemplates';
@@ -458,6 +459,9 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
       gender,
       preferredGender,
       preferredAgeRange,
+      openToSerious,
+      openToCasual,
+      casualPace,
       bio,
       goal,
       goals,
@@ -527,6 +531,9 @@ const handleUpdateProfile = async (req: AuthenticatedRequest, res: Response) => 
     // Пол выбран самим человеком — больше не спрашиваем
     if (gender && genderConfirmed) updateData.genderConfirmed = true;
     if (['all', 'male', 'female'].includes(preferredGender)) updateData.preferredGender = preferredGender as PreferredGender;
+    if (openToSerious !== undefined) updateData.openToSerious = Boolean(openToSerious);
+    if (openToCasual !== undefined) updateData.openToCasual = Boolean(openToCasual);
+    if (casualPace && (CASUAL_PACES as string[]).includes(casualPace)) updateData.casualPace = casualPace as CasualPace;
     if (photoOnly !== undefined) updateData.photoOnly = Boolean(photoOnly);
     if (preferredAgeRange && typeof preferredAgeRange === 'object') {
       const min = Math.floor(Number(preferredAgeRange.min));
@@ -795,6 +802,7 @@ function peopleFilters(q: any, me: any): { and: any[]; maxKm: number } {
   if (q.who === 'tourists') and.push({ isTourist: true });
   if (q.available === '1') and.push({ availableUntil: { $gt: new Date() } });
   if (q.liveStatus === '1') and.push({ 'liveStatus.expiresAt': { $gt: new Date() } });
+  if (q.serious === '1' && me?.openToSerious) and.push({ openToSerious: true });
   if (q.recent === '1') and.push({ lastActiveAt: { $gte: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) } });
   const goesWith = str(q.goesWith).split(',').filter((g) => (GOES_WITH as string[]).includes(g));
   if (goesWith.length) and.push({ goesWith: { $in: goesWith } });
@@ -816,7 +824,7 @@ const PEOPLE_PAGE = 300;
 const FEED_USER_FIELDS = {
   telegramId: 1, firstName: 1, username: 1, hasAgreedToRules: 1, avatarUrl: 1, photos: 1, photosHidden: 1, age: 1, gender: 1, goal: 1, goals: 1,
   customGoal: 1, goesWith: 1, isEmpath: 1, isSupporter: 1, ventUntil: 1, bio: 1, isProfileActive: 1, areaName: 1, isTourist: 1, isGuide: 1, guideAbout: 1,
-  questionnaire: 1, availableUntil: 1, liveStatus: 1, lastActiveAt: 1, createdAt: 1, locationExact: 1, locationFuzzy: 1
+  questionnaire: 1, availableUntil: 1, liveStatus: 1, lastActiveAt: 1, createdAt: 1, locationExact: 1, locationFuzzy: 1, openToSerious: 1
 };
 
 // Сколько всего людей в приложении (прошли приветствие, не забанены). Считаем раз в 5 минут
@@ -832,7 +840,7 @@ app.get('/api/users/nearby-count', telegramAuthMiddleware as any, async (req: Au
     const tgUser = req.telegramUser!;
     const currentUser = await User.findOne(
       { telegramId: tgUser.id },
-      { blockedUsers: 1, skipped: 1, gender: 1, age: 1, preferredGender: 1, preferredAgeRange: 1, photoOnly: 1, hasFacePhoto: 1, photosHidden: 1, locationExact: 1, areaName: 1 }
+      { blockedUsers: 1, skipped: 1, gender: 1, age: 1, preferredGender: 1, preferredAgeRange: 1, photoOnly: 1, hasFacePhoto: 1, photosHidden: 1, locationExact: 1, areaName: 1, openToSerious: 1 }
     ).lean();
     const query = nearbyQuery(tgUser, currentUser, typeof req.query.goal === 'string' ? req.query.goal : undefined);
     const { and, maxKm } = peopleFilters(req.query, currentUser);
@@ -1055,6 +1063,8 @@ function formatPublicUser(u: any, currentUser: any, flags?: ReactionFlags) {
     goesWith: u.goesWith,
     isEmpath: Boolean(u.isEmpath),
     isSupporter: Boolean(u.isSupporter) || undefined,
+    // «Свои видят своих»: пометка «Серьёзные отношения» видна СТРОГО когда отмечено у обоих
+    mutualSerious: Boolean(currentUser?.openToSerious && u.openToSerious) || undefined,
     // Сколько сходок провёл и «🔥 Активный организатор» (hostStats.ts)
     hostedCount: hostInfo(u.telegramId)?.held || undefined,
     hostActive: hostInfo(u.telegramId)?.active || undefined,
@@ -1116,10 +1126,8 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
       return res.json({ success: true, isMatch: false });
     }
 
-    // Перед первым 👋: пол (можно «не указывать») и @username — иначе ответить будет некуда.
-    // Приложение спрашивает об этом само; здесь — на случай старой версии приложения
+    // Перед первым 👋: пол (можно «не указывать»). @username больше не обязателен: общение идёт внутри чата ГУЛЯЙ!
     if (!me.genderConfirmed) return res.status(409).json({ error: WAVE_GATE_TEXTS.needGender, code: 'NEED_GENDER' });
-    if (!me.username) return res.status(409).json({ error: WAVE_GATE_TEXTS.needUsername, code: 'NEED_USERNAME' });
 
     const liked = await sendLike(me, target);
     if (!liked) return res.status(403).json({ error: 'Этому человеку нельзя передать привет' });
@@ -1135,6 +1143,7 @@ app.post('/api/reactions', telegramAuthMiddleware as any, async (req: Authentica
     });
   } catch (err: any) {
     // Дневной лимит 👋 исчерпан: 👋 не создаём, приложение покажет карточку про сходки
+    if (err instanceof WaveReportPauseError) return res.status(403).json({ error: err.message, code: 'WAVE_REPORT_PAUSED' });
     if (err instanceof WaveBurstError) return res.status(429).json({ error: err.message });
     if (err instanceof WaveLimitError) {
       return res.status(429).json({ error: 'На сегодня «👋» закончились', code: 'DAILY_WAVE_LIMIT', limit: err.quota.limit, waves: err.quota });
@@ -2350,6 +2359,7 @@ setupWishRoutes(app);
 setupBuddyRoutes(app, formatEvent);
 setupEventLeaveRoutes(app, formatEvent);
 setupMeetupChatRoutes(app);
+setupDirectChatRoutes(app);
 
 // Удаление аккаунта
 setupAccountRoutes(app);
