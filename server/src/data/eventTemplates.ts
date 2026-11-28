@@ -23,6 +23,20 @@ export const DEFAULT_TEMPLATES: TemplateSeed[] = [
     placeTypes: ['Кофейня', 'Кафе']
   },
   {
+    key: 'skiing',
+    wishPhrase: 'на горнолыжку',
+    order: 15,
+    emoji: '⛷️',
+    name: 'Горнолыжка',
+    category: 'sport',
+    title: 'Едем на горнолыжку',
+    description: 'Собираем компанию покататься на лыжах или сноуборде. Заранее обсудим, на какой склон поедем и как доберёмся.',
+    seats: 5,
+    durationMinutes: 180,
+    placeTypes: [],
+    paid: true
+  },
+  {
     key: 'cinema',
     wishPhrase: 'в кино',
     order: 20,
